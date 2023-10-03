@@ -1,0 +1,94 @@
+import base64
+import json
+import logging
+import os
+import uvicorn
+from fastapi import FastAPI, Request, status, Depends, BackgroundTasks
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from app.routers import (
+    actions,
+)
+import app.settings as settings
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.services.action_runner import execute_action
+
+# For running behind a proxy, we'll want to configure the root path for OpenAPI browser.
+root_path = os.environ.get("ROOT_PATH", "")
+app = FastAPI(
+    title="Gundi Integration Actions Execution Service",
+    description="API to trigger actions against third-party systems",
+    version="1",
+)
+
+origins = [
+    "*",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+logger = logging.getLogger(__name__)
+
+
+@app.get(
+    "/",
+    tags=["health-check"],
+    summary="Check that the service is healthy",
+    description="This is primarily used to test authentication. It allows a caller to see whether it has successfully authenticated or is identified as _anonymous_.",
+)
+def read_root(
+    request: Request,
+):
+    return {"status": "healthy"}
+
+
+@app.post(
+    "/",
+    summary="Execute an action from GCP PubSub",
+)
+async def execute(
+    request: Request,
+    background_tasks: BackgroundTasks
+):
+    body = await request.body()
+    print(f"Message Received. RAW body: {body}")
+    json_data = await request.json()
+    print(f"JSON: {json_data}")
+    payload = base64.b64decode(json_data["message"]["data"]).decode("utf-8").strip()
+    print(f"Payload: {payload}")
+    json_payload = json.loads(payload)
+    print(f"JSON Payload: {json_payload}")
+    # Run in background and ack the message asap
+    background_tasks.add_task(
+        execute_action,
+        integration_id=json_payload.get("integration_id"),
+        action_id=json_payload.get("action_id")
+    )
+    return {}
+
+
+app.include_router(
+    actions.router, prefix="/v1/actions", tags=["actions"], responses={}
+)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+
+    logger.debug(
+        "Failed handling body: %s",
+        jsonable_encoder({"detail": exc.errors(), "body": exc.body}),
+    )
+
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content=jsonable_encoder({"detail": exc.errors(), "body": exc.body}),
+    )
