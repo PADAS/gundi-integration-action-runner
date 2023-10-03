@@ -17,8 +17,12 @@ async def action_auth(integration, action_config):
 
 async def action_pull_observations(integration, action_config):
     print(f"Executing pull_observations action with integration {integration} and action_config {action_config}...")
-    token = await _get_auth_token(config=_get_auth_config(integration))
+    # token = await _get_auth_token(
+    #     integration=integration,
+    #     config=_get_auth_config(integration)
+    # )
     # ToDo: Pull observations
+    return {"observations_extracted": 100}
 
 
 def _get_auth_config(integration):
