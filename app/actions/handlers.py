@@ -1,53 +1,28 @@
-import httpx
+"""
+Define here a handler function for each supported action. The name must start withe the prefix action_
+And it must receive an integration and a configuration
+
 
 from .configurations import AuthenticateConfig, PullObservationsConfig
-from app.services.utils import find_config_for_action
-from app.services.errors import ConfigurationNotFound
 
-
+For example, this "auth" action will authenticate against the third-party system to test credentials
 async def action_auth(integration, action_config):
-    print(f"Executing auth action with integration {integration} and action_config {action_config}...")
-    token = await _get_auth_token(
-        integration=integration,
-        config=_get_auth_config(integration)
-    )
-    print(f"Authenticated with success. token:{token}")
-    return {"valid_credentials": token is not None}
+    # Custom logix to authenticate
+    # The action handler can return a result (optional). In this case it's the result of the connection test.
+    # ToDo: Standardize these responses
+    return {"valid_credentials": token is not None} 
 
-
+This "pull_observations" action implements the data extraction
 async def action_pull_observations(integration, action_config):
-    print(f"Executing pull_observations action with integration {integration} and action_config {action_config}...")
-    # token = await _get_auth_token(
-    #     integration=integration,
-    #     config=_get_auth_config(integration)
-    # )
-    # ToDo: Pull observations
+    # Authenticate ..
+    # Extract Data ..
+    # Transform it ..
+    # Push it to Gundi API v2 ..
+    # Return a result (optional)
     return {"observations_extracted": 100}
 
 
-def _get_auth_config(integration):
-    # Look for the login credentials, needed for any action
-    auth_config = find_config_for_action(
-        configurations=integration.configurations,
-        action_id="auth"
-    )
-    if not auth_config:
-        raise ConfigurationNotFound(
-            f"Authentication settings for integration {str(integration.id)} are missing. Please fix the integration setup in the portal."
-        )
-    return AuthenticateConfig.parse_obj(auth_config.data)
+You can add here any other helper functions as needed too. Just ensure that they don't start with the "action_" prefix
+or they will be considered actions.
 
-# ToDo: This could be part of a cellstop client
-async def _get_auth_token(integration, config):
-    token_endpoint = config.endpoint
-    # Remove endpoint from request
-    del config.endpoint
-
-    url = f"{integration.base_url}{token_endpoint}"
-
-    async with httpx.AsyncClient(timeout=120) as session:
-        response = await session.post(url, json=config.dict())
-        response.raise_for_status()
-
-    json_response = response.json()
-    return json_response["token"]
+"""
