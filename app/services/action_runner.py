@@ -1,12 +1,12 @@
+import datetime
 import logging
-from typing import Optional
+import httpx
+import stamina
 from gundi_client_v2 import GundiClient
 from app.actions import action_handlers
-from app.actions import ActionConfiguration
 from fastapi import status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
-from .errors import ActionNotFound, ConfigurationNotFound, ConfigurationValidationError, ActionExecutionError
 from .utils import find_config_for_action
 
 
@@ -23,12 +23,14 @@ async def execute_action(integration_id: str, action_id: str):
     """
     logger.info(f"Executing action '{action_id}' for integration '{integration_id}'...")
     try:  # Get the integration config from the portal
-        integration = await _portal.get_integration_details(integration_id=integration_id)
+        async for attempt in stamina.retry_context(on=httpx.HTTPError, wait_initial=datetime.timedelta(seconds=1), attempts=3):
+            with attempt:
+                integration = await _portal.get_integration_details(integration_id=integration_id)
     except Exception as e:
         message = f"Error retrieving configuration for integration '{integration_id}': {e}"
         logger.exception(message)
         return JSONResponse(
-            status_code=e.response.status_code,
+            status_code=e.response.status_code if hasattr(e, "response") else status.HTTP_500_INTERNAL_SERVER_ERROR,
             content=jsonable_encoder({"detail": message}),
         )
 
@@ -59,7 +61,7 @@ async def execute_action(integration_id: str, action_id: str):
         message = f"Internal error executing action '{action_id}': {e}"
         logger.exception(message)
         return JSONResponse(
-            status_code=e.response.status_code,
+            status_code=e.response.status_code if hasattr(e, "response") else status.HTTP_500_INTERNAL_SERVER_ERROR,
             content=jsonable_encoder({"detail": message}),
         )
     else:
