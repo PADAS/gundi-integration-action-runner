@@ -2,6 +2,6 @@ environs==9.5.0
 pydantic==1.10.13
 fastapi==0.103.2
 uvicorn==0.23.2
-gundi-client-v2==2.1.5
+gundi-client-v2==2.1.7
 stamina==23.2.0
 redis==5.0.1
