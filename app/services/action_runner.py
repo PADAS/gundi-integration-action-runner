@@ -49,7 +49,7 @@ async def execute_action(integration_id: str, action_id: str):
         )
     try:  # Execute the action
         handler = action_handlers[action_id]
-        result = await handler(integration, action_config)
+        result = await handler(integration=integration, action_config=action_config)
     except KeyError as e:
         message = f"Action '{action_id}' is not supported for this integration"
         logger.exception(message)
