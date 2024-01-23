@@ -61,7 +61,7 @@ async def log_activity(integration_id: str, action_id: str, title: str, level="I
     :param data: Any extra data to be logged as a dict
     :return: None
     """
-    print(f"{level}: {title} - Data: {data}")
+    logger.debug(f"Logging custom activity: {title}. Integration: {integration_id}. Action: {action_id}.")
     await publish_event(
         event=IntegrationActionCustomLog(
             payload=CustomActivityLog(
