@@ -47,7 +47,7 @@ async def send_events_to_gundi(events: List[dict], **kwargs) -> dict:
     """
     integration_id = kwargs.get("integration_id")
     assert integration_id, "integration_id is required"
-    sensors_api_client = await _get_sensors_api_client(integration_id=integration_id)
+    sensors_api_client = await _get_sensors_api_client(integration_id=str(integration_id))
     return await sensors_api_client.post_events(data=events)
 
 
@@ -77,5 +77,5 @@ async def send_observations_to_gundi(observations: List[dict], **kwargs) -> dict
     """
     integration_id = kwargs.get("integration_id")
     assert integration_id, "integration_id is required"
-    sensors_api_client = await _get_sensors_api_client(integration_id=integration_id)
+    sensors_api_client = await _get_sensors_api_client(integration_id=str(integration_id))
     return await sensors_api_client.post_observations(data=observations)
