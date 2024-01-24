@@ -6,7 +6,7 @@ from gundi_client_v2.client import GundiClient, GundiDataSenderClient
 
 
 @stamina.retry(on=httpx.HTTPError, attempts=3, wait_initial=datetime.timedelta(seconds=1), wait_max=datetime.timedelta(seconds=10))
-async def get_gundi_api_key(integration_id):
+async def _get_gundi_api_key(integration_id):
     async with GundiClient() as gundi_client:
         return await gundi_client.get_integration_api_key(
             integration_id=integration_id
@@ -14,7 +14,7 @@ async def get_gundi_api_key(integration_id):
 
 
 async def _get_sensors_api_client(integration_id):
-    gundi_api_key = await get_gundi_api_key(integration_id=integration_id)
+    gundi_api_key = await _get_gundi_api_key(integration_id=integration_id)
     assert gundi_api_key, f"Cannot get a valid API Key for integration {integration_id}"
     sensors_api_client = GundiDataSenderClient(
         integration_api_key=gundi_api_key
