@@ -1,1 +1,1 @@
-# Add here any extra settings needed for your integration
+# Add your integration-specific settings here

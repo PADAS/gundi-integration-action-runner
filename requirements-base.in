@@ -1,3 +1,5 @@
+# Base dependencies. Don't edit or override this file.
+# Use requirements.in to add integration-specific dependencies instead.
 environs~=9.5.0
 pydantic~=1.10.13
 fastapi~=0.103.2
