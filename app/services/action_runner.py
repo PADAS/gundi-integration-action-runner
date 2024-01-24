@@ -65,5 +65,4 @@ async def execute_action(integration_id: str, action_id: str):
             content=jsonable_encoder({"detail": message}),
         )
     else:
-        # ToDo: emit events on execution completion (success or error) once we move forward with the EDA
         return result

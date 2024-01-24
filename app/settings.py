@@ -37,6 +37,9 @@ PORTAL_OUTBOUND_INTEGRATIONS_ENDPOINT = (
 PORTAL_INBOUND_INTEGRATIONS_ENDPOINT = (
     f"{PORTAL_API_ENDPOINT}/integrations/inbound/configurations"
 )
+GUNDI_API_BASE_URL = env.str("GUNDI_API_BASE_URL", None)
+GUNDI_API_SSL_VERIFY = env.bool("GUNDI_API_SSL_VERIFY", True)
+SENSORS_API_BASE_URL = env.str("SENSORS_API_BASE_URL", None)
 
 # Used in OTel traces/spans to set the 'environment' attribute, used on metrics calculation
 TRACE_ENVIRONMENT = env.str("TRACE_ENVIRONMENT", "dev")
