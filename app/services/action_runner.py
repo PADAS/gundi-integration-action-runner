@@ -7,7 +7,9 @@ from app.actions import action_handlers
 from fastapi import status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
+from gundi_core.events import LogLevel
 from .utils import find_config_for_action
+from .activity_logger import log_activity
 
 
 _portal = GundiClient()
@@ -29,6 +31,12 @@ async def execute_action(integration_id: str, action_id: str):
     except Exception as e:
         message = f"Error retrieving configuration for integration '{integration_id}': {e}"
         logger.exception(message)
+        await log_activity(
+            integration_id=integration_id,
+            action_id=action_id,
+            level=LogLevel.ERROR,
+            title=message,
+        )
         return JSONResponse(
             status_code=e.response.status_code if hasattr(e, "response") else status.HTTP_500_INTERNAL_SERVER_ERROR,
             content=jsonable_encoder({"detail": message}),
@@ -43,6 +51,13 @@ async def execute_action(integration_id: str, action_id: str):
         message = f"Configuration for action '{action_id}' for integration {str(integration.id)} " \
                   f"is missing. Please fix the integration setup in the portal."
         logger.error(message)
+        await log_activity(
+            integration_id=integration_id,
+            action_id=action_id,
+            level=LogLevel.ERROR,
+            title=f"Configuration missing for action '{action_id}'",
+            config_data=integration.configurations,
+        )
         return JSONResponse(
             status_code=status.HTTP_404_NOT_FOUND,
             content=jsonable_encoder({"detail": message}),
@@ -53,6 +68,13 @@ async def execute_action(integration_id: str, action_id: str):
     except KeyError as e:
         message = f"Action '{action_id}' is not supported for this integration"
         logger.exception(message)
+        await log_activity(
+            integration_id=integration_id,
+            action_id=action_id,
+            level=LogLevel.ERROR,
+            title=message,
+            config_data=integration.configurations,
+        )
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             content=jsonable_encoder({"detail": message}),
@@ -60,6 +82,13 @@ async def execute_action(integration_id: str, action_id: str):
     except Exception as e:
         message = f"Internal error executing action '{action_id}': {e}"
         logger.exception(message)
+        await log_activity(
+            integration_id=integration_id,
+            action_id=action_id,
+            level=LogLevel.ERROR,
+            title=message,
+            config_data=integration.configurations,
+        )
         return JSONResponse(
             status_code=e.response.status_code if hasattr(e, "response") else status.HTTP_500_INTERNAL_SERVER_ERROR,
             content=jsonable_encoder({"detail": message}),

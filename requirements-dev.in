@@ -1,0 +1,5 @@
+# Dependencies for development. Don't edit or override this file.
+# Use requirements.in to add integration-specific dependencies instead.
+pytest~=7.4.3
+pytest-asyncio~=0.21.1
+pytest-mock~=3.12.0
