@@ -56,7 +56,7 @@ async def execute_action(integration_id: str, action_id: str):
             action_id=action_id,
             level=LogLevel.ERROR,
             title=f"Configuration missing for action '{action_id}'",
-            config_data=integration.configurations,
+            config_data={"configurations": [i.dict() for i in integration.configurations]} ,
         )
         return JSONResponse(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -73,7 +73,7 @@ async def execute_action(integration_id: str, action_id: str):
             action_id=action_id,
             level=LogLevel.ERROR,
             title=message,
-            config_data=integration.configurations,
+            config_data=action_config.data or {},
         )
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -87,7 +87,7 @@ async def execute_action(integration_id: str, action_id: str):
             action_id=action_id,
             level=LogLevel.ERROR,
             title=message,
-            config_data=integration.configurations,
+            config_data={"configurations": [c.dict() for c in integration.configurations]},
         )
         return JSONResponse(
             status_code=e.response.status_code if hasattr(e, "response") else status.HTTP_500_INTERNAL_SERVER_ERROR,

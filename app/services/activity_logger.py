@@ -49,6 +49,7 @@ async def publish_event(event: SystemEventBaseModel, topic_name: str):
         else:
             logger.debug(f"System event {event} published successfully.")
             logger.debug(f"GCP PubSub response: {response}")
+            return response
 
 
 async def log_activity(integration_id: str, action_id: str, title: str, level="INFO", config_data: dict = None, data: dict = None):
@@ -67,7 +68,7 @@ async def log_activity(integration_id: str, action_id: str, title: str, level="I
             payload=CustomActivityLog(
                 integration_id=integration_id,
                 action_id=action_id,
-                config_data=config_data,
+                config_data=config_data or {},
                 title=title,
                 level=level,
                 data=data
@@ -85,7 +86,7 @@ def activity_logger(on_start=True, on_completion=True, on_error=True):
             integration_id = str(integration.id) if integration else None
             action_id = func.__name__.replace("action_", "")
             action_config = kwargs.get("action_config")
-            config_data = action_config.data if action_config else {}
+            config_data = action_config.data if action_config else {} or {}
             if on_start:
                 await publish_event(
                     event=IntegrationActionStarted(

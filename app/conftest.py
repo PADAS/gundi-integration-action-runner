@@ -5,6 +5,18 @@ from unittest.mock import MagicMock
 from app import settings
 from gcloud.aio import pubsub
 from gundi_core.schemas.v2 import Integration
+from gundi_core.events import (
+    SystemEventBaseModel,
+    IntegrationActionCustomLog,
+    CustomActivityLog,
+    IntegrationActionStarted,
+    ActionExecutionStarted,
+    IntegrationActionFailed,
+    ActionExecutionFailed,
+    IntegrationActionComplete,
+    ActionExecutionComplete,
+    LogLevel
+)
 
 
 class AsyncMock(MagicMock):
@@ -102,7 +114,7 @@ def mock_gundi_sensors_client_class(mocker, events_created_response, observation
 
 @pytest.fixture
 def mock_pubsub_client(
-    mocker, integration_event_pubsub_message, gcp_pubsub_publish_response
+        mocker, integration_event_pubsub_message, gcp_pubsub_publish_response
 ):
     mock_client = mocker.MagicMock()
     mock_publisher = mocker.MagicMock()
@@ -118,13 +130,19 @@ def mock_pubsub_client(
 @pytest.fixture
 def integration_event_pubsub_message():
     return pubsub.PubsubMessage(
-        b'{"event_id": "4e2d3722-5b3c-4f3e-b27c-0949f31c4420", "timestamp": "2024-01-26 12:13:17.756939+00:00", "schema_version": "v1", "payload": {"integration_id": "81b1f18d-0c0a-4987-9e96-0a83a5279ef9", "action_id": "pull_observations", "config_data": {}}, "event_type": "IntegrationActionStarted"}'
+        b'{"event_id": "6214c049-f786-45eb-9877-2efb2c2cf8e9", "timestamp": "2024-01-26 14:03:46.199385+00:00", "schema_version": "v1", "payload": {"integration_id": "779ff3ab-5589-4f4c-9e0a-ae8d6c9edff0", "action_id": "pull_observations", "config_data": {"end_datetime": "2024-01-01T00:00:00-00:00", "start_datetime": "2024-01-10T23:59:59-00:00", "force_run_since_start": true}}, "event_type": "IntegrationActionStarted"}'
     )
 
 
 @pytest.fixture
-def mock_publish_event(mocker):
+def gcp_pubsub_publish_response():
+    return {"messageIds": ["7061707768812258"]}
+
+
+@pytest.fixture
+def mock_publish_event(mocker, gcp_pubsub_publish_response):
     mock_publish_event = mocker.MagicMock()
+    mock_publish_event.return_value = gcp_pubsub_publish_response
     return mock_publish_event
 
 
@@ -132,7 +150,7 @@ def mock_publish_event(mocker):
 def mock_action_handlers(mocker):
     mock_action_handler = AsyncMock()
     mock_action_handler.return_value = {"observations_extracted": 10}
-    mock_action_handlers = MagicMock()
+    mock_action_handlers = mocker.MagicMock()
     mock_action_handlers.__getitem__.return_value = mock_action_handler
     return mock_action_handlers
 
@@ -194,3 +212,82 @@ def event_v2_cloud_event_headers():
         "ce-type": "google.cloud.pubsub.topic.v1.messagePublished",
         "ce-time": timestamp,
     }
+
+
+@pytest.fixture
+def action_started_event():
+    return IntegrationActionStarted(
+        payload=ActionExecutionStarted(
+            integration_id="779ff3ab-5589-4f4c-9e0a-ae8d6c9edff0",
+            action_id="pull_observations",
+            config_data={
+                "end_datetime": "2024-01-10T00:00:00-00:00",
+                "start_datetime": "2024-01-01T23:59:59-00:00",
+                "force_run_since_start": True
+            },
+        )
+    )
+
+
+@pytest.fixture
+def action_complete_event():
+    return IntegrationActionComplete(
+        payload=ActionExecutionComplete(
+            integration_id="779ff3ab-5589-4f4c-9e0a-ae8d6c9edff0",
+            action_id="pull_observations",
+            config_data={
+                "end_datetime": "2024-01-10T00:00:00-00:00",
+                "start_datetime": "2024-01-01T23:59:59-00:00",
+                "force_run_since_start": True
+            },
+            result={"observations_extracted": 10}
+        )
+    )
+
+@pytest.fixture
+def action_failed_event():
+    return IntegrationActionFailed(
+        payload=ActionExecutionFailed(
+            integration_id="779ff3ab-5589-4f4c-9e0a-ae8d6c9edff0",
+            action_id="pull_observations",
+            config_data={
+                "end_datetime": "2024-01-10T00:00:00-00:00",
+                "start_datetime": "2024-01-01T23:59:59-00:00",
+                "force_run_since_start": True
+            },
+            error="ConnectionError: Error connecting to X system"
+        )
+    )
+
+
+@pytest.fixture
+def custom_activity_log_event():
+    return IntegrationActionCustomLog(
+        payload=CustomActivityLog(
+            integration_id="779ff3ab-5589-4f4c-9e0a-ae8d6c9edff0",
+            action_id="pull_observations",
+            config_data={
+                "end_datetime": "2024-01-01T00:00:00-00:00",
+                "start_datetime": "2024-01-10T23:59:59-00:00",
+                "force_run_since_start": True
+            },
+            title="Invalid start_datetime for action pull_observations",
+            level=LogLevel.ERROR,
+            data={
+                "details": "start_datetime cannot be grater than end_datetime. Please fix the configuration."
+            }
+        )
+    )
+
+
+@pytest.fixture
+def system_event(request, action_started_event, action_complete_event, action_failed_event, custom_activity_log_event):
+    if request.param == "action_started_event":
+        return action_started_event
+    if request.param == "action_complete_event":
+        return action_complete_event
+    if request.param == "action_failed_event":
+        return action_failed_event
+    if request.param == "custom_activity_log_event":
+        return custom_activity_log_event
+    return None
