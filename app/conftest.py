@@ -2,6 +2,8 @@ import asyncio
 import datetime
 import pytest
 from unittest.mock import MagicMock
+from app import settings
+from gcloud.aio import pubsub
 from gundi_core.schemas.v2 import Integration
 
 
@@ -99,31 +101,40 @@ def mock_gundi_sensors_client_class(mocker, events_created_response, observation
 
 
 @pytest.fixture
-def events_created_response():
-    return [
-        {
-            "object_id": "abebe106-3c50-446b-9c98-0b9b503fc900",
-            "created_at": "2023-11-16T19:59:50.612864Z"
-        },
-        {
-            "object_id": "cdebe106-3c50-446b-9c98-0b9b503fc911",
-            "created_at": "2023-11-16T19:59:50.612864Z"
-        }
-    ]
+def mock_pubsub_client(
+    mocker, integration_event_pubsub_message, gcp_pubsub_publish_response
+):
+    mock_client = mocker.MagicMock()
+    mock_publisher = mocker.MagicMock()
+    mock_publisher.publish.return_value = async_return(gcp_pubsub_publish_response)
+    mock_publisher.topic_path.return_value = (
+        f"projects/{settings.GCP_PROJECT_ID}/topics/{settings.INTEGRATION_EVENTS_TOPIC}"
+    )
+    mock_client.PublisherClient.return_value = mock_publisher
+    mock_client.PubsubMessage.return_value = integration_event_pubsub_message
+    return mock_client
 
 
 @pytest.fixture
-def observations_created_response():
-    return [
-        {
-            "object_id": "efebe106-3c50-446b-9c98-0b9b503fc922",
-            "created_at": "2023-11-16T19:59:55.612864Z"
-        },
-        {
-            "object_id": "ghebe106-3c50-446b-9c98-0b9b503fc933",
-            "created_at": "2023-11-16T19:59:56.612864Z"
-        }
-    ]
+def integration_event_pubsub_message():
+    return pubsub.PubsubMessage(
+        b'{"event_id": "4e2d3722-5b3c-4f3e-b27c-0949f31c4420", "timestamp": "2024-01-26 12:13:17.756939+00:00", "schema_version": "v1", "payload": {"integration_id": "81b1f18d-0c0a-4987-9e96-0a83a5279ef9", "action_id": "pull_observations", "config_data": {}}, "event_type": "IntegrationActionStarted"}'
+    )
+
+
+@pytest.fixture
+def mock_publish_event(mocker):
+    mock_publish_event = mocker.MagicMock()
+    return mock_publish_event
+
+
+@pytest.fixture
+def mock_action_handlers(mocker):
+    mock_action_handler = AsyncMock()
+    mock_action_handler.return_value = {"observations_extracted": 10}
+    mock_action_handlers = MagicMock()
+    mock_action_handlers.__getitem__.return_value = mock_action_handler
+    return mock_action_handlers
 
 
 @pytest.fixture
@@ -132,116 +143,6 @@ def auth_headers_response():
         'Accept-Type': 'application/json',
         'Authorization': 'Bearer testtoken2a97022f21732461ee103a08fac8a35'
     }
-
-
-@pytest.fixture
-def get_events_response(events_batch_one, events_batch_two):
-    return [
-        events_batch_one,
-        events_batch_two
-    ]
-
-
-@pytest.fixture
-def events_batch_one():
-    return [
-        {'id': 'a7a5e9ad-e157-4f95-a824-1d59dbb56c3d', 'location': None, 'time': '2023-11-17T14:14:34.480590-06:00',
-         'end_time': None, 'serial_number': 433, 'message': '', 'provenance': '',
-         'event_type': 'silence_source_provider_rep', 'priority': 0, 'priority_label': 'Gray', 'attributes': {},
-         'comment': None, 'title': 'A7a9e1ab-44e2-4585-8d4f-7770ca0b36e2 integration disrupted', 'reported_by': None,
-         'state': 'new', 'is_contained_in': [], 'sort_at': '2023-11-17T14:14:34.482529-06:00', 'patrol_segments': [],
-         'geometry': None, 'updated_at': '2023-11-17T14:14:34.482529-06:00',
-         'created_at': '2023-11-17T14:14:34.482823-06:00', 'icon_id': 'silence_source_provider_rep',
-         'event_details': {'report_time': '2023-11-17 20:14:34', 'silence_threshold': '00:01',
-                           'last_device_reported_at': '2023-10-23 00:44:32', 'updates': []}, 'files': [],
-         'related_subjects': [], 'event_category': 'analyzer_event',
-         'url': 'https://gundi-er.pamdas.org/api/v1.0/activity/event/a7a5e9ad-e157-4f95-a824-1d59dbb56c3d',
-         'image_url': 'https://gundi-er.pamdas.org/static/generic-gray.svg', 'geojson': None, 'is_collection': False,
-         'updates': [{'message': 'Created', 'time': '2023-11-17T20:14:34.524434+00:00',
-                      'user': {'first_name': '', 'last_name': '', 'username': ''}, 'type': 'add_event'}],
-         'patrols': []},
-        {'id': '72448da2-8e80-48d3-81c4-fc6d86c275a8', 'location': None, 'time': '2023-11-17T13:14:35.122386-06:00',
-         'end_time': None, 'serial_number': 432, 'message': '', 'provenance': '',
-         'event_type': 'silence_source_provider_rep', 'priority': 0, 'priority_label': 'Gray', 'attributes': {},
-         'comment': None, 'title': '265de4c0-07b8-4e30-b136-5d5a75ff5912 integration disrupted', 'reported_by': None,
-         'state': 'new', 'is_contained_in': [], 'sort_at': '2023-11-17T13:14:35.124145-06:00', 'patrol_segments': [],
-         'geometry': None, 'updated_at': '2023-11-17T13:14:35.124145-06:00',
-         'created_at': '2023-11-17T13:14:35.124427-06:00', 'icon_id': 'silence_source_provider_rep',
-         'event_details': {'report_time': '2023-11-17 19:14:34', 'silence_threshold': '00:00',
-                           'last_device_reported_at': '2023-10-26 21:24:02', 'updates': []}, 'files': [],
-         'related_subjects': [], 'event_category': 'analyzer_event',
-         'url': 'https://gundi-er.pamdas.org/api/v1.0/activity/event/72448da2-8e80-48d3-81c4-fc6d86c275a8',
-         'image_url': 'https://gundi-er.pamdas.org/static/generic-gray.svg', 'geojson': None, 'is_collection': False,
-         'updates': [{'message': 'Created', 'time': '2023-11-17T19:14:35.130037+00:00',
-                      'user': {'first_name': '', 'last_name': '', 'username': ''}, 'type': 'add_event'}],
-         'patrols': []}
-    ]
-
-
-@pytest.fixture
-def events_batch_two():
-    return [
-        {'id': '2d3a5877-475a-423e-97c5-5eead34010e2', 'location': None, 'time': '2023-11-17T13:14:34.481295-06:00',
-         'end_time': None, 'serial_number': 431, 'message': '', 'provenance': '',
-         'event_type': 'silence_source_provider_rep', 'priority': 0, 'priority_label': 'Gray', 'attributes': {},
-         'comment': None, 'title': 'A7a9e1ab-44e2-4585-8d4f-7770ca0b36e2 integration disrupted', 'reported_by': None,
-         'state': 'new', 'is_contained_in': [], 'sort_at': '2023-11-17T13:14:34.483293-06:00', 'patrol_segments': [],
-         'geometry': None, 'updated_at': '2023-11-17T13:14:34.483293-06:00',
-         'created_at': '2023-11-17T13:14:34.483539-06:00', 'icon_id': 'silence_source_provider_rep',
-         'event_details': {'report_time': '2023-11-17 19:14:34', 'silence_threshold': '00:01',
-                           'last_device_reported_at': '2023-10-23 00:44:32', 'updates': []}, 'files': [],
-         'related_subjects': [], 'event_category': 'analyzer_event',
-         'url': 'https://gundi-er.pamdas.org/api/v1.0/activity/event/2d3a5877-475a-423e-97c5-5eead34010e2',
-         'image_url': 'https://gundi-er.pamdas.org/static/generic-gray.svg', 'geojson': None, 'is_collection': False,
-         'updates': [{'message': 'Created', 'time': '2023-11-17T19:14:34.528430+00:00',
-                      'user': {'first_name': '', 'last_name': '', 'username': ''}, 'type': 'add_event'}],
-         'patrols': []},
-        {'id': '950401f9-5a14-4dd7-be53-e90168c9474a', 'location': {'latitude': 39.963, 'longitude': -77.152},
-         'time': '2023-11-17T12:29:43.477991-06:00', 'end_time': None, 'serial_number': 430, 'message': '',
-         'provenance': '', 'event_type': 'trailguard_rep', 'priority': 200, 'priority_label': 'Amber', 'attributes': {},
-         'comment': None, 'title': 'Trailguard Trap', 'reported_by': None, 'state': 'active', 'is_contained_in': [],
-         'sort_at': '2023-11-17T12:30:08.818727-06:00', 'patrol_segments': [], 'geometry': None,
-         'updated_at': '2023-11-17T12:30:08.818727-06:00', 'created_at': '2023-11-17T12:29:53.171274-06:00',
-         'icon_id': 'cameratrap_rep',
-         'event_details': {'labels': ['adult', 'poacher'], 'species': 'human', 'animal_count': 1, 'updates': []},
-         'files': [{'id': '67888221-3e2a-4ba4-9cc7-ea0539f1e5f3', 'comment': '',
-                    'created_at': '2023-11-17T12:30:08.802202-06:00', 'updated_at': '2023-11-17T12:30:08.802222-06:00',
-                    'updates': [{'message': 'File Added: a7dcd2bc-703b-4324-bfd3-13ea130e7395_poacher.jpg',
-                                 'time': '2023-11-17T18:30:08.810486+00:00', 'text': '',
-                                 'user': {'username': 'gundi_serviceaccout', 'first_name': 'Gundi',
-                                          'last_name': 'Service Account', 'id': 'ddc888bb-d642-455a-a422-7393b4f172be',
-                                          'content_type': 'accounts.user'}, 'type': 'add_eventfile'}],
-                    'url': 'https://gundi-er.pamdas.org/api/v1.0/activity/event/950401f9-5a14-4dd7-be53-e90168c9474a/file/67888221-3e2a-4ba4-9cc7-ea0539f1e5f3/',
-                    'images': {
-                        'original': 'https://gundi-er.pamdas.org/api/v1.0/activity/event/950401f9-5a14-4dd7-be53-e90168c9474a/file/67888221-3e2a-4ba4-9cc7-ea0539f1e5f3/original/a7dcd2bc-703b-4324-bfd3-13ea130e7395_poacher.jpg',
-                        'icon': 'https://gundi-er.pamdas.org/api/v1.0/activity/event/950401f9-5a14-4dd7-be53-e90168c9474a/file/67888221-3e2a-4ba4-9cc7-ea0539f1e5f3/icon/a7dcd2bc-703b-4324-bfd3-13ea130e7395_poacher.jpg',
-                        'thumbnail': 'https://gundi-er.pamdas.org/api/v1.0/activity/event/950401f9-5a14-4dd7-be53-e90168c9474a/file/67888221-3e2a-4ba4-9cc7-ea0539f1e5f3/thumbnail/a7dcd2bc-703b-4324-bfd3-13ea130e7395_poacher.jpg',
-                        'large': 'https://gundi-er.pamdas.org/api/v1.0/activity/event/950401f9-5a14-4dd7-be53-e90168c9474a/file/67888221-3e2a-4ba4-9cc7-ea0539f1e5f3/large/a7dcd2bc-703b-4324-bfd3-13ea130e7395_poacher.jpg',
-                        'xlarge': 'https://gundi-er.pamdas.org/api/v1.0/activity/event/950401f9-5a14-4dd7-be53-e90168c9474a/file/67888221-3e2a-4ba4-9cc7-ea0539f1e5f3/xlarge/a7dcd2bc-703b-4324-bfd3-13ea130e7395_poacher.jpg'},
-                    'filename': 'a7dcd2bc-703b-4324-bfd3-13ea130e7395_poacher.jpg', 'file_type': 'image',
-                    'icon_url': 'https://gundi-er.pamdas.org/api/v1.0/activity/event/950401f9-5a14-4dd7-be53-e90168c9474a/file/67888221-3e2a-4ba4-9cc7-ea0539f1e5f3/icon/a7dcd2bc-703b-4324-bfd3-13ea130e7395_poacher.jpg'}],
-         'related_subjects': [], 'event_category': 'monitoring',
-         'url': 'https://gundi-er.pamdas.org/api/v1.0/activity/event/950401f9-5a14-4dd7-be53-e90168c9474a',
-         'image_url': 'https://gundi-er.pamdas.org/static/cameratrap-black.svg',
-         'geojson': {'type': 'Feature', 'geometry': {'type': 'Point', 'coordinates': [-77.152, 39.963]},
-                     'properties': {'message': '', 'datetime': '2023-11-17T18:29:43.477991+00:00',
-                                    'image': 'https://gundi-er.pamdas.org/static/cameratrap-black.svg',
-                                    'icon': {'iconUrl': 'https://gundi-er.pamdas.org/static/cameratrap-black.svg',
-                                             'iconSize': [25, 25], 'iconAncor': [12, 12], 'popupAncor': [0, -13],
-                                             'className': 'dot'}}}, 'is_collection': False, 'updates': [
-            {'message': 'Changed State: new → active', 'time': '2023-11-17T18:30:08.831311+00:00',
-             'user': {'username': 'gundi_serviceaccout', 'first_name': 'Gundi', 'last_name': 'Service Account',
-                      'id': 'ddc888bb-d642-455a-a422-7393b4f172be', 'content_type': 'accounts.user'}, 'type': 'read'},
-            {'message': 'File Added: a7dcd2bc-703b-4324-bfd3-13ea130e7395_poacher.jpg',
-             'time': '2023-11-17T18:30:08.810486+00:00', 'text': '',
-             'user': {'username': 'gundi_serviceaccout', 'first_name': 'Gundi', 'last_name': 'Service Account',
-                      'id': 'ddc888bb-d642-455a-a422-7393b4f172be', 'content_type': 'accounts.user'},
-             'type': 'add_eventfile'}, {'message': 'Created', 'time': '2023-11-17T18:29:53.207751+00:00',
-                                        'user': {'username': 'gundi_serviceaccout', 'first_name': 'Gundi',
-                                                 'last_name': 'Service Account',
-                                                 'id': 'ddc888bb-d642-455a-a422-7393b4f172be',
-                                                 'content_type': 'accounts.user'}, 'type': 'add_event'}], 'patrols': []}
-    ]
 
 
 @pytest.fixture

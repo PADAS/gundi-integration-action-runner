@@ -43,7 +43,7 @@ async def publish_event(event: SystemEventBaseModel, topic_name: str):
             response = await client.publish(topic, messages)
         except Exception as e:
             logger.exception(
-                f"Error publishing system event topic {topic_name}: {e}. This will be retried."
+                f"Error publishing system event to topic {topic_name}: {e}. This will be retried."
             )
             raise e
         else:
