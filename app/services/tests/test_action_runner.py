@@ -1,8 +1,4 @@
-from unittest.mock import MagicMock
 import pytest
-
-from app.conftest import async_return, AsyncMock
-from app.services.action_runner import execute_action
 from fastapi.testclient import TestClient
 from app.main import app
 

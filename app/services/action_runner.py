@@ -8,9 +8,9 @@ from app import settings
 from fastapi import status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
-from gundi_core.events import LogLevel, IntegrationActionFailed, ActionExecutionFailed
+from gundi_core.events import IntegrationActionFailed, ActionExecutionFailed
 from .utils import find_config_for_action
-from .activity_logger import log_activity, publish_event
+from .activity_logger import publish_event
 
 
 _portal = GundiClient()

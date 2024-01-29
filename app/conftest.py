@@ -4,7 +4,7 @@ import pytest
 from unittest.mock import MagicMock
 from app import settings
 from gcloud.aio import pubsub
-from gundi_core.schemas.v2 import Integration
+from gundi_core.schemas.v2 import Integration, IntegrationActionConfiguration, IntegrationActionSummery
 from gundi_core.events import (
     SystemEventBaseModel,
     IntegrationActionCustomLog,
@@ -76,6 +76,21 @@ def integration_v2():
 
 
 @pytest.fixture
+def pull_observations_config():
+    return IntegrationActionConfiguration(
+        id='b3cdc6b2-b247-4fbd-8f86-53079b5860e5',
+        integration='779ff3ab-5589-4f4c-9e0a-ae8d6c9edff0',
+        action=IntegrationActionSummery(
+            id='2e52c0ba-1723-4510-8702-496c232b2012',
+            type='pull',
+            name='Pull Observations',
+            value='pull_observations'
+        ),
+        data={}
+    )
+
+
+@pytest.fixture
 def mock_gundi_client_v2(
         mocker,
         integration_v2,
@@ -140,8 +155,8 @@ def gcp_pubsub_publish_response():
 
 
 @pytest.fixture
-def mock_publish_event(mocker, gcp_pubsub_publish_response):
-    mock_publish_event = mocker.MagicMock()
+def mock_publish_event(gcp_pubsub_publish_response):
+    mock_publish_event = AsyncMock()
     mock_publish_event.return_value = gcp_pubsub_publish_response
     return mock_publish_event
 
