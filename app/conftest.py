@@ -94,8 +94,10 @@ def pull_observations_config():
 def mock_gundi_client_v2(
         mocker,
         integration_v2,
+        mock_get_gundi_api_key
 ):
     mock_client = mocker.MagicMock()
+    mock_client.get_integration_api_key.return_value = async_return(mock_get_gundi_api_key),
     mock_client.get_integration_details.return_value = async_return(
         integration_v2
     )
@@ -104,13 +106,10 @@ def mock_gundi_client_v2(
 
 
 @pytest.fixture
-def mock_state_manager(mocker):
-    mock_state_manager = mocker.MagicMock()
-    mock_state_manager.get_state.return_value = async_return(
-        {'last_execution': '2023-11-17T11:20:00+0200'}
-    )
-    mock_state_manager.set_state.return_value = async_return(None)
-    return mock_state_manager
+def mock_gundi_client_v2_class(mocker, mock_gundi_client_v2):
+    mock_gundi_client_v2_class = mocker.MagicMock()
+    mock_gundi_client_v2_class.return_value = mock_gundi_client_v2
+    return mock_gundi_client_v2_class
 
 
 @pytest.fixture
@@ -125,6 +124,84 @@ def mock_gundi_sensors_client_class(mocker, events_created_response, observation
     )
     mock_gundi_sensors_client_class.return_value = mock_gundi_sensors_client
     return mock_gundi_sensors_client_class
+
+
+@pytest.fixture
+def events_created_response():
+    return [
+        {
+            "id": "e1e1e1e1-e1e1-e1e1-e1e1-e1e1e1e1e1e1",
+            "title": "Animal Sighting",
+            "event_type": "wildlife_sighting_rep",
+            "recorded_at": "2024-01-29 20:51:10-03:00",
+            "location": {
+                "lat": -51.688645,
+                "lon": -72.704421
+            },
+            "event_details": {
+                "site_name": "MM Spot",
+                "species": "lion"
+            }
+        },
+        {
+            "id": "e1e1e1e1-e1e1-e1e1-e1e1-e1e1e1e1e1e2",
+            "title": "Animal Sighting",
+            "event_type": "wildlife_sighting_rep",
+            "recorded_at": "2024-01-29 20:51:25-03:00",
+            "location": {
+                "lat": -51.688646,
+                "lon": -72.704421
+            },
+            "event_details": {
+                "site_name": "MM Spot",
+                "species": "lion"
+            }
+        }
+    ]
+
+
+@pytest.fixture
+def observations_created_response():
+    return [
+        {
+            "id": "e1e1e1e1-e1e1-e1e1-e1e1-e1e1e1e1e1e1",
+            "source": "device-xy123",
+            "type": "tracking-device",
+            "subject_type": "puma",
+            "recorded_at": "2024-01-24 09:03:00-0300",
+            "location": {
+                "lat": -51.748,
+                "lon": -72.720
+            },
+            "additional": {
+                "speed_kmph": 5
+            }
+        },
+        {
+            "id": "e1e1e1e1-e1e1-e1e1-e1e1-e1e1e1e1e1e2",
+            "source": "test-device-mariano",
+            "type": "tracking-device",
+            "subject_type": "puma",
+            "recorded_at": "2024-01-24 09:05:00-0300",
+            "location": {
+                "lat": -51.755,
+                "lon": -72.755
+            },
+            "additional": {
+                "speed_kmph": 5
+            }
+        }
+    ]
+
+
+@pytest.fixture
+def mock_state_manager(mocker):
+    mock_state_manager = mocker.MagicMock()
+    mock_state_manager.get_state.return_value = async_return(
+        {'last_execution': '2023-11-17T11:20:00+0200'}
+    )
+    mock_state_manager.set_state.return_value = async_return(None)
+    return mock_state_manager
 
 
 @pytest.fixture
