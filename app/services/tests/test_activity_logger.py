@@ -3,14 +3,12 @@ from unittest.mock import ANY
 from gundi_core.events import (
     LogLevel,
     IntegrationActionStarted,
-    ActionExecutionStarted,
     IntegrationActionComplete,
-    ActionExecutionComplete,
     IntegrationActionFailed,
-    ActionExecutionFailed
+    IntegrationActionCustomLog
 )
 from app import settings
-from app.services.activity_logger import publish_event, activity_logger
+from app.services.activity_logger import publish_event, activity_logger, log_activity
 
 
 @pytest.mark.parametrize(
@@ -78,7 +76,7 @@ async def test_activity_logger_decorator_with_arguments(
         action_config=pull_observations_config
     )
 
-    # Only one events expected, on completion
+    # Only one event expected, on completion
     assert mock_publish_event.call_count == 1
     assert isinstance(mock_publish_event.call_args_list[0].kwargs.get("event"), IntegrationActionComplete)
 
@@ -104,4 +102,66 @@ async def test_activity_logger_decorator_on_error(
     assert mock_publish_event.call_count == 2
     assert isinstance(mock_publish_event.call_args_list[0].kwargs.get("event"), IntegrationActionStarted)
     assert isinstance(mock_publish_event.call_args_list[1].kwargs.get("event"), IntegrationActionFailed)
+
+
+@pytest.mark.asyncio
+async def test_log_activity_debug(mocker, integration_v2, pull_observations_config, mock_publish_event):
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    await log_activity(
+        integration_id=integration_v2.id,
+        action_id="pull_observations",
+        level=LogLevel.DEBUG,
+        title="Extracted 10 observations from 2 devices",
+        data={"devices": ["deviceid1", "deviceid2"]},
+        config_data=pull_observations_config.data
+    )
+    assert mock_publish_event.call_count == 1
+    assert isinstance(mock_publish_event.call_args_list[0].kwargs.get("event"), IntegrationActionCustomLog)
+
+
+@pytest.mark.asyncio
+async def test_log_activity_info(mocker, integration_v2, mock_publish_event, pull_observations_config):
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    await log_activity(
+        integration_id=integration_v2.id,
+        action_id="pull_observations",
+        level=LogLevel.INFO,
+        title="Extracting observations with filter..",
+        data={"start_date": "2024-01-01", "end_date": "2024-01-31"},
+        config_data=pull_observations_config.data
+    )
+    assert mock_publish_event.call_count == 1
+    assert isinstance(mock_publish_event.call_args_list[0].kwargs.get("event"), IntegrationActionCustomLog)
+
+
+@pytest.mark.asyncio
+async def test_log_activity_warning(mocker, integration_v2, mock_publish_event, pull_observations_config):
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    await log_activity(
+        integration_id=integration_v2.id,
+        action_id="pull_observations",
+        level=LogLevel.WARNING,
+        title="Skipping end_date because it's greater than today. Please review your configuration.",
+        config_data=pull_observations_config.data
+    )
+    assert mock_publish_event.call_count == 1
+    assert isinstance(mock_publish_event.call_args_list[0].kwargs.get("event"), IntegrationActionCustomLog)
+
+
+@pytest.mark.asyncio
+async def test_log_activity_error(mocker, integration_v2, mock_publish_event, pull_observations_config):
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    await log_activity(
+        integration_id=integration_v2.id,
+        action_id="pull_observations",
+        level=LogLevel.ERROR,
+        title="Error getting data from System X",
+        data={"error": "Connection error with host 'systemx.com'"},
+        config_data=pull_observations_config.data
+    )
+    assert mock_publish_event.call_count == 1
+    assert isinstance(mock_publish_event.call_args_list[0].kwargs.get("event"), IntegrationActionCustomLog)
+
+
+
 

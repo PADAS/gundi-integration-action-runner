@@ -55,8 +55,8 @@ async def publish_event(event: SystemEventBaseModel, topic_name: str):
 async def log_activity(integration_id: str, action_id: str, title: str, level="INFO", config_data: dict = None, data: dict = None):
     """
     This is a helper method to send custom activity logs to the portal.
-    :param integration_id:
-    :param action_id:
+    :param integration_id: UUID of the integration
+    :param action_id: str id of the action being executed
     :param title: A human-readable string that will appear in the activity log
     :param level: The level of the log, e.g. DEBUG, INFO, WARNING, ERROR
     :param data: Any extra data to be logged as a dict
