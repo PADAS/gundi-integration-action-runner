@@ -4,12 +4,13 @@ import httpx
 import stamina
 from gundi_client_v2 import GundiClient
 from app.actions import action_handlers
+from app import settings
 from fastapi import status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
-from gundi_core.events import LogLevel
+from gundi_core.events import LogLevel, IntegrationActionFailed, ActionExecutionFailed
 from .utils import find_config_for_action
-from .activity_logger import log_activity
+from .activity_logger import log_activity, publish_event
 
 
 _portal = GundiClient()
@@ -31,11 +32,15 @@ async def execute_action(integration_id: str, action_id: str):
     except Exception as e:
         message = f"Error retrieving configuration for integration '{integration_id}': {e}"
         logger.exception(message)
-        await log_activity(
-            integration_id=integration_id,
-            action_id=action_id,
-            level=LogLevel.ERROR,
-            title=message,
+        await publish_event(
+            event=IntegrationActionFailed(
+                payload=ActionExecutionFailed(
+                    integration_id=integration_id,
+                    action_id=action_id,
+                    error=message
+                )
+            ),
+            topic_name=settings.INTEGRATION_EVENTS_TOPIC,
         )
         return JSONResponse(
             status_code=e.response.status_code if hasattr(e, "response") else status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -51,12 +56,16 @@ async def execute_action(integration_id: str, action_id: str):
         message = f"Configuration for action '{action_id}' for integration {str(integration.id)} " \
                   f"is missing. Please fix the integration setup in the portal."
         logger.error(message)
-        await log_activity(
-            integration_id=integration_id,
-            action_id=action_id,
-            level=LogLevel.ERROR,
-            title=f"Configuration missing for action '{action_id}'",
-            config_data={"configurations": [i.dict() for i in integration.configurations]} ,
+        await publish_event(
+            event=IntegrationActionFailed(
+                payload=ActionExecutionFailed(
+                    integration_id=integration_id,
+                    action_id=action_id,
+                    error=f"Configuration missing for action '{action_id}'",
+                    config_data={"configurations": [i.dict() for i in integration.configurations]},
+                )
+            ),
+            topic_name=settings.INTEGRATION_EVENTS_TOPIC,
         )
         return JSONResponse(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -68,12 +77,16 @@ async def execute_action(integration_id: str, action_id: str):
     except KeyError as e:
         message = f"Action '{action_id}' is not supported for this integration"
         logger.exception(message)
-        await log_activity(
-            integration_id=integration_id,
-            action_id=action_id,
-            level=LogLevel.ERROR,
-            title=message,
-            config_data=action_config.data or {},
+        await publish_event(
+            event=IntegrationActionFailed(
+                payload=ActionExecutionFailed(
+                    integration_id=integration_id,
+                    action_id=action_id,
+                    config_data=action_config,
+                    error=message
+                )
+            ),
+            topic_name=settings.INTEGRATION_EVENTS_TOPIC,
         )
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -82,12 +95,16 @@ async def execute_action(integration_id: str, action_id: str):
     except Exception as e:
         message = f"Internal error executing action '{action_id}': {e}"
         logger.exception(message)
-        await log_activity(
-            integration_id=integration_id,
-            action_id=action_id,
-            level=LogLevel.ERROR,
-            title=message,
-            config_data={"configurations": [c.dict() for c in integration.configurations]},
+        await publish_event(
+            event=IntegrationActionFailed(
+                payload=ActionExecutionFailed(
+                    integration_id=integration_id,
+                    action_id=action_id,
+                    config_data={"configurations": [c.dict() for c in integration.configurations]},
+                    error=message
+                )
+            ),
+            topic_name=settings.INTEGRATION_EVENTS_TOPIC,
         )
         return JSONResponse(
             status_code=e.response.status_code if hasattr(e, "response") else status.HTTP_500_INTERNAL_SERVER_ERROR,
