@@ -105,7 +105,7 @@ async def test_activity_logger_decorator_on_error(
 
 
 @pytest.mark.asyncio
-async def test_log_activity_debug(mocker, integration_v2, pull_observations_config, mock_publish_event):
+async def test_log_activity_with_debug_level(mocker, integration_v2, pull_observations_config, mock_publish_event):
     mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
     await log_activity(
         integration_id=integration_v2.id,
@@ -120,7 +120,7 @@ async def test_log_activity_debug(mocker, integration_v2, pull_observations_conf
 
 
 @pytest.mark.asyncio
-async def test_log_activity_info(mocker, integration_v2, mock_publish_event, pull_observations_config):
+async def test_log_activity_with_info_level(mocker, integration_v2, mock_publish_event, pull_observations_config):
     mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
     await log_activity(
         integration_id=integration_v2.id,
@@ -135,7 +135,7 @@ async def test_log_activity_info(mocker, integration_v2, mock_publish_event, pul
 
 
 @pytest.mark.asyncio
-async def test_log_activity_warning(mocker, integration_v2, mock_publish_event, pull_observations_config):
+async def test_log_activity_with_warning_level(mocker, integration_v2, mock_publish_event, pull_observations_config):
     mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
     await log_activity(
         integration_id=integration_v2.id,
@@ -149,7 +149,7 @@ async def test_log_activity_warning(mocker, integration_v2, mock_publish_event, 
 
 
 @pytest.mark.asyncio
-async def test_log_activity_error(mocker, integration_v2, mock_publish_event, pull_observations_config):
+async def test_log_activity_with_error_level(mocker, integration_v2, mock_publish_event, pull_observations_config):
     mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
     await log_activity(
         integration_id=integration_v2.id,
@@ -161,7 +161,4 @@ async def test_log_activity_error(mocker, integration_v2, mock_publish_event, pu
     )
     assert mock_publish_event.call_count == 1
     assert isinstance(mock_publish_event.call_args_list[0].kwargs.get("event"), IntegrationActionCustomLog)
-
-
-
 
