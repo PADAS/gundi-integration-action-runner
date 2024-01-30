@@ -1,9 +1,5 @@
 import pytest
-from fastapi.testclient import TestClient
-from app.main import app
 from app.services.gundi import send_events_to_gundi, send_observations_to_gundi
-
-api_client = TestClient(app)
 
 
 @pytest.mark.asyncio

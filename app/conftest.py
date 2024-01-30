@@ -1,5 +1,7 @@
 import asyncio
 import datetime
+import json
+
 import pytest
 from unittest.mock import MagicMock
 from app import settings
@@ -28,6 +30,29 @@ def async_return(result):
     f = asyncio.Future()
     f.set_result(result)
     return f
+
+
+@pytest.fixture
+def mock_integration_state():
+    return {"last_execution": "2024-01-29T11:20:00+0200"}
+
+
+@pytest.fixture
+def mock_redis(mocker, mock_integration_state):
+    redis = MagicMock()
+    redis_client = mocker.MagicMock()
+    redis_client.set.return_value = async_return(MagicMock())
+    redis_client.get.return_value = async_return(json.dumps(mock_integration_state, default=str))
+    redis_client.setex.return_value = async_return(None)
+    redis_client.incr.return_value = redis_client
+    redis_client.decr.return_value = async_return(None)
+    redis_client.expire.return_value = redis_client
+    redis_client.execute.return_value = async_return((1, True))
+    redis_client.__aenter__.return_value = redis_client
+    redis_client.__aexit__.return_value = None
+    redis_client.pipeline.return_value = redis_client
+    redis.Redis.return_value = redis_client
+    return redis
 
 
 @pytest.fixture
