@@ -37,6 +37,9 @@ PORTAL_OUTBOUND_INTEGRATIONS_ENDPOINT = (
 PORTAL_INBOUND_INTEGRATIONS_ENDPOINT = (
     f"{PORTAL_API_ENDPOINT}/integrations/inbound/configurations"
 )
+GUNDI_API_BASE_URL = env.str("GUNDI_API_BASE_URL", None)
+GUNDI_API_SSL_VERIFY = env.bool("GUNDI_API_SSL_VERIFY", True)
+SENSORS_API_BASE_URL = env.str("SENSORS_API_BASE_URL", None)
 
 # Used in OTel traces/spans to set the 'environment' attribute, used on metrics calculation
 TRACE_ENVIRONMENT = env.str("TRACE_ENVIRONMENT", "dev")
@@ -55,3 +58,7 @@ KEYCLOAK_ISSUER = f"{KEYCLOAK_AUTH_SERVICE}/realms/{KEYCLOAK_REALM}"
 REDIS_HOST = env.str("REDIS_HOST", "localhost")
 REDIS_PORT = env.int("REDIS_PORT", 6379)
 REDIS_STATE_DB = env.int("REDIS_STATE_DB", 0)
+
+
+# Settings for system events
+INTEGRATION_EVENTS_TOPIC = env.str("INTEGRATION_EVENTS_TOPIC", "integration-events")

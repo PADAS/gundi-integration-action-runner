@@ -4,10 +4,13 @@ import httpx
 import stamina
 from gundi_client_v2 import GundiClient
 from app.actions import action_handlers
+from app import settings
 from fastapi import status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
+from gundi_core.events import IntegrationActionFailed, ActionExecutionFailed
 from .utils import find_config_for_action
+from .activity_logger import publish_event
 
 
 _portal = GundiClient()
@@ -29,6 +32,16 @@ async def execute_action(integration_id: str, action_id: str):
     except Exception as e:
         message = f"Error retrieving configuration for integration '{integration_id}': {e}"
         logger.exception(message)
+        await publish_event(
+            event=IntegrationActionFailed(
+                payload=ActionExecutionFailed(
+                    integration_id=integration_id,
+                    action_id=action_id,
+                    error=message
+                )
+            ),
+            topic_name=settings.INTEGRATION_EVENTS_TOPIC,
+        )
         return JSONResponse(
             status_code=e.response.status_code if hasattr(e, "response") else status.HTTP_500_INTERNAL_SERVER_ERROR,
             content=jsonable_encoder({"detail": message}),
@@ -43,16 +56,38 @@ async def execute_action(integration_id: str, action_id: str):
         message = f"Configuration for action '{action_id}' for integration {str(integration.id)} " \
                   f"is missing. Please fix the integration setup in the portal."
         logger.error(message)
+        await publish_event(
+            event=IntegrationActionFailed(
+                payload=ActionExecutionFailed(
+                    integration_id=integration_id,
+                    action_id=action_id,
+                    error=f"Configuration missing for action '{action_id}'",
+                    config_data={"configurations": [i.dict() for i in integration.configurations]},
+                )
+            ),
+            topic_name=settings.INTEGRATION_EVENTS_TOPIC,
+        )
         return JSONResponse(
             status_code=status.HTTP_404_NOT_FOUND,
             content=jsonable_encoder({"detail": message}),
         )
     try:  # Execute the action
         handler = action_handlers[action_id]
-        result = await handler(integration, action_config)
+        result = await handler(integration=integration, action_config=action_config)
     except KeyError as e:
         message = f"Action '{action_id}' is not supported for this integration"
         logger.exception(message)
+        await publish_event(
+            event=IntegrationActionFailed(
+                payload=ActionExecutionFailed(
+                    integration_id=integration_id,
+                    action_id=action_id,
+                    config_data=action_config,
+                    error=message
+                )
+            ),
+            topic_name=settings.INTEGRATION_EVENTS_TOPIC,
+        )
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             content=jsonable_encoder({"detail": message}),
@@ -60,10 +95,20 @@ async def execute_action(integration_id: str, action_id: str):
     except Exception as e:
         message = f"Internal error executing action '{action_id}': {e}"
         logger.exception(message)
+        await publish_event(
+            event=IntegrationActionFailed(
+                payload=ActionExecutionFailed(
+                    integration_id=integration_id,
+                    action_id=action_id,
+                    config_data={"configurations": [c.dict() for c in integration.configurations]},
+                    error=message
+                )
+            ),
+            topic_name=settings.INTEGRATION_EVENTS_TOPIC,
+        )
         return JSONResponse(
             status_code=e.response.status_code if hasattr(e, "response") else status.HTTP_500_INTERNAL_SERVER_ERROR,
             content=jsonable_encoder({"detail": message}),
         )
     else:
-        # ToDo: emit events on execution completion (success or error) once we move forward with the EDA
         return result
