@@ -2,14 +2,24 @@ import pytest
 from app.services.gundi import send_events_to_gundi, send_observations_to_gundi
 
 
+def set_mocks(gundi_api_story, action_runner_story):
+    return {
+        "given_gundi_client_v2_class_mock": gundi_api_story.given_gundi_client_v2_class_mock(),
+        "given_gundi_sensors_client_class_mock": gundi_api_story.given_gundi_sensors_client_class_mock(),
+        "given_publish_event_mock": action_runner_story.given_publish_event_mock()
+    }
+
+
 @pytest.mark.asyncio
 async def test_send_events_to_gundi(
-        mocker, mock_gundi_client_v2_class, mock_gundi_sensors_client_class,
-        mock_get_gundi_api_key, integration_v2
+        mocker,
+        action_runner_story,
+        gundi_api_story
 ):
-    mocker.patch("app.services.gundi.GundiClient", mock_gundi_client_v2_class)
-    mocker.patch("app.services.gundi.GundiDataSenderClient", mock_gundi_sensors_client_class)
-    mocker.patch("app.services.gundi._get_gundi_api_key", mock_get_gundi_api_key)
+    mocks = set_mocks(gundi_api_story, action_runner_story)
+    mocker.patch("app.services.gundi.GundiClient", mocks["given_gundi_client_v2_class_mock"])
+    mocker.patch("app.services.gundi.GundiDataSenderClient", mocks["given_gundi_sensors_client_class_mock"])
+    mocker.patch("app.services.gundi._get_gundi_api_key", mocks["given_publish_event_mock"])
     events = [
         {
             "title": "Animal Sighting",
@@ -40,23 +50,25 @@ async def test_send_events_to_gundi(
     ]
     response = await send_events_to_gundi(
         events=events,
-        integration_id=integration_v2.id
+        integration_id=gundi_api_story.given_default_integration_v2_object().id
     )
 
     # Data is sent to gundi using the REST API for now
     assert len(response) == 2
-    assert mock_gundi_sensors_client_class.called
-    mock_gundi_sensors_client_class.return_value.post_events.assert_called_once_with(data=events)
+    assert mocks["given_gundi_sensors_client_class_mock"].called
+    mocks["given_gundi_sensors_client_class_mock"].return_value.post_events.assert_called_once_with(data=events)
 
 
 @pytest.mark.asyncio
 async def test_send_observations_to_gundi(
-        mocker, mock_gundi_client_v2_class, mock_gundi_sensors_client_class,
-        mock_get_gundi_api_key, integration_v2
+        mocker,
+        action_runner_story,
+        gundi_api_story
 ):
-    mocker.patch("app.services.gundi.GundiClient", mock_gundi_client_v2_class)
-    mocker.patch("app.services.gundi.GundiDataSenderClient", mock_gundi_sensors_client_class)
-    mocker.patch("app.services.gundi._get_gundi_api_key", mock_get_gundi_api_key)
+    mocks = set_mocks(gundi_api_story, action_runner_story)
+    mocker.patch("app.services.gundi.GundiClient", mocks["given_gundi_client_v2_class_mock"])
+    mocker.patch("app.services.gundi.GundiDataSenderClient", mocks["given_gundi_sensors_client_class_mock"])
+    mocker.patch("app.services.gundi._get_gundi_api_key", mocks["given_publish_event_mock"])
     observations = [
         {
             "source": "device-xy123",
@@ -87,10 +99,10 @@ async def test_send_observations_to_gundi(
     ]
     response = await send_observations_to_gundi(
         observations=observations,
-        integration_id=integration_v2.id
+        integration_id=gundi_api_story.given_default_integration_v2_object().id
     )
 
     # Data is sent to gundi using the REST API for now
     assert len(response) == 2
-    assert mock_gundi_sensors_client_class.called
-    mock_gundi_sensors_client_class.return_value.post_observations.assert_called_once_with(data=observations)
+    assert mocks["given_gundi_sensors_client_class_mock"].called
+    mocks["given_gundi_sensors_client_class_mock"].return_value.post_observations.assert_called_once_with(data=observations)
