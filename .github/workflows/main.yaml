@@ -1,0 +1,70 @@
+name: Build integration
+on:
+  push:
+    branches:
+      - main
+      - 'release-**'
+
+jobs:
+  vars:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.vars.outputs.tag }}
+      repository: ${{ steps.vars.outputs.repository }}
+      tf_file_dev: ${{ steps.vars.outputs.tf_file_dev }}
+      tf_file_stage: ${{ steps.vars.outputs.tf_file_stage }}
+      tf_file_prod: ${{ steps.vars.outputs.tf_file_prod }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: vars
+        run: |
+          echo "tag=${{ github.head_ref || github.ref_name }}-$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "repository=us-central1-docker.pkg.dev/cdip-78ca/gundi-integrations/${{ github.event.repository.name }}" >> $GITHUB_OUTPUT
+          echo "tf_file_dev=environments/dev/integrations/${{ github.event.repository.name }}/terragrunt.hcl" >> $GITHUB_OUTPUT
+          echo "tf_file_stage=environments/stage/integrations/${{ github.event.repository.name }}/terragrunt.hcl" >> $GITHUB_OUTPUT
+          echo "tf_file_prod=environments/prod/integrations/${{ github.event.repository.name }}/terragrunt.hcl" >> $GITHUB_OUTPUT
+  
+  build:
+    uses: PADAS/gundi-workflows/.github/workflows/build_docker.yml@v1-stable
+    needs: vars
+    with:
+      repository: ${{ needs.vars.outputs.repository }}
+      tag: ${{ needs.vars.outputs.tag }}
+      workload_identity_provider: ${{ vars.GUNDI_INTEGRATIONS_WORKLOAD_IDENTITY_PROVIDER}}
+      service_account: ${{ vars.GUNDI_INTEGRATIONS_SERVICE_ACCOUNT }}
+
+  deploy_dev:
+    uses: PADAS/gundi-workflows/.github/workflows/update_hcl.yml@v1-stable
+    if: startsWith(github.ref, 'refs/heads/main')
+    needs: [vars, build]
+    with:
+      git_repository: PADAS/gundi-integrations-v2-infra
+      file_location: ${{ needs.vars.outputs.tf_file_dev }}
+      key_name: image
+      new_value: "${{ needs.vars.outputs.repository }}:${{ needs.vars.outputs.tag }}"
+    secrets:
+      ssh-key: ${{ secrets.GUNDI_INTEGRATIONS_DEPLOY_KEY }}
+
+  deploy_stage:
+    uses: PADAS/gundi-workflows/.github/workflows/update_hcl.yml@v1-stable
+    if: startsWith(github.ref, 'refs/heads/release')
+    needs: [vars, build]
+    with:
+      git_repository: PADAS/gundi-integrations-v2-infra
+      file_location: ${{ needs.vars.outputs.tf_file_stage }}
+      key_name: image
+      new_value: "${{ needs.vars.outputs.repository }}:${{ needs.vars.outputs.tag }}"
+    secrets:
+      ssh-key: ${{ secrets.GUNDI_INTEGRATIONS_DEPLOY_KEY }}
+
+  deploy_prod:
+    uses: PADAS/gundi-workflows/.github/workflows/update_hcl.yml@v1-stable
+    if: startsWith(github.ref, 'refs/heads/release')
+    needs: [vars, build, deploy_stage]
+    with:
+      git_repository: PADAS/gundi-integrations-v2-infra
+      file_location: ${{ needs.vars.outputs.tf_file_prod }}
+      key_name: image
+      new_value: "${{ needs.vars.outputs.repository }}:${{ needs.vars.outputs.tag }}"
+    secrets:
+      ssh-key: ${{ secrets.GUNDI_INTEGRATIONS_DEPLOY_KEY }}
