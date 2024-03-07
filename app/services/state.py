@@ -22,6 +22,11 @@ class IntegrationStateManager:
             json.dumps(state, default=str)
         )
 
+    async def delete_state(self, integration_id: str, action_id: str, source_id: str = "no-source"):
+        await self.db_client.delete(
+            f"integration_state.{integration_id}.{action_id}.{source_id}"
+        )
+
     def __str__(self):
         return f"IntegrationStateManager(host={self.db_client.host}, port={self.db_client.port}, db={self.db_client.db})"
 
