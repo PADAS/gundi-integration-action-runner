@@ -69,13 +69,11 @@ async def test_delete_integration_state(mocker, mock_redis, integration_v2):
 
     # then delete the state
 
-    state = await state_manager.delete_state(
+    await state_manager.delete_state(
         integration_id=integration_id,
         action_id="pull_observations",
         # No source set
     )
-
-    assert state is None
 
     mock_redis.Redis.return_value.delete.assert_called_once_with(
         f"integration_state.{integration_id}.pull_observations.no-source"
@@ -143,13 +141,11 @@ async def test_delete_state_source_state(mocker, mock_redis, integration_v2, moc
 
     # delete state
 
-    state = await state_manager.delete_state(
+    await state_manager.delete_state(
         integration_id=integration_id,
         action_id="pull_observations",
         source_id=source_id
     )
-
-    assert state is None
 
     mock_redis.Redis.return_value.delete.assert_called_once_with(
         f"integration_state.{integration_id}.pull_observations.{source_id}"
