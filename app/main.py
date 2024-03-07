@@ -26,6 +26,7 @@ root_path = os.environ.get("ROOT_PATH", "")
 async def lifespan(app: FastAPI):
     # Startup Hook
     if settings.SELF_REGISTRATION_ENABLED:
+        # ToDo: Maybe is better to register only on demand with "register.py" script?
         await register_integration_in_gundi(gundi_client=_portal)
     yield
     # Shotdown Hook
