@@ -62,3 +62,5 @@ REDIS_STATE_DB = env.int("REDIS_STATE_DB", 0)
 
 # Settings for system events
 INTEGRATION_EVENTS_TOPIC = env.str("INTEGRATION_EVENTS_TOPIC", "integration-events")
+
+SELF_REGISTRATION_ENABLED = env.bool("SELF_REGISTRATION_ENABLED", True)
