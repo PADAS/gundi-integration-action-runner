@@ -72,8 +72,10 @@ async def execute_action(integration_id: str, action_id: str):
             content=jsonable_encoder({"detail": message}),
         )
     try:  # Execute the action
-        handler = action_handlers[action_id]
-        result = await handler(integration=integration, action_config=action_config)
+        handler, config_model = action_handlers[action_id]
+        # ToDo: Handle parsing errors?
+        parsed_config = config_model.parse_obj(action_config.data)
+        result = await handler(integration, parsed_config)
     except KeyError as e:
         message = f"Action '{action_id}' is not supported for this integration"
         logger.exception(message)
