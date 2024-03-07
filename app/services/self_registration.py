@@ -34,9 +34,12 @@ async def register_integration_in_gundi(gundi_client):
                 "value": action_id,
                 "description": f"{integration_type_name} {action_name} action",
                 "schema": action_schema,
+                # ToDo: Let the dev define which actions should run periodically?
+                "is_periodic_action": True if issubclass(config_model, PullActionConfiguration) else False,
             }
         )
     data["actions"] = actions
     # Register the integration type and actions in Gundi
     response = await gundi_client.register_integration_type(data)
+    # ToDo: Action Deletions? For now must be deleted from the django admin
     return response
