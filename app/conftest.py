@@ -43,6 +43,7 @@ def mock_redis(mocker, mock_integration_state):
     redis_client = mocker.MagicMock()
     redis_client.set.return_value = async_return(MagicMock())
     redis_client.get.return_value = async_return(json.dumps(mock_integration_state, default=str))
+    redis_client.delete.return_value = async_return(MagicMock())
     redis_client.setex.return_value = async_return(None)
     redis_client.incr.return_value = redis_client
     redis_client.decr.return_value = async_return(None)
