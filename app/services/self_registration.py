@@ -1,7 +1,7 @@
 import json
-
 from app.actions import action_handlers, AuthActionConfiguration, PullActionConfiguration, PushActionConfiguration
 from app.settings.integration import INTEGRATION_TYPE_SLUG
+from .core import ActionTypeEnum
 
 
 async def register_integration_in_gundi(gundi_client):
@@ -20,13 +20,13 @@ async def register_integration_in_gundi(gundi_client):
         action_name = action_id.replace("_", " ").title()
         action_schema = json.loads(config_model.schema_json())
         if issubclass(config_model, AuthActionConfiguration):
-            action_type = "auth"
+            action_type = ActionTypeEnum.AUTHENTICATION.value
         elif issubclass(config_model, PullActionConfiguration):
-            action_type = "pull"
+            action_type = ActionTypeEnum.PULL_DATA.value
         elif issubclass(config_model, PushActionConfiguration):
-            action_type = "push"
+            action_type = ActionTypeEnum.PUSH_DATA.value
         else:
-            action_type = "generic"
+            action_type = ActionTypeEnum.GENERIC.value
         actions.append(
             {
                 "type": action_type,
