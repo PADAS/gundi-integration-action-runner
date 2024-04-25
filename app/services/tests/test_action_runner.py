@@ -14,6 +14,7 @@ async def test_execute_action_from_pubsub(
     mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
     mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
     mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
 
     response = api_client.post(
         "/",
@@ -23,7 +24,8 @@ async def test_execute_action_from_pubsub(
 
     assert response.status_code == 200
     assert mock_gundi_client_v2.get_integration_details.called
-    assert mock_action_handlers["pull_observations"].called
+    mock_action_handler, mock_config = mock_action_handlers["pull_observations"]
+    assert mock_action_handler.called
 
 
 @pytest.mark.asyncio
@@ -34,6 +36,7 @@ async def test_execute_action_from_api(
     mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
     mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
     mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
 
     response = api_client.post(
         "/v1/actions/execute/",
@@ -45,4 +48,5 @@ async def test_execute_action_from_api(
 
     assert response.status_code == 200
     assert mock_gundi_client_v2.get_integration_details.called
-    assert mock_action_handlers["pull_observations"].called
+    mock_action_handler, mock_config = mock_action_handlers["pull_observations"]
+    assert mock_action_handler.called

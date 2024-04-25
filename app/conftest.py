@@ -20,6 +20,8 @@ from gundi_core.events import (
     LogLevel
 )
 
+from app.actions import GenericActionConfiguration
+
 
 class AsyncMock(MagicMock):
     async def __call__(self, *args, **kwargs):
@@ -268,7 +270,7 @@ def mock_action_handlers(mocker):
     mock_action_handler = AsyncMock()
     mock_action_handler.return_value = {"observations_extracted": 10}
     mock_action_handlers = mocker.MagicMock()
-    mock_action_handlers.__getitem__.return_value = mock_action_handler
+    mock_action_handlers.__getitem__.return_value = (mock_action_handler, GenericActionConfiguration)
     return mock_action_handlers
 
 
