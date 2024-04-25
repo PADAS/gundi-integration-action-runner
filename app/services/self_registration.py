@@ -4,7 +4,7 @@ from app.settings.integration import INTEGRATION_TYPE_SLUG
 from .core import ActionTypeEnum
 
 
-async def register_integration_in_gundi(gundi_client):
+async def register_integration_in_gundi(gundi_client, service_url=None):
     # Prepare the integration name and value
     integration_type_slug = INTEGRATION_TYPE_SLUG.strip().lower()
     integration_type_name = integration_type_slug.replace("_", " ").title()
@@ -13,6 +13,8 @@ async def register_integration_in_gundi(gundi_client):
         "value": integration_type_slug,
         "description": f"Default type for integrations with {integration_type_name}",
     }
+    if service_url:
+        data["service_url"] = service_url
     # Prepare the actions and schemas
     actions = []
     for action_id, handler in action_handlers.items():
