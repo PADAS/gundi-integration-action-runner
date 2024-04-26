@@ -1,4 +1,8 @@
 import json
+import datetime
+import stamina
+import httpx
+
 from app.actions import action_handlers, AuthActionConfiguration, PullActionConfiguration, PushActionConfiguration
 from app.settings.integration import INTEGRATION_TYPE_SLUG
 from .core import ActionTypeEnum
@@ -36,12 +40,12 @@ async def register_integration_in_gundi(gundi_client, service_url=None):
                 "value": action_id,
                 "description": f"{integration_type_name} {action_name} action",
                 "schema": action_schema,
-                # ToDo: Let the dev define which actions should run periodically?
                 "is_periodic_action": True if issubclass(config_model, PullActionConfiguration) else False,
             }
         )
     data["actions"] = actions
     # Register the integration type and actions in Gundi
-    response = await gundi_client.register_integration_type(data)
-    # ToDo: Action Deletions? For now must be deleted from the django admin
+    async for attempt in stamina.retry_context(on=httpx.HTTPError, wait_initial=datetime.timedelta(seconds=1),attempts=3):
+        with attempt:
+            response = await gundi_client.register_integration_type(data)
     return response
