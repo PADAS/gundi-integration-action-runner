@@ -31,11 +31,13 @@ async def execute(
         background_tasks.add_task(
             execute_action,
             integration_id=request.integration_id,
-            action_id=request.action_id
+            action_id=request.action_id,
+            config_overrides=request.config_overrides
         )
         return {"message": "Action execution started in background"}
     else:
         return await execute_action(
             integration_id=request.integration_id,
-            action_id=request.action_id
+            action_id=request.action_id,
+            config_overrides=request.config_overrides
         )

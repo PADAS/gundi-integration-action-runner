@@ -17,7 +17,7 @@ _portal = GundiClient()
 logger = logging.getLogger(__name__)
 
 
-async def execute_action(integration_id: str, action_id: str):
+async def execute_action(integration_id: str, action_id: str, config_overrides: dict = None):
     """
     Interface for executing actions.
     :param integration_id: The UUID of the integration
@@ -74,8 +74,11 @@ async def execute_action(integration_id: str, action_id: str):
     try:  # Execute the action
         handler, config_model = action_handlers[action_id]
         # ToDo: Handle parsing errors?
-        parsed_config = config_model.parse_obj(action_config.data)
-        result = await handler(integration, parsed_config)
+        config_data = action_config.data
+        if config_overrides:
+            config_data.update(config_overrides)
+        parsed_config = config_model.parse_obj(config_data)
+        result = await handler(integration=integration, action_config=parsed_config)
     except KeyError as e:
         message = f"Action '{action_id}' is not supported for this integration"
         logger.exception(message)

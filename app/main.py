@@ -87,7 +87,8 @@ async def execute(
     background_tasks.add_task(
         execute_action,
         integration_id=json_payload.get("integration_id"),
-        action_id=json_payload.get("action_id")
+        action_id=json_payload.get("action_id"),
+        config_overrides=json_payload.get("config_overrides"),
     )
     return {}
 

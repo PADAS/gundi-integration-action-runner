@@ -20,7 +20,7 @@ from gundi_core.events import (
     LogLevel
 )
 
-from app.actions import GenericActionConfiguration
+from app.actions import PullActionConfiguration
 
 
 class AsyncMock(MagicMock):
@@ -265,12 +265,16 @@ def mock_publish_event(gcp_pubsub_publish_response):
     return mock_publish_event
 
 
+class MockPullActionConfiguration(PullActionConfiguration):
+    lookback_days: int = 10
+
+
 @pytest.fixture
 def mock_action_handlers(mocker):
     mock_action_handler = AsyncMock()
     mock_action_handler.return_value = {"observations_extracted": 10}
     mock_action_handlers = mocker.MagicMock()
-    mock_action_handlers.__getitem__.return_value = (mock_action_handler, GenericActionConfiguration)
+    mock_action_handlers.__getitem__.return_value = (mock_action_handler, MockPullActionConfiguration)
     return mock_action_handlers
 
 
@@ -300,6 +304,20 @@ def event_v2_cloud_event_payload():
     return {
         "message": {
             "data": "eyJpbnRlZ3JhdGlvbl9pZCI6ICI4NDNlMDgwMS1lODFhLTQ3ZTUtOWNlMi1iMTc2ZTQ3MzZhODUiLCAiYWN0aW9uX2lkIjogInB1bGxfb2JzZXJ2YXRpb25zIn0=",
+            "messageId": "10298788169291041", "message_id": "10298788169291041",
+            "publishTime": timestamp,
+            "publish_time": timestamp
+        },
+        "subscription": "projects/cdip-stage-78ca/subscriptions/integrationx-actions-sub"
+    }
+
+
+@pytest.fixture
+def event_v2_cloud_event_payload_with_config_overrides():
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    return {
+        "message": {
+            "data": "eyJpbnRlZ3JhdGlvbl9pZCI6ICI4NDNlMDgwMS1lODFhLTQ3ZTUtOWNlMi1iMTc2ZTQ3MzZhODUiLCAiYWN0aW9uX2lkIjogInB1bGxfb2JzZXJ2YXRpb25zIiwgImNvbmZpZ19vdmVycmlkZXMiOiB7Imxvb2tiYWNrX2RheXMiOiAzfX0=",
             "messageId": "10298788169291041", "message_id": "10298788169291041",
             "publishTime": timestamp,
             "publish_time": timestamp
