@@ -274,8 +274,7 @@ class MockPullActionConfiguration(PullActionConfiguration):
 def mock_action_handlers(mocker):
     mock_action_handler = AsyncMock()
     mock_action_handler.return_value = {"observations_extracted": 10}
-    mock_action_handlers = mocker.MagicMock()
-    mock_action_handlers.__getitem__.return_value = (mock_action_handler, MockPullActionConfiguration)
+    mock_action_handlers = {"pull_observations": (mock_action_handler, MockPullActionConfiguration)}
     return mock_action_handlers
 
 
