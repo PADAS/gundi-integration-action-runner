@@ -110,3 +110,25 @@ async def test_execute_action_from_pubsub_with_config_overrides(
     for k, v in config_overrides.items():
         config = mock_action_handler.call_args.kwargs["action_config"]
         assert getattr(config, k) == v
+
+
+@pytest.mark.asyncio
+async def test_execute_action_from_api_with_invalid_config(
+        mocker, mock_gundi_client_v2, integration_v2,
+        mock_publish_event, mock_action_handlers,
+):
+    mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+
+    response = api_client.post(
+        "/v1/actions/execute/",
+        json={
+            "integration_id": str(integration_v2.id),
+            "action_id": "pull_observations",
+            "config_overrides": {"lookback_days": "two"}  # should be an integer
+        }
+    )
+
+    assert response.status_code == 422

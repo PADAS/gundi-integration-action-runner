@@ -1,6 +1,7 @@
 import datetime
 import logging
 import httpx
+import pydantic
 import stamina
 from gundi_client_v2 import GundiClient
 from app.actions import action_handlers
@@ -73,12 +74,29 @@ async def execute_action(integration_id: str, action_id: str, config_overrides: 
         )
     try:  # Execute the action
         handler, config_model = action_handlers[action_id]
-        # ToDo: Handle parsing errors?
         config_data = action_config.data
         if config_overrides:
             config_data.update(config_overrides)
         parsed_config = config_model.parse_obj(config_data)
         result = await handler(integration=integration, action_config=parsed_config)
+    except pydantic.ValidationError as e:
+        message = f"Invalid configuration for action '{action_id}' and integration '{integration_id}': {e.errors()}"
+        logger.error(message)
+        await publish_event(
+            event=IntegrationActionFailed(
+                payload=ActionExecutionFailed(
+                    integration_id=integration_id,
+                    action_id=action_id,
+                    config_data=config_data,
+                    error=message
+                )
+            ),
+            topic_name=settings.INTEGRATION_EVENTS_TOPIC,
+        )
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content=jsonable_encoder({"detail": message}),
+        )
     except KeyError as e:
         message = f"Action '{action_id}' is not supported for this integration"
         logger.exception(message)
