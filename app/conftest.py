@@ -128,6 +128,7 @@ def mock_gundi_client_v2(
     mock_client.get_integration_details.return_value = async_return(
         integration_v2
     )
+    mock_client.register_integration_type = AsyncMock()
     mock_client.__aenter__.return_value = mock_client
     return mock_client
 
