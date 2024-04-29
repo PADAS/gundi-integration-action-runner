@@ -8,9 +8,12 @@ from app.settings.integration import INTEGRATION_TYPE_SLUG
 from .core import ActionTypeEnum
 
 
-async def register_integration_in_gundi(gundi_client, service_url=None):
+async def register_integration_in_gundi(gundi_client, type_slug=None, service_url=None):
     # Prepare the integration name and value
-    integration_type_slug = INTEGRATION_TYPE_SLUG.strip().lower()
+    integration_type_slug = type_slug or INTEGRATION_TYPE_SLUG
+    if not integration_type_slug:
+        raise ValueError("Please define a slug id for this integration type, either passing it in the type_slug argument or setting it in the INTEGRATION_TYPE_SLUG setting.")
+    integration_type_slug = integration_type_slug.strip().lower()
     integration_type_name = integration_type_slug.replace("_", " ").title()
     data = {
         "name": integration_type_name,

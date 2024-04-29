@@ -9,3 +9,4 @@ gundi-client-v2~=2.1.7
 stamina~=23.2.0
 redis~=5.0.1
 gcloud-aio-pubsub~=6.0.0
+click~=8.1.7
