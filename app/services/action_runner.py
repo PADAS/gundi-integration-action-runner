@@ -23,6 +23,7 @@ async def execute_action(integration_id: str, action_id: str, config_overrides: 
     Interface for executing actions.
     :param integration_id: The UUID of the integration
     :param action_id: "test_auth", "pull_observations", "pull_events"
+    :param config_overrides: Optional dictionary with configuration overrides
     :return: action result if any, or raise an exception
     """
     logger.info(f"Executing action '{action_id}' for integration '{integration_id}'...")
