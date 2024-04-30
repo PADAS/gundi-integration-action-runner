@@ -6,7 +6,7 @@ import stamina
 import httpx
 
 from app.actions import action_handlers, AuthActionConfiguration, PullActionConfiguration, PushActionConfiguration
-from app.settings.integration import INTEGRATION_TYPE_SLUG
+from app.settings import INTEGRATION_TYPE_SLUG, INTEGRATION_SERVICE_URL
 from .core import ActionTypeEnum
 
 
@@ -26,9 +26,9 @@ async def register_integration_in_gundi(gundi_client, type_slug=None, service_ur
         "value": integration_type_slug,
         "description": f"Default type for integrations with {integration_type_name}",
     }
-    if service_url:
+    if integration_service_url := service_url or INTEGRATION_SERVICE_URL:
         logger.info(f"Registering '{integration_type_slug}' with service_url: '{service_url}'")
-        data["service_url"] = service_url
+        data["service_url"] = integration_service_url
     # Prepare the actions and schemas
     actions = []
     for action_id, handler in action_handlers.items():

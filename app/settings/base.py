@@ -64,3 +64,5 @@ REDIS_STATE_DB = env.int("REDIS_STATE_DB", 0)
 INTEGRATION_EVENTS_TOPIC = env.str("INTEGRATION_EVENTS_TOPIC", "integration-events")
 
 AUTO_REGISTRATION_ENABLED = env.bool("AUTO_REGISTRATION_ENABLED", False)
+INTEGRATION_TYPE_SLUG = env.str("INTEGRATION_TYPE_SLUG", None)  # Define a string id here e.g. "my_tracker"
+INTEGRATION_SERVICE_URL = env.str("INTEGRATION_SERVICE_URL", None)  # Define a string id here e.g. "my_tracker"
