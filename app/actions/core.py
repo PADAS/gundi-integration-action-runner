@@ -7,6 +7,22 @@ class ActionConfiguration(BaseModel):
     pass
 
 
+class PullActionConfiguration(ActionConfiguration):
+    pass
+
+
+class PushActionConfiguration(ActionConfiguration):
+    pass
+
+
+class AuthActionConfiguration(ActionConfiguration):
+    pass
+
+
+class GenericActionConfiguration(ActionConfiguration):
+    pass
+
+
 def discover_actions(module_name, prefix):
     action_handlers = {}
 
@@ -18,7 +34,11 @@ def discover_actions(module_name, prefix):
     for name, func in all_members:
         if name.startswith(prefix) and inspect.isfunction(func):
             key = name[len(prefix):]  # Remove prefix
-            action_handlers[key] = func
+            if (config_annotation := inspect.signature(func).parameters.get("action_config").annotation) != inspect._empty:
+                config_model = config_annotation
+            else:
+                config_model = GenericActionConfiguration
+            action_handlers[key] = (func, config_model)
 
     return action_handlers
 

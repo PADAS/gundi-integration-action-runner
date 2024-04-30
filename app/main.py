@@ -2,6 +2,8 @@ import base64
 import json
 import logging
 import os
+from contextlib import asynccontextmanager
+
 import uvicorn
 from fastapi import FastAPI, Request, status, Depends, BackgroundTasks
 from fastapi.encoders import jsonable_encoder
@@ -13,14 +15,29 @@ from app.routers import (
 import app.settings as settings
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.services.action_runner import execute_action
+from app.services.action_runner import execute_action, _portal
+from app.services.self_registration import register_integration_in_gundi
 
 # For running behind a proxy, we'll want to configure the root path for OpenAPI browser.
 root_path = os.environ.get("ROOT_PATH", "")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup Hook
+    if settings.REGISTER_ON_START:
+        await register_integration_in_gundi(gundi_client=_portal)
+        # ToDo: set env var to false in GCP after registration
+    yield
+    # Shotdown Hook
+    await _portal.close()
+
+
 app = FastAPI(
     title="Gundi Integration Actions Execution Service",
     description="API to trigger actions against third-party systems",
     version="1",
+    lifespan=lifespan
 )
 
 origins = [
@@ -70,7 +87,8 @@ async def execute(
     background_tasks.add_task(
         execute_action,
         integration_id=json_payload.get("integration_id"),
-        action_id=json_payload.get("action_id")
+        action_id=json_payload.get("action_id"),
+        config_overrides=json_payload.get("config_overrides"),
     )
     return {}
 

@@ -12,15 +12,29 @@ Template repo for integration in Gundi v2.
 - Optionally, use the `log_activity()` method to log custom messages which you can later see in the portal
 
 
-Example: `actions/handlers.py`
+Example: 
+
 ```python
+# actions/configurations.py
+from .core import PullActionConfiguration
+
+
+class PullObservationsConfiguration(PullActionConfiguration):
+    lookback_days: int = 10
+
+
+```
+
+```python
+# actions/handlers.py
 from app.services.activity_logger import activity_logger, log_activity
 from app.services.gundi import send_observations_to_gundi
 from gundi_core.events import LogLevel
+from .configurations import PullObservationsConfiguration
 
 
 @activity_logger()
-async def action_pull_observations(integration, action_config):
+async def action_pull_observations(integration, action_config: PullObservationsConfiguration):
     
     # Add your business logic to extract data here...
     
@@ -31,7 +45,7 @@ async def action_pull_observations(integration, action_config):
         level=LogLevel.INFO,
         title="Extracting observations with filter..",
         data={"start_date": "2024-01-01", "end_date": "2024-01-31"},
-        config_data=action_config.data
+        config_data=action_config.dict()
     )
     
     # Normalize the extracted data into a list of observations following to the Gundi schema:
@@ -55,5 +69,5 @@ async def action_pull_observations(integration, action_config):
     await send_observations_to_gundi(observations=observations, integration_id=integration.id)
 
     # The result will be recorded in the portal if using the activity_logger decorator
-    return {"events_extracted": 10}
+    return {"observations_extracted": 10}
 ```
