@@ -25,9 +25,9 @@ root_path = os.environ.get("ROOT_PATH", "")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup Hook
-    if settings.AUTO_REGISTRATION_ENABLED:
-        # ToDo: Maybe is better to register only on demand with "register.py" script?
+    if settings.REGISTER_ON_START:
         await register_integration_in_gundi(gundi_client=_portal)
+        # ToDo: set env var to false in GCP after registration
     yield
     # Shotdown Hook
     await _portal.close()
