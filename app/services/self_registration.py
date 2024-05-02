@@ -56,7 +56,6 @@ async def register_integration_in_gundi(gundi_client, type_slug=None, service_ur
     data["actions"] = actions
     logger.info(f"Registering '{integration_type_slug}' with actions: '{actions}'")
     # Register the integration type and actions in Gundi
-    print(f"DATAAAAA{data}")
     async for attempt in stamina.retry_context(on=httpx.HTTPError, wait_initial=datetime.timedelta(seconds=1),attempts=3):
         with attempt:
             response = await gundi_client.register_integration_type(data)
