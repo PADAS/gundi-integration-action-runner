@@ -27,7 +27,7 @@ async def register_integration_in_gundi(gundi_client, type_slug=None, service_ur
         "description": f"Default type for integrations with {integration_type_name}",
     }
     if integration_service_url := service_url or INTEGRATION_SERVICE_URL:
-        logger.info(f"Registering '{integration_type_slug}' with service_url: '{service_url}'")
+        logger.info(f"Registering '{integration_type_slug}' with service_url: '{integration_service_url}'")
         data["service_url"] = integration_service_url
     # Prepare the actions and schemas
     actions = []
@@ -56,6 +56,7 @@ async def register_integration_in_gundi(gundi_client, type_slug=None, service_ur
     data["actions"] = actions
     logger.info(f"Registering '{integration_type_slug}' with actions: '{actions}'")
     # Register the integration type and actions in Gundi
+    print(f"DATAAAAA{data}")
     async for attempt in stamina.retry_context(on=httpx.HTTPError, wait_initial=datetime.timedelta(seconds=1),attempts=3):
         with attempt:
             response = await gundi_client.register_integration_type(data)
