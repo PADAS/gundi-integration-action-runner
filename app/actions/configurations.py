@@ -1,24 +1,13 @@
-from .core import ActionConfiguration
+from .core import PullActionConfiguration, AuthActionConfiguration
 
 
-"""
-Define here the data needed for each action that can be performed against the third-party system.
-
-For example, to authenticate and test the connection you may need an endpoint, a username and a password
-class AuthenticateConfig(ActionConfiguration):
-    endpoint: str
+class AuthenticateConfig(AuthActionConfiguration):
+    endpoint: str = "oauth/token"
     username: str
     password: str
-
-And to extract movement data you may need a different endpoint
-class PullObservationsConfig(ActionConfiguration):
-    endpoint: str
-    
-Any extra fields can be added ad needed too.
-"""
+    grant_type: str = "password"
+    refresh_token: str = "string"
 
 
-
-
-
-
+class PullObservationsConfig(PullActionConfiguration):
+    endpoint: str = "mobile/vehicles"
