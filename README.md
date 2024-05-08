@@ -1,40 +1,73 @@
-# CellStop Gundi Repository
+# gundi-integration-action-runner
+Template repo for integration in Gundi v2.
 
-## Description
-
-Lorem ipsum dolor sit amet, consectetur adipiscing elit. Integer nec nunc eu mi scelerisque porttitor ac at nibh. Fusce efficitur erat risus, ut euismod velit lacinia at. Aenean quis gravida elit. Aliquam erat volutpat. Duis sagittis dictum est, nec malesuada nisi feugiat non. Interdum et malesuada fames ac ante ipsum primis in faucibus. Maecenas convallis fringilla lectus, eu varius nisl dignissim vitae.
-
-
-## How to test
-
-- Lorem ipsum dolor sit amet, consectetur adipiscing elit.
-- Curabitur porttitor velit vitae malesuada sodales.
-- Integer efficitur risus a nisi finibus, in sagittis risus fringilla.
-- Curabitur dictum eros id libero sodales hendrerit.
-
-## How to deploy
-
-### STEPS:
-#### First deploy:
-- Run `./first-deploy.sh <ENV>` in the root folder.
-
-    - **NOTE:** If permission denied error returned, run `chmod +x first-deploy.sh` in the root folder and try again.
-
-    - **NOTE:** A file named `.env.<ENV>` needs to be present in the `/src` folder with the needed variables for running in selected ENV for this to work as expected.
+## Usage
+- Fork this repo
+- Implement your own actions in `actions/handlers.py`
+- Define configurations needed for your actions in `action/config.py`
+- Optionally, add the @activity_logger decorator to log common events which you can later see in the portal:
+    - Action execution started
+    - Action execution finished
+    - Error occurred during action execution
+- Optionally, use the `log_activity()` method to log custom messages which you can later see in the portal
 
 
-- Check the logs to verify everything is ok.
+Example: 
+
+```python
+# actions/configurations.py
+from .core import PullActionConfiguration
 
 
-- Check on:
-
-    - [GCP Cloud Run jobs dashboard](https://console.cloud.google.com/run/jobs?project=cdip-78ca) to verify the job was created successfully.
-    - [Jobs schedules](https://console.cloud.google.com/cloudscheduler?project=cdip-78ca) to verify the trigger.
-    - [Secret Manager](https://console.cloud.google.com/security/secret-manager?project=cdip-78ca) to verify the secret.
+class PullObservationsConfiguration(PullActionConfiguration):
+    lookback_days: int = 10
 
 
-#### Update integration
-- Run `gcloud builds submit --config=cloudbuild.yaml --substitutions=_INTEGRATION=cellstop .` in the root folder, pointing the branch with the changes to be applied in the integration.
+```
+
+```python
+# actions/handlers.py
+from app.services.activity_logger import activity_logger, log_activity
+from app.services.gundi import send_observations_to_gundi
+from gundi_core.events import LogLevel
+from .configurations import PullObservationsConfiguration
 
 
-- Check the logs to verify everything is ok.
+@activity_logger()
+async def action_pull_observations(integration, action_config: PullObservationsConfiguration):
+
+    # Add your business logic to extract data here...
+
+    # Optionally, log a custom messages to be shown in the portal
+    await log_activity(
+        integration_id=integration.id,
+        action_id="pull_observations",
+        level=LogLevel.INFO,
+        title="Extracting observations with filter..",
+        data={"start_date": "2024-01-01", "end_date": "2024-01-31"},
+        config_data=action_config.dict()
+    )
+
+    # Normalize the extracted data into a list of observations following to the Gundi schema:
+    observations = [
+        {
+            "source": "collar-xy123",
+            "type": "tracking-device",
+            "subject_type": "puma",
+            "recorded_at": "2024-01-24 09:03:00-0300",
+            "location": {
+                "lat": -51.748,
+                "lon": -72.720
+            },
+            "additional": {
+                "speed_kmph": 10
+            }
+        }
+    ]
+
+    # Send the extracted data to Gundi
+    await send_observations_to_gundi(observations=observations, integration_id=integration.id)
+
+    # The result will be recorded in the portal if using the activity_logger decorator
+    return {"observations_extracted": 10}
+```
