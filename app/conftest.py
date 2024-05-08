@@ -105,17 +105,7 @@ def integration_v2():
 
 @pytest.fixture
 def pull_observations_config():
-    return IntegrationActionConfiguration(
-        id='b3cdc6b2-b247-4fbd-8f86-53079b5860e5',
-        integration='779ff3ab-5589-4f4c-9e0a-ae8d6c9edff0',
-        action=IntegrationActionSummery(
-            id='2e52c0ba-1723-4510-8702-496c232b2012',
-            type='pull',
-            name='Pull Observations',
-            value='pull_observations'
-        ),
-        data={}
-    )
+    return MockPullActionConfiguration(lookback_days=30)
 
 
 @pytest.fixture
