@@ -1,4 +1,4 @@
-from .core import ActionConfiguration
+from .core import ActionConfiguration,  PullActionConfiguration, AuthActionConfiguration
 
 
 class AuthenticateConfig(ActionConfiguration):
