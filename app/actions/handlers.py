@@ -133,7 +133,7 @@ async def action_pull_observations(integration, action_config: PullObservationsC
             with attempt:
                 vehicles = await client.get_vehicles_positions(
                     integration=integration,
-                    config=client.get_pull_config(integration)
+                    config=action_config
                 )
 
         logger.info(f"Observations pulled with success.")
