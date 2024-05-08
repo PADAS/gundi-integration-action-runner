@@ -35,9 +35,9 @@ from .configurations import PullObservationsConfiguration
 
 @activity_logger()
 async def action_pull_observations(integration, action_config: PullObservationsConfiguration):
-
+    
     # Add your business logic to extract data here...
-
+    
     # Optionally, log a custom messages to be shown in the portal
     await log_activity(
         integration_id=integration.id,
@@ -47,7 +47,7 @@ async def action_pull_observations(integration, action_config: PullObservationsC
         data={"start_date": "2024-01-01", "end_date": "2024-01-31"},
         config_data=action_config.dict()
     )
-
+    
     # Normalize the extracted data into a list of observations following to the Gundi schema:
     observations = [
         {
@@ -64,7 +64,7 @@ async def action_pull_observations(integration, action_config: PullObservationsC
             }
         }
     ]
-
+    
     # Send the extracted data to Gundi
     await send_observations_to_gundi(observations=observations, integration_id=integration.id)
 
