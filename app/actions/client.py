@@ -1,13 +1,40 @@
 import httpx
+import pydantic
 
+from datetime import datetime
+from typing import Optional, List
 from app.actions.configurations import (
     AuthenticateConfig,
-    PullObservationsConfig,
-    PullObservationsHeader,
-    PullObservationsResponse
+    PullObservationsConfig
 )
 from app.services.errors import ConfigurationNotFound
 from app.services.utils import find_config_for_action
+
+
+class PullObservationsHeader(pydantic.BaseModel):
+    Authorization: str
+
+
+class VehiclesResponse(pydantic.BaseModel):
+    deviceId: int
+    vehicleId: Optional[int]
+    x: float
+    y: float
+    name: str
+    regNo: Optional[str]
+    iconURL: Optional[str]
+    address: Optional[str]
+    alarm: Optional[str]
+    unit_msisdn: Optional[str]
+    speed: Optional[int]
+    direction: Optional[int]
+    time: Optional[int]
+    timeStr: datetime
+    ignOn: Optional[bool]
+
+
+class PullObservationsResponse(pydantic.BaseModel):
+    vehicles: List[VehiclesResponse]
 
 
 def get_auth_config(integration):

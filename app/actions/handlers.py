@@ -5,8 +5,10 @@ import logging
 import stamina
 import app.actions.client as client
 
+from app.actions.configurations import AuthenticateConfig, PullObservationsConfig
+from app.services.activity_logger import activity_logger
+from app.services.gundi import send_observations_to_gundi
 from app.services.state import IntegrationStateManager
-from gundi_client_v2.client import GundiClient, GundiDataSenderClient
 
 
 logger = logging.getLogger(__name__)
@@ -56,21 +58,10 @@ async def filter_and_transform(vehicles, integration_id, action_id):
         }
         transformed_data.append(data)
 
-        # Update state
-        state = {
-            "latest_device_timestamp": vehicle.timeStr
-        }
-        await state_manager.set_state(
-            integration_id,
-            action_id,
-            state,
-            vehicle.deviceId,
-        )
-
     return transformed_data
 
 
-async def action_auth(integration, action_config):
+async def action_auth(integration, action_config: AuthenticateConfig):
     logger.info(f"Executing auth action with integration {integration} and action_config {action_config}...")
     try:
         token = await client.get_auth_token(
@@ -95,7 +86,7 @@ async def action_auth(integration, action_config):
         return {"valid_credentials": token is not None}
 
 
-async def action_fetch_samples(integration, action_config):
+async def action_fetch_samples(integration, action_config: PullObservationsConfig):
     logger.info(f"Executing fetch_samples action with integration {integration} and action_config {action_config}...")
     try:
         vehicles = await client.get_vehicles_positions(
@@ -129,7 +120,8 @@ async def action_fetch_samples(integration, action_config):
         }
 
 
-async def action_pull_observations(integration, action_config):
+@activity_logger()
+async def action_pull_observations(integration, action_config: PullObservationsConfig):
     logger.info(f"Executing pull_observations action with integration {integration} and action_config {action_config}...")
     try:
         async for attempt in stamina.retry_context(
@@ -149,12 +141,11 @@ async def action_pull_observations(integration, action_config):
         transformed_data = await filter_and_transform(
             vehicles,
             str(integration.id),
-            action_config.action.value
+            "pull_observations"
         )
 
         if transformed_data:
-            # Send transformed data to Sensors API V2 (within gundi-client)
-            gundi_client = GundiClient()
+            # Send transformed data to Sensors API V2
             async for attempt in stamina.retry_context(
                     on=httpx.HTTPError,
                     attempts=3,
@@ -162,23 +153,34 @@ async def action_pull_observations(integration, action_config):
                     wait_max=datetime.timedelta(seconds=10),
             ):
                 with attempt:
-                    apikey = await gundi_client.get_integration_api_key(
-                        integration_id=str(integration.id)
-                    )
-
-            data_sender_client = GundiDataSenderClient(
-                integration_api_key=apikey
-            )
-            async for attempt in stamina.retry_context(
-                    on=httpx.HTTPError,
-                    attempts=3,
-                    wait_initial=datetime.timedelta(seconds=10),
-                    wait_max=datetime.timedelta(seconds=10),
-            ):
-                with attempt:
-                    response = await data_sender_client.post_observations(
-                        data=transformed_data
-                    )
+                    try:
+                        response = await send_observations_to_gundi(
+                            observations=transformed_data,
+                            integration_id=integration.id
+                        )
+                    except httpx.HTTPError as e:
+                        msg = f'Sensors API returned error for integration_id: {str(integration.id)}. Exception: {e}'
+                        logger.exception(
+                            msg,
+                            extra={
+                                'needs_attention': True,
+                                'integration_id': str(integration.id),
+                                'action_id': "pull_observations"
+                            }
+                        )
+                        response = [msg]
+                    else:
+                        for vehicle in transformed_data:
+                            # Update state
+                            state = {
+                                "latest_device_timestamp": vehicle.get("recorded_at")
+                            }
+                            await state_manager.set_state(
+                                str(integration.id),
+                                "pull_observations",
+                                state,
+                                vehicle.get("source")
+                            )
         else:
             response = []
     except httpx.HTTPError as e:
