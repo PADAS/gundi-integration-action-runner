@@ -66,7 +66,7 @@ async def action_auth(integration, action_config: AuthenticateConfig):
     try:
         token = await client.get_auth_token(
             integration=integration,
-            config=client.get_auth_config(integration)
+            config=action_config
         )
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 401:
