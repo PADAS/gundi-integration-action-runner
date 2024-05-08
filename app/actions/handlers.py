@@ -91,7 +91,7 @@ async def action_fetch_samples(integration, action_config: PullObservationsConfi
     try:
         vehicles = await client.get_vehicles_positions(
             integration=integration,
-            config=client.get_fetch_samples_config(integration)
+            config=action_config
         )
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 401:
