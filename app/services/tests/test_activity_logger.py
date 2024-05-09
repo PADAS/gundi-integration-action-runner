@@ -113,7 +113,7 @@ async def test_log_activity_with_debug_level(mocker, integration_v2, pull_observ
         level=LogLevel.DEBUG,
         title="Extracted 10 observations from 2 devices",
         data={"devices": ["deviceid1", "deviceid2"]},
-        config_data=pull_observations_config.data
+        config_data=pull_observations_config.dict()
     )
     assert mock_publish_event.call_count == 1
     assert isinstance(mock_publish_event.call_args_list[0].kwargs.get("event"), IntegrationActionCustomLog)
@@ -128,7 +128,7 @@ async def test_log_activity_with_info_level(mocker, integration_v2, mock_publish
         level=LogLevel.INFO,
         title="Extracting observations with filter..",
         data={"start_date": "2024-01-01", "end_date": "2024-01-31"},
-        config_data=pull_observations_config.data
+        config_data=pull_observations_config.dict()
     )
     assert mock_publish_event.call_count == 1
     assert isinstance(mock_publish_event.call_args_list[0].kwargs.get("event"), IntegrationActionCustomLog)
@@ -142,7 +142,7 @@ async def test_log_activity_with_warning_level(mocker, integration_v2, mock_publ
         action_id="pull_observations",
         level=LogLevel.WARNING,
         title="Skipping end_date because it's greater than today. Please review your configuration.",
-        config_data=pull_observations_config.data
+        config_data=pull_observations_config.dict()
     )
     assert mock_publish_event.call_count == 1
     assert isinstance(mock_publish_event.call_args_list[0].kwargs.get("event"), IntegrationActionCustomLog)
@@ -157,7 +157,7 @@ async def test_log_activity_with_error_level(mocker, integration_v2, mock_publis
         level=LogLevel.ERROR,
         title="Error getting data from System X",
         data={"error": "Connection error with host 'systemx.com'"},
-        config_data=pull_observations_config.data
+        config_data=pull_observations_config.dict()
     )
     assert mock_publish_event.call_count == 1
     assert isinstance(mock_publish_event.call_args_list[0].kwargs.get("event"), IntegrationActionCustomLog)
