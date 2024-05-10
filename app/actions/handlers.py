@@ -13,7 +13,7 @@ from app.services.gundi import send_events_to_gundi
 from app.services.state import IntegrationStateManager
 
 
-GFW_GLAD_ALERT = "gfwgladalert"
+GFW_INTEGRATED_ALERTS = "gfwgladalert"
 GFW_FIRE_ALERT = "gfwfirealert"
 
 
@@ -87,7 +87,7 @@ async def transform_fire_alert(alert):
     )
 
 
-async def transform_glad_alert(alert):
+async def transform_integrated_alert(alert):
     title = (
         "GFW Integrated Deforestation Alert"
         if alert.num_clustered_alerts < 2
@@ -96,7 +96,7 @@ async def transform_glad_alert(alert):
 
     return dict(
         title=title,
-        event_type=GFW_GLAD_ALERT,
+        event_type=GFW_INTEGRATED_ALERTS,
         recorded_at=alert.recorded_at,
         location={"lat": alert.latitude, "lon": alert.longitude},
         event_details=dict(
@@ -185,19 +185,19 @@ async def action_pull_events(integration, action_config: PullEventsConfig):
                         response_per_type.append({"type": "fire_alerts", "response": response})
 
                 if action_config.include_tree_losses_alerts:
-                    glad_alerts_task = asyncio.create_task(
-                        client.get_glad_alerts(
+                    integrated_alerts_task = asyncio.create_task(
+                        client.get_integrated_alerts(
                             aoi_data=aoi_data,
                             integration=integration,
                             config=action_config
                         )
                     )
-                    glad_alerts = await glad_alerts_task
-                    if glad_alerts:
+                    integrated_alerts = await integrated_alerts_task
+                    if integrated_alerts:
                         logger.info(f"Tree losses alerts pulled with success.")
                         transformed_data = [
-                            await transform_glad_alert(alert)
-                            for alert in glad_alerts
+                            await transform_integrated_alert(alert)
+                            for alert in integrated_alerts
                         ]
                         response = await handle_transformed_data(
                             transformed_data,

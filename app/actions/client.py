@@ -23,7 +23,7 @@ state_manager = IntegrationStateManager()
 
 
 DEFAULT_FIRE_LOOKBACK_DAYS = 1
-DEFAULT_GLAD_LOOKBACK_DAYS = 1
+DEFAULT_INTEGRATED_LOOKBACK_DAYS = 1
 
 DATASET_GFW_INTEGRATED_ALERTS = "gfw_integrated_alerts"
 DATA_API_ROOT_URL = "https://data-api.globalforestwatch.org"
@@ -613,12 +613,12 @@ async def get_fire_alerts(aoi_data, integration, config):
         return alerts
 
 
-async def get_glad_alerts(aoi_data, integration, config):
+async def get_integrated_alerts(aoi_data, integration, config):
     auth = get_auth_config(integration)
     integrated_alerts_response = []
 
     logger.info(
-        f"Processing glad alerts for '{auth.email}' ",
+        f"Processing integrated alerts for '{auth.email}' ",
         extra={
             "integration_id": str(integration.id),
             "endpoint": integration.base_url,
@@ -634,7 +634,7 @@ async def get_glad_alerts(aoi_data, integration, config):
 
         dataset_status = await state_manager.get_state(
             str(integration.id),
-            "pull_glad_alerts",
+            "pull_integrated_alerts",
             DATASET_GFW_INTEGRATED_ALERTS
         )
 
@@ -672,7 +672,7 @@ async def get_glad_alerts(aoi_data, integration, config):
             geojson_geometry = await get_aoi_geojson_geometry(integration, aoi_data)
 
             end = datetime.now(tz=timezone.utc)
-            start = end - timedelta(days=DEFAULT_GLAD_LOOKBACK_DAYS)
+            start = end - timedelta(days=DEFAULT_INTEGRATED_LOOKBACK_DAYS)
 
             # NOTE: buffer(0) is a trick for fixing scenarios where polygons have overlapping coordinates
             geometry_collection = GeometryCollection(
