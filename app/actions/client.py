@@ -38,7 +38,7 @@ SQL_TEMPLATE = """SELECT pt.*
 """
 
 
-class ClusteredGladAlert(pydantic.BaseModel):
+class ClusteredIntegratedAlert(pydantic.BaseModel):
     latitude: float
     longitude: float
     confidence_label: str = pydantic.Field(
@@ -697,7 +697,7 @@ async def get_integrated_alerts(aoi_data, integration, config):
 
                 if integrated_alerts:
                     integrated_alerts_response.extend(
-                        [ClusteredGladAlert.parse_obj(x) for x in integrated_alerts]
+                        [ClusteredIntegratedAlert.parse_obj(x) for x in integrated_alerts]
                     )
 
     except pydantic.ValidationError as ve:
