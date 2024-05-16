@@ -108,8 +108,6 @@ class DatasetResponseItem(pydantic.BaseModel):
     is_latest: bool
     is_mutable: bool
 
-    # metadata: DatasetMetadata
-
     @pydantic.validator("created_on", "updated_on")
     def clean_timestamp(val):
         return val if val.tzinfo else val.replace(tzinfo=timezone.utc)
@@ -162,7 +160,6 @@ class AOIAttributes(pydantic.BaseModel):
     datasets: Optional[List[str]] = []
     use: dict
     env: str
-    # admin
     tags: Optional[List[str]]
     status: str
     public: bool
@@ -294,7 +291,7 @@ async def get_gfw_integrated_alerts(auth, date_range, geometry):
                 date_field="gfw_integrated_alerts__date",
                 daterange=date_range,
                 fields=fields,
-                # extra_where="(gfw_integrated_alerts__confidence = 'highest')"
+                extra_where="(gfw_integrated_alerts__confidence = 'highest')"
             )
             return response
 
