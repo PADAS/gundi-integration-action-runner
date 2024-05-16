@@ -320,12 +320,6 @@ async def create_api_key(auth):
 
 
 async def get_access_token(auth):
-    fn = f"{auth.email}-token.json"
-    if os.path.exists(fn):
-        with open(fn, "r") as fi:
-            val = fi.read()
-            return DataAPIToken.parse_raw(val)
-
     async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=3.1)) as client:
         response = await client.post(
             url=f"{DATA_API_ROOT_URL}/auth/token",
@@ -336,9 +330,6 @@ async def get_access_token(auth):
         response = response.json()
 
         dapitoken = DataAPIToken.parse_obj(response["data"])
-
-        with open(fn, "w") as fo:
-            fo.write(dapitoken.json())
 
         return dapitoken
 

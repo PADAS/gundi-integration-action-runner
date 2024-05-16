@@ -13,7 +13,6 @@ from app.services.gundi import send_events_to_gundi
 from app.services.state import IntegrationStateManager
 
 
-GFW_INTEGRATED_ALERT_CLUSTER = "gfwintegratedalert_cluster"
 GFW_INTEGRATED_ALERTS = "gfwgladalert"
 GFW_FIRE_ALERT = "gfwfirealert"
 
@@ -88,62 +87,23 @@ async def transform_fire_alert(alert):
     )
 
 
-async def transform_integrated_alert(alert_cluster):
-    def build_square_geojson():
-        coord_0 = [alert_cluster[0].longitude, alert_cluster[0].latitude]
-        coord_1 = [alert_cluster[1].longitude, alert_cluster[1].latitude]
-        coord_2 = [alert_cluster[2].longitude, alert_cluster[2].latitude]
-        coord_3 = [alert_cluster[3].longitude, alert_cluster[3].latitude]
+async def transform_integrated_alert(alert):
+    title = (
+        "GFW Integrated Deforestation Alert"
+        if alert.num_clustered_alerts < 2
+        else f"GFW Integrated Deforestation Cluster ({alert.num_clustered_alerts} alerts)"
+    )
 
-        geojson_template = {
-            'type': 'FeatureCollection',
-            'features': [{
-                'type': 'Feature',
-                'properties': {},
-                'geometry': {
-                    'coordinates': [[coord_0, coord_1, coord_3, coord_2, coord_0]],
-                    'type': 'Polygon'
-                }
-            }]
-        }
-
-        return geojson_template
-
-    if len(alert_cluster) == 4:
-        title = f"GFW Integrated Deforestation Cluster"
-
-        return dict(
-            title=title,
-            event_type=GFW_INTEGRATED_ALERT_CLUSTER,
-            geometry=build_square_geojson(),
-            recorded_at=alert_cluster[0].recorded_at,
-            location={"lat": alert_cluster[0].latitude, "lon": alert_cluster[0].longitude},
-            event_details=dict(
-                confidence=alert_cluster[0].confidence,
-                clustered_alerts=alert_cluster[0].num_clustered_alerts,
-            )
+    return dict(
+        title=title,
+        event_type=GFW_INTEGRATED_ALERTS,
+        recorded_at=alert.recorded_at,
+        location={"lat": alert.latitude, "lon": alert.longitude},
+        event_details=dict(
+            confidence=alert.confidence,
+            clustered_alerts=alert.num_clustered_alerts,
         )
-    alerts_list = []
-    for alert in alert_cluster:
-        title = (
-            "GFW Integrated Deforestation Alert"
-            if alert.num_clustered_alerts < 2
-            else f"GFW Integrated Deforestation Cluster ({alert.num_clustered_alerts} alerts)"
-        )
-
-        alerts_list.append(
-            dict(
-                title=title,
-                event_type=GFW_INTEGRATED_ALERTS,
-                recorded_at=alert.recorded_at,
-                location={"lat": alert.latitude, "lon": alert.longitude},
-                event_details=dict(
-                    confidence=alert.confidence,
-                    clustered_alerts=alert.num_clustered_alerts,
-                )
-            )
-        )
-    return alerts_list
+    )
 
 
 async def action_auth(integration, action_config: AuthenticateConfig):
@@ -234,16 +194,11 @@ async def action_pull_events(integration, action_config: PullEventsConfig):
                     )
                     integrated_alerts = await integrated_alerts_task
                     if integrated_alerts:
-                        transformed_data = []
                         logger.info(f"Integrated alerts pulled with success.")
-                        n = 0
-                        while n < len(integrated_alerts):
-                            transformed_integrated_alert = await transform_integrated_alert(integrated_alerts[n:n+4])
-                            if isinstance(transformed_integrated_alert, dict):
-                                transformed_data.append(transformed_integrated_alert)
-                            else:
-                                transformed_data.extend(transformed_integrated_alert)
-                            n += 4
+                        transformed_data = [
+                            await transform_integrated_alert(alert)
+                            for alert in integrated_alerts
+                        ]
                         response = await handle_transformed_data(
                             transformed_data,
                             str(integration.id),
