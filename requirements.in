@@ -1,1 +1,8 @@
-# Add your integration-specific dependencies here
+Shapely>=1.8.0
+aiohttp>=3.7.3
+area>=1.1.1
+geojson>=2.5.0
+geopandas>=0.10.2
+geopy>=2.2.0
+statsd>=3.3.0
+scikit-learn>=1.3.2
