@@ -1,3 +1,4 @@
+import pydantic
 from .core import PullActionConfiguration, AuthActionConfiguration
 
 
@@ -7,7 +8,33 @@ class AuthenticateConfig(AuthActionConfiguration):
 
 
 class PullEventsConfig(PullActionConfiguration):
-    carto_url: str = "https://rw-nrt.carto.com:443/api/v2/sql"
-    url: str
-    include_fire_alerts: bool = True
-    include_tree_losses_alerts: bool = True
+    carto_url: str = "https://rw-nrt.carto.com/api/v2/sql"
+    gfw_share_link_url: pydantic.HttpUrl = pydantic.Field(
+        ...,
+        title="GFW share link URL",
+        description="AOI URL link, extracted from GFW dashboard site."
+    )
+    include_fire_alerts: bool = pydantic.Field(
+        True,
+        title="Include fire alerts",
+        description="Fetch fire alerts from Global Forest Watch and include them in this connection."
+    )
+    include_integrated_alerts: bool = pydantic.Field(
+        True,
+        title="Include integrated deforestation alerts",
+        description="Fetch integrated deforestation alerts from Global Forest Watch and include them in the connection."
+    )
+    fire_lookback_days: int = pydantic.Field(
+        10,
+        le=10,
+        ge=1,
+        title="Fire alerts lookback days",
+        description="Number of days to look back for fire alerts."
+    )
+    integrated_alerts_lookback_days: int = pydantic.Field(
+        30,
+        le=30,
+        ge=1,
+        title="Integrated deforestation alerts lookback days",
+        description="Number of days to look back for integrated deforestation alerts."
+    )

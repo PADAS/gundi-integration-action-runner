@@ -4,6 +4,7 @@ import logging
 import pydantic
 import random
 import re
+import stamina
 import os
 
 import app.actions.utils as utils
@@ -21,9 +22,6 @@ from typing import Optional, List, Set, Tuple
 logger = logging.getLogger(__name__)
 state_manager = IntegrationStateManager()
 
-
-DEFAULT_FIRE_LOOKBACK_DAYS = 1
-DEFAULT_INTEGRATED_LOOKBACK_DAYS = 1
 
 DATASET_GFW_INTEGRATED_ALERTS = "gfw_integrated_alerts"
 DATA_API_ROOT_URL = "https://data-api.globalforestwatch.org"
@@ -282,15 +280,23 @@ async def get_alerts(
 
 async def get_gfw_integrated_alerts(auth, date_range, geometry):
     fields = {"gfw_integrated_alerts__date", "gfw_integrated_alerts__confidence"}
-    return await get_alerts(
-        auth=auth,
-        dataset="gfw_integrated_alerts",
-        geometry=geometry,
-        date_field="gfw_integrated_alerts__date",
-        daterange=date_range,
-        fields=fields,
-        extra_where="(gfw_integrated_alerts__confidence = 'highest')"
-    )
+    async for attempt in stamina.retry_context(
+            on=httpx.HTTPError,
+            attempts=3,
+            wait_initial=timedelta(seconds=10),
+            wait_max=timedelta(seconds=10),
+    ):
+        with attempt:
+            response = await get_alerts(
+                auth=auth,
+                dataset="gfw_integrated_alerts",
+                geometry=geometry,
+                date_field="gfw_integrated_alerts__date",
+                daterange=date_range,
+                fields=fields,
+                # extra_where="(gfw_integrated_alerts__confidence = 'highest')"
+            )
+            return response
 
 
 async def create_api_key(auth):
@@ -553,7 +559,7 @@ async def get_aoi_data(integration, config):
     auth = get_auth_config(integration)
     try:
         token = await get_token(integration, auth)
-        aoi_id = aoi_from_url(config.url)
+        aoi_id = aoi_from_url(config.gfw_share_link_url)
         aoi_data = await get_aoi(integration, auth, aoi_id, token)
     except Exception as e:
         message = f"Unhandled exception occurred. Exception: {e}"
@@ -583,7 +589,7 @@ async def get_fire_alerts(aoi_data, integration, config):
 
     try:
         end_date = datetime.utcnow()
-        start_date = end_date - timedelta(days=DEFAULT_FIRE_LOOKBACK_DAYS)
+        start_date = end_date - timedelta(days=config.fire_lookback_days)
 
         alerts = await get_fire_alerts_response(integration, config, aoi_data, start_date, end_date)
 
@@ -672,7 +678,7 @@ async def get_integrated_alerts(aoi_data, integration, config):
             geojson_geometry = await get_aoi_geojson_geometry(integration, aoi_data)
 
             end = datetime.now(tz=timezone.utc)
-            start = end - timedelta(days=DEFAULT_INTEGRATED_LOOKBACK_DAYS)
+            start = end - timedelta(days=config.integrated_alerts_lookback_days)
 
             # NOTE: buffer(0) is a trick for fixing scenarios where polygons have overlapping coordinates
             geometry_collection = GeometryCollection(
