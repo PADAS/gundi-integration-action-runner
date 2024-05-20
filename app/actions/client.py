@@ -5,7 +5,6 @@ import pydantic
 import random
 import re
 import stamina
-import os
 
 import app.actions.utils as utils
 
@@ -256,19 +255,23 @@ async def get_alerts(
             "geometry": geometry,
             "sql": sql_query,
         }
-        async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=3.1)) as client:
-            response = await client.post(
-                f"{DATA_API_ROOT_URL}/dataset/{dataset}/latest/query/json",
-                headers=headers,
-                json=payload,
-                follow_redirects=True
-            )
-            response.raise_for_status()
-            response = response.json()
 
-            data_len = len(response.get("data"))
-            logger.info(f"Extracted {data_len} alerts for period {lower_date} - {upper_date}.")
-            alerts.extend(response.get("data", []))
+        async for attempt in stamina.retry_context(on=httpx.HTTPError, attempts=3):
+            with attempt:
+                async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=3.1)) as session:
+                    response = await session.post(
+                        f"{DATA_API_ROOT_URL}/dataset/{dataset}/latest/query/json",
+                        headers=headers,
+                        json=payload,
+                        follow_redirects=True
+                    )
+
+                    response.raise_for_status()
+                response = response.json()
+
+        data_len = len(response.get("data"))
+        logger.info(f"Extracted {data_len} alerts for period {lower_date} - {upper_date}.")
+        alerts.extend(response.get("data", []))
 
         lower_bound = lower_bound + block_size
 
@@ -277,23 +280,16 @@ async def get_alerts(
 
 async def get_gfw_integrated_alerts(auth, date_range, geometry):
     fields = {"gfw_integrated_alerts__date", "gfw_integrated_alerts__confidence"}
-    async for attempt in stamina.retry_context(
-            on=httpx.HTTPError,
-            attempts=3,
-            wait_initial=timedelta(seconds=10),
-            wait_max=timedelta(seconds=10),
-    ):
-        with attempt:
-            response = await get_alerts(
-                auth=auth,
-                dataset="gfw_integrated_alerts",
-                geometry=geometry,
-                date_field="gfw_integrated_alerts__date",
-                daterange=date_range,
-                fields=fields,
-                extra_where="(gfw_integrated_alerts__confidence = 'highest')"
-            )
-            return response
+    response = await get_alerts(
+        auth=auth,
+        dataset="gfw_integrated_alerts",
+        geometry=geometry,
+        date_field="gfw_integrated_alerts__date",
+        daterange=date_range,
+        fields=fields,
+        extra_where="(gfw_integrated_alerts__confidence = 'highest')"
+    )
+    return response
 
 
 async def create_api_key(auth):
@@ -628,12 +624,12 @@ async def get_integrated_alerts(aoi_data, integration, config):
 
         dataset_status = await state_manager.get_state(
             str(integration.id),
-            "pull_integrated_alerts",
+            "pull_events",
             DATASET_GFW_INTEGRATED_ALERTS
         )
 
         if dataset_status:
-            dataset_status = DatasetStatus.parse_obj(dataset_status)
+            dataset_status = DatasetStatus.parse_obj(json.loads(dataset_status))
         else:
             dataset_status = DatasetStatus(
                 dataset=dataset_metadata.dataset,
@@ -643,7 +639,7 @@ async def get_integrated_alerts(aoi_data, integration, config):
         # If I've saved a status for this dataset, compare 'updated_on' timestamp to avoid redundant queries.
         if dataset_status.latest_updated_on >= dataset_metadata.updated_on:
             logger.info(
-                "No updates reported for dataset %s so skipping tree-loss queries",
+                "No updates reported for dataset '%s' so skipping integrated_alerts queries",
                 DATASET_GFW_INTEGRATED_ALERTS,
                 extra={
                     "integration_id": str(integration.id),
@@ -704,7 +700,15 @@ async def get_integrated_alerts(aoi_data, integration, config):
             }
         )
         raise ve
-
+    except httpx.HTTPError as e:
+        message = f"HTTPError exception occurred. Exception: {e}"
+        logger.exception(
+            message,
+            extra={
+                "integration_id": str(integration.id),
+                "attention_needed": True
+            }
+        )
     except Exception as e:
         message = f"Unhandled exception occurred. Exception: {e}"
         logger.exception(
@@ -716,4 +720,4 @@ async def get_integrated_alerts(aoi_data, integration, config):
         )
         raise e
     else:
-        return integrated_alerts_response
+        return integrated_alerts_response, dataset_status, dataset_metadata
