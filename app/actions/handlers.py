@@ -41,24 +41,11 @@ async def handle_transformed_data(transformed_data, integration_id, action_id):
                     extra={
                         'needs_attention': True,
                         'integration_id': integration_id,
-                        'action_id': "pull_events"
+                        'action_id': action_id
                     }
                 )
                 return [msg]
             else:
-                """
-                for vehicle in transformed_data:
-                    # Update state
-                    state = {
-                        "latest_device_timestamp": vehicle.get("recorded_at")
-                    }
-                    await state_manager.set_state(
-                        str(integration.id),
-                        "pull_observations",
-                        state,
-                        vehicle.get("source")
-                    )
-                """
                 return response
 
 
@@ -192,7 +179,7 @@ async def action_pull_events(integration, action_config: PullEventsConfig):
                             config=action_config
                         )
                     )
-                    integrated_alerts = await integrated_alerts_task
+                    integrated_alerts, dataset_status, dataset_metadata = await integrated_alerts_task
                     if integrated_alerts:
                         logger.info(f"Integrated alerts pulled with success.")
                         transformed_data = [
@@ -204,6 +191,18 @@ async def action_pull_events(integration, action_config: PullEventsConfig):
                             str(integration.id),
                             "pull_events"
                         )
+
+                        if response:
+                            # update states
+                            dataset_status.latest_updated_on = dataset_metadata.updated_on
+
+                            await state_manager.set_state(
+                                str(integration.id),
+                                "pull_events",
+                                dataset_status.json(),
+                                client.DATASET_GFW_INTEGRATED_ALERTS
+                            )
+
                         response_per_type.append({"type": "integrated_alerts", "response": response})
     except httpx.HTTPError as e:
         message = f"pull_observations action returned error."

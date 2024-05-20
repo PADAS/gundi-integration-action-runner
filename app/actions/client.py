@@ -5,7 +5,6 @@ import pydantic
 import random
 import re
 import stamina
-import os
 
 import app.actions.utils as utils
 
@@ -628,7 +627,7 @@ async def get_integrated_alerts(aoi_data, integration, config):
 
         dataset_status = await state_manager.get_state(
             str(integration.id),
-            "pull_integrated_alerts",
+            "pull_events",
             DATASET_GFW_INTEGRATED_ALERTS
         )
 
@@ -643,7 +642,7 @@ async def get_integrated_alerts(aoi_data, integration, config):
         # If I've saved a status for this dataset, compare 'updated_on' timestamp to avoid redundant queries.
         if dataset_status.latest_updated_on >= dataset_metadata.updated_on:
             logger.info(
-                "No updates reported for dataset %s so skipping tree-loss queries",
+                "No updates reported for dataset '%s' so skipping integrated_alerts queries",
                 DATASET_GFW_INTEGRATED_ALERTS,
                 extra={
                     "integration_id": str(integration.id),
@@ -716,4 +715,4 @@ async def get_integrated_alerts(aoi_data, integration, config):
         )
         raise e
     else:
-        return integrated_alerts_response
+        return integrated_alerts_response, dataset_status, dataset_metadata
