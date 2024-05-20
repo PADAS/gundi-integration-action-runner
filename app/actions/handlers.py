@@ -150,14 +150,11 @@ async def action_pull_events(integration, action_config: PullEventsConfig):
 
                 response_per_type = []
                 if action_config.include_fire_alerts:
-                    fire_alerts_task = asyncio.create_task(
-                        client.get_fire_alerts(
-                            aoi_data=aoi_data,
-                            integration=integration,
-                            config=action_config
-                        )
+                    fire_alerts = await client.get_fire_alerts(
+                        aoi_data=aoi_data,
+                        integration=integration,
+                        config=action_config
                     )
-                    fire_alerts = await fire_alerts_task
                     if fire_alerts:
                         logger.info(f"Fire alerts pulled with success.")
                         transformed_data = [
@@ -172,14 +169,11 @@ async def action_pull_events(integration, action_config: PullEventsConfig):
                         response_per_type.append({"type": "fire_alerts", "response": response})
 
                 if action_config.include_integrated_alerts:
-                    integrated_alerts_task = asyncio.create_task(
-                        client.get_integrated_alerts(
-                            aoi_data=aoi_data,
-                            integration=integration,
-                            config=action_config
-                        )
+                    integrated_alerts, dataset_status, dataset_metadata = await client.get_integrated_alerts(
+                        aoi_data=aoi_data,
+                        integration=integration,
+                        config=action_config
                     )
-                    integrated_alerts, dataset_status, dataset_metadata = await integrated_alerts_task
                     if integrated_alerts:
                         logger.info(f"Integrated alerts pulled with success.")
                         transformed_data = [
