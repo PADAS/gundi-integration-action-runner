@@ -221,6 +221,7 @@ class GFWClientException(Exception):
 
 async def get_alerts(
         *,
+        integration,
         auth,
         dataset: str,
         fields: Set[str],
@@ -234,8 +235,8 @@ async def get_alerts(
     if not geometry.get("coordinates"):
         return alerts
 
-    api_keys = await get_api_keys(auth)
-    headers = {"x-api-key": api_keys[0].api_key}
+    api_keys = await get_api_keys(auth, integration)
+    headers = {"x-api-key": api_keys.api_key}
 
     fields = {"latitude", "longitude"} | fields or set()
 
@@ -256,7 +257,13 @@ async def get_alerts(
             "sql": sql_query,
         }
 
-        async for attempt in stamina.retry_context(on=httpx.HTTPError, attempts=3):
+        async for attempt in stamina.retry_context(
+                on=httpx.HTTPError,
+                attempts=3,
+                wait_initial=timedelta(seconds=10),
+                wait_max=timedelta(seconds=30),
+                wait_jitter=timedelta(seconds=3)
+        ):
             with attempt:
                 async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=3.1)) as session:
                     response = await session.post(
@@ -278,9 +285,10 @@ async def get_alerts(
     return alerts
 
 
-async def get_gfw_integrated_alerts(auth, date_range, geometry):
+async def get_gfw_integrated_alerts(integration, auth, date_range, geometry):
     fields = {"gfw_integrated_alerts__date", "gfw_integrated_alerts__confidence"}
     response = await get_alerts(
+        integration=integration,
         auth=auth,
         dataset="gfw_integrated_alerts",
         geometry=geometry,
@@ -302,29 +310,45 @@ async def create_api_key(auth):
         "domains": [],
     }
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=3.1)) as client:
-        response = await client.post(
-            url=f"{DATA_API_ROOT_URL}/auth/apikey",
-            headers=headers,
-            json=payload,
-            follow_redirects=True
-        )
-        response.raise_for_status()
+    async for attempt in stamina.retry_context(
+            on=httpx.HTTPError,
+            attempts=3,
+            wait_initial=timedelta(seconds=10),
+            wait_max=timedelta(seconds=30),
+            wait_jitter=timedelta(seconds=3)
+    ):
+        with attempt:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=3.1)) as client:
+                response = await client.post(
+                    url=f"{DATA_API_ROOT_URL}/auth/apikey",
+                    headers=headers,
+                    json=payload,
+                    follow_redirects=True
+                )
+                response.raise_for_status()
 
 
 async def get_access_token(auth):
-    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=3.1)) as client:
-        response = await client.post(
-            url=f"{DATA_API_ROOT_URL}/auth/token",
-            data={"username": auth.email, "password": auth.password},
-            follow_redirects=True
-        )
-        response.raise_for_status()
-        response = response.json()
+    async for attempt in stamina.retry_context(
+            on=httpx.HTTPError,
+            attempts=3,
+            wait_initial=timedelta(seconds=10),
+            wait_max=timedelta(seconds=30),
+            wait_jitter=timedelta(seconds=3)
+    ):
+        with attempt:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=3.1)) as client:
+                response = await client.post(
+                    url=f"{DATA_API_ROOT_URL}/auth/token",
+                    data={"username": auth.email, "password": auth.password},
+                    follow_redirects=True
+                )
+                response.raise_for_status()
+                response = response.json()
 
-        dapitoken = DataAPIToken.parse_obj(response["data"])
+                dapitoken = DataAPIToken.parse_obj(response["data"])
 
-        return dapitoken
+                return dapitoken
 
 
 async def auth_generator(auth):
@@ -358,24 +382,49 @@ async def get_auth_header(auth, _auth_gen=None, refresh=False):
     return {"authorization": f"{token.token_type} {token.access_token}"}
 
 
-async def get_api_keys(auth):
+async def get_api_keys(auth, integration):
+    current_state = await state_manager.get_state(
+        str(integration.id),
+        "get_api_keys",
+        auth.email
+    )
+
+    if current_state:
+        return DataAPIKey.parse_obj(current_state["api_keys"])
+
     headers = await get_auth_header(auth)
 
-    for _ in range(0, 2):
-        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=3.1)) as session:
-            response = await session.get(
-                f"{DATA_API_ROOT_URL}/auth/apikeys", headers=headers,
-                follow_redirects=True
-            )
-            response.raise_for_status()
-            response = response.json()
+    async for attempt in stamina.retry_context(
+            on=httpx.HTTPError,
+            attempts=3,
+            wait_initial=timedelta(seconds=10),
+            wait_max=timedelta(seconds=30),
+            wait_jitter=timedelta(seconds=3)
+    ):
+        with attempt:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=3.1)) as session:
+                response = await session.get(
+                    f"{DATA_API_ROOT_URL}/auth/apikeys", headers=headers,
+                    follow_redirects=True
+                )
+                response.raise_for_status()
+                response = response.json()
 
-            data = DataAPIKeysResponse.parse_obj(response)
-            if data.data:
-                api_keys = data.data
-                break
-            # Assume we need to create an API key.
-            await create_api_key(auth)
+                data = DataAPIKeysResponse.parse_obj(response)
+                if data.data:
+                    api_keys = data.data[0]
+                    state = {
+                        "api_keys": api_keys.dict()
+                    }
+                    await state_manager.set_state(
+                        str(integration.id),
+                        "get_api_keys",
+                        state,
+                        auth.email,
+                    )
+                    break
+                # Assume we need to create an API key.
+                await create_api_key(auth)
 
     return api_keys
 
@@ -390,52 +439,62 @@ def aoi_from_url(url) -> str:
 
 
 async def get_aoi(integration, auth, aoi_id: str, token):
-    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=3.1)) as session:
-        response = await session.get(
-            url=f"{integration.base_url}/v2/area/{aoi_id}",
-            headers={"Authorization": f'Bearer {token["token"]}'},
-            follow_redirects=True
-        )
-        response.raise_for_status()
-        response = response.json()
+    async for attempt in stamina.retry_context(
+            on=httpx.HTTPError,
+            attempts=3,
+            wait_initial=timedelta(seconds=10),
+            wait_max=timedelta(seconds=30),
+            wait_jitter=timedelta(seconds=3)
+    ):
+        with attempt:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=3.1)) as session:
+                response = await session.get(
+                    url=f"{integration.base_url}/v2/area/{aoi_id}",
+                    headers={"Authorization": f'Bearer {token["token"]}'},
+                    follow_redirects=True
+                )
+                response.raise_for_status()
+                response = response.json()
 
-        try:
-            return AOIData.parse_obj(response.get("data"))
-        except pydantic.ValidationError as e:
-            logger.exception(f"Unexpected error parsing AOI data: {e}")
+                try:
+                    return AOIData.parse_obj(response.get("data"))
+                except pydantic.ValidationError as e:
+                    logger.exception(f"Unexpected error parsing AOI data: {e}")
 
-        logger.error(
-            "Failed to get AOI for id: %s. result is: %s", aoi_id, response.text[:250]
-        )
+                logger.error(
+                    "Failed to get AOI for id: %s. result is: %s", aoi_id, response.text[:250]
+                )
 
-        await state_manager.delete_state(
-            str(integration.id),
-            "auth",
-            auth.email
-        )
-
-        raise GFWClientException(f"Failed to get AOI for id: '{aoi_id}'")
+                raise GFWClientException(f"Failed to get AOI for id: '{aoi_id}'")
 
 
 async def get_geostore(integration, geostore_id):
-    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=3.1)) as session:
-        response = await session.get(
-            url=f"{integration.base_url}/v1/geostore/{geostore_id}",
-            follow_redirects=True
-        )
-        response.raise_for_status()
-        response = response.json()
+    async for attempt in stamina.retry_context(
+            on=httpx.HTTPError,
+            attempts=3,
+            wait_initial=timedelta(seconds=10),
+            wait_max=timedelta(seconds=30),
+            wait_jitter=timedelta(seconds=3)
+    ):
+        with attempt:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=3.1)) as session:
+                response = await session.get(
+                    url=f"{integration.base_url}/v1/geostore/{geostore_id}",
+                    follow_redirects=True
+                )
+                response.raise_for_status()
+                response = response.json()
 
-        try:
-            return Geostore.parse_obj(response.get("data"))
-        except pydantic.ValidationError as e:
-            logger.exception(f"Unexpected error parsing Geostore data: {e}")
+                try:
+                    return Geostore.parse_obj(response.get("data"))
+                except pydantic.ValidationError as e:
+                    logger.exception(f"Unexpected error parsing Geostore data: {e}")
 
-        logger.error(
-            "Failed to get Geostore for id: %s. result is: %s", geostore_id, response.text[:250]
-        )
+                logger.error(
+                    "Failed to get Geostore for id: %s. result is: %s", geostore_id, response.text[:250]
+                )
 
-        raise GFWClientException(f"Failed to get Geostore for id: '{geostore_id}'")
+                raise GFWClientException(f"Failed to get Geostore for id: '{geostore_id}'")
 
 
 async def get_aoi_geojson_geometry(integration, aoi_data):
@@ -446,20 +505,28 @@ async def get_aoi_geojson_geometry(integration, aoi_data):
     return geojson_geometry
 
 
-async def get_dataset_metadata(dataset, auth):
-    api_keys = await get_api_keys(auth)
-    headers = {"x-api-key": api_keys[0].api_key}
+async def get_dataset_metadata(dataset, auth, integration):
+    api_keys = await get_api_keys(auth, integration)
+    headers = {"x-api-key": api_keys.api_key}
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=3.1)) as client:
-        response = await client.get(
-            f"{DATA_API_ROOT_URL}/dataset/{dataset}/latest",
-            headers=headers,
-            follow_redirects=True
-        )
-        response.raise_for_status()
-        response = response.json()
+    async for attempt in stamina.retry_context(
+            on=httpx.HTTPError,
+            attempts=3,
+            wait_initial=timedelta(seconds=10),
+            wait_max=timedelta(seconds=30),
+            wait_jitter=timedelta(seconds=3)
+    ):
+        with attempt:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=3.1)) as client:
+                response = await client.get(
+                    f"{DATA_API_ROOT_URL}/dataset/{dataset}/latest",
+                    headers=headers,
+                    follow_redirects=True
+                )
+                response.raise_for_status()
+                response = response.json()
 
-        return DatasetResponseItem.parse_obj(response.get("data"))
+                return DatasetResponseItem.parse_obj(response.get("data"))
 
 
 async def get_fire_alerts_response(integration, config, aoi_data, start_date, end_date):
@@ -477,12 +544,20 @@ async def get_fire_alerts_response(integration, config, aoi_data, start_date, en
         geometry=geojson_geometry,
     )
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=3.1)) as session:
-        response = await session.post(
-            url=config.carto_url,
-            data={"format": "json", "q": sql}
-        )
-        response.raise_for_status()
+    async for attempt in stamina.retry_context(
+            on=httpx.HTTPError,
+            attempts=3,
+            wait_initial=timedelta(seconds=10),
+            wait_max=timedelta(seconds=30),
+            wait_jitter=timedelta(seconds=3)
+    ):
+        with attempt:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=3.1)) as session:
+                response = await session.post(
+                    url=config.carto_url,
+                    data={"format": "json", "q": sql}
+                )
+                response.raise_for_status()
 
     response = response.json()
     rows = response.get("rows")
@@ -516,15 +591,23 @@ async def get_token(integration, config):
         return current_state["token"]
 
     url = f"{integration.base_url}/auth/login"
-    async with httpx.AsyncClient(timeout=120) as session:
-        response = await session.post(
-            url=url,
-            json={
-                "email": config.email,
-                "password": config.password
-            }
-        )
-        response.raise_for_status()
+    async for attempt in stamina.retry_context(
+            on=httpx.HTTPError,
+            attempts=3,
+            wait_initial=timedelta(seconds=10),
+            wait_max=timedelta(seconds=30),
+            wait_jitter=timedelta(seconds=3)
+    ):
+        with attempt:
+            async with httpx.AsyncClient(timeout=120) as session:
+                response = await session.post(
+                    url=url,
+                    json={
+                        "email": config.email,
+                        "password": config.password
+                    }
+                )
+                response.raise_for_status()
 
     state = {
         "token": response.json()["data"]
@@ -619,7 +702,8 @@ async def get_integrated_alerts(aoi_data, integration, config):
     try:
         dataset_metadata = await get_dataset_metadata(
             DATASET_GFW_INTEGRATED_ALERTS,
-            auth
+            auth,
+            integration
         )
 
         dataset_status = await state_manager.get_state(
@@ -681,6 +765,7 @@ async def get_integrated_alerts(aoi_data, integration, config):
                 )
 
                 integrated_alerts = await get_gfw_integrated_alerts(
+                    integration,
                     auth,
                     **query_arguments
                 )
@@ -709,6 +794,7 @@ async def get_integrated_alerts(aoi_data, integration, config):
                 "attention_needed": True
             }
         )
+        raise e
     except Exception as e:
         message = f"Unhandled exception occurred. Exception: {e}"
         logger.exception(
