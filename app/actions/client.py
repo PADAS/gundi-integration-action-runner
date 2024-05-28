@@ -430,7 +430,7 @@ async def get_api_keys(auth, integration):
 
 
 def aoi_from_url(url) -> str:
-    href = httpx.get(url, verify=True, timeout=10).url
+    href = httpx.get(url, verify=True, timeout=10, follow_redirects=True).url
     try:
         matches = re.match(".*globalforestwatch.org.*aoi/([^/]+).*", str(href))
         return matches[1]
