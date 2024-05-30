@@ -8,7 +8,7 @@ router = APIRouter()
 
 
 @router.post(
-    "/",
+    "",
     summary="Process Webhooks from third-party systems",
 )
 async def webhooks(
