@@ -138,12 +138,29 @@ async def process_webhook(request: Request):
         # }
         # Everywhere Example
         schema_dict = {"title": "PayloadItem", "type": "object", "properties": {"deviceId": {"title": "Deviceid", "type": "integer"}, "teamId": {"title": "Teamid", "type": "integer"}, "trackPoint": {"$ref": "#/definitions/TrackPoint"}, "source": {"title": "Source", "type": "string"}, "entityId": {"title": "Entityid", "type": "integer"}, "deviceType": {"title": "Devicetype", "type": "string"}, "name": {"title": "Name", "type": "string"}}, "required": ["deviceId", "teamId", "trackPoint", "source", "entityId", "deviceType", "name"], "definitions": {"Point": {"title": "Point", "type": "object", "properties": {"x": {"title": "X", "type": "integer"}, "y": {"title": "Y", "type": "integer"}}, "required": ["x", "y"]}, "TrackPoint": {"title": "TrackPoint", "type": "object", "properties": {"point": {"$ref": "#/definitions/Point"}, "time": {"title": "Time", "type": "integer"}}, "required": ["point", "time"]}}}
+        jq_everywhere_to_position = """
+        .[] | {
+            source: .deviceId,
+            source_name: .name,
+            type: .deviceType,
+            recorded_at: (.trackPoint.time / 1000 | todateiso8601),
+            location: {
+                lat: .trackPoint.point.x,
+                lon: .trackPoint.point.y
+            },
+            additional: {
+                teamId: .teamId,
+                entityId: .entityId,    
+                source: .source
+            }
+        }
+        """
         webhook_config_data = {
-            "jq_filter": ".",  # JQ filter to transform JSON data
+            "jq_filter": jq_everywhere_to_position,  # JQ filter to transform JSON data
+            "output_type": "obv",
             "json_schema": schema_dict
         }
         parsed_config = config_model.parse_obj(webhook_config_data) if config_model else {}
-        extra = {}
         if parsed_config and issubclass(config_model, HexStringConfig):
             json_content["hex_data_field"] = parsed_config.hex_data_field
             json_content["hex_format"] = parsed_config.hex_format
@@ -165,7 +182,7 @@ async def process_webhook(request: Request):
                 else:
                     parsed_payload = payload_model.parse_obj(json_content)
             except Exception as e:
-                message = f"Error parsing payload: {str(e)}"
+                message = f"Error parsing payload: {str(e)}. Please review configurations."
                 logger.exception(message)
                 # await log_activity(
                 #     level="error",
@@ -184,7 +201,7 @@ async def process_webhook(request: Request):
         #     title=message,
         # )
     except Exception as e:
-        message = f"Error loading webhooks handler: {str(e)}"
+        message = f"Error processing webhook: {str(e)}"
         logger.exception(message)
         # await log_activity(
         #     level="error",

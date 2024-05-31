@@ -92,6 +92,7 @@ class JQTransformConfig(BaseModel):
 
 
 class GenericJsonTransformConfig(JQTransformConfig, DynamicSchemaConfig):
+    output_type: str = Field(..., description="Output type for the transformed data: 'obv' or 'event'")
 
     class Config:
         extra = "allow"
