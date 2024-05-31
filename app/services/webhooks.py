@@ -136,34 +136,166 @@ async def process_webhook(request: Request):
         #         ]
         #     }
         # }
+
         # Everywhere Example
-        schema_dict = {"title": "PayloadItem", "type": "object", "properties": {"deviceId": {"title": "Deviceid", "type": "integer"}, "teamId": {"title": "Teamid", "type": "integer"}, "trackPoint": {"$ref": "#/definitions/TrackPoint"}, "source": {"title": "Source", "type": "string"}, "entityId": {"title": "Entityid", "type": "integer"}, "deviceType": {"title": "Devicetype", "type": "string"}, "name": {"title": "Name", "type": "string"}}, "required": ["deviceId", "teamId", "trackPoint", "source", "entityId", "deviceType", "name"], "definitions": {"Point": {"title": "Point", "type": "object", "properties": {"x": {"title": "X", "type": "integer"}, "y": {"title": "Y", "type": "integer"}}, "required": ["x", "y"]}, "TrackPoint": {"title": "TrackPoint", "type": "object", "properties": {"point": {"$ref": "#/definitions/Point"}, "time": {"title": "Time", "type": "integer"}}, "required": ["point", "time"]}}}
-        jq_everywhere_to_position = """
-        .[] | {
-            source: .deviceId,
-            source_name: .name,
-            type: .deviceType,
-            recorded_at: (.trackPoint.time / 1000 | todateiso8601),
+        # schema_dict = {"title": "PayloadItem", "type": "object", "properties": {"deviceId": {"title": "Deviceid", "type": "integer"}, "teamId": {"title": "Teamid", "type": "integer"}, "trackPoint": {"$ref": "#/definitions/TrackPoint"}, "source": {"title": "Source", "type": "string"}, "entityId": {"title": "Entityid", "type": "integer"}, "deviceType": {"title": "Devicetype", "type": "string"}, "name": {"title": "Name", "type": "string"}}, "required": ["deviceId", "teamId", "trackPoint", "source", "entityId", "deviceType", "name"], "definitions": {"Point": {"title": "Point", "type": "object", "properties": {"x": {"title": "X", "type": "integer"}, "y": {"title": "Y", "type": "integer"}}, "required": ["x", "y"]}, "TrackPoint": {"title": "TrackPoint", "type": "object", "properties": {"point": {"$ref": "#/definitions/Point"}, "time": {"title": "Time", "type": "integer"}}, "required": ["point", "time"]}}}
+        # jq_everywhere_to_position = """
+        # .[] | {
+        #     source: .deviceId,
+        #     source_name: .name,
+        #     type: .deviceType,
+        #     recorded_at: (.trackPoint.time / 1000 | todateiso8601),
+        #     location: {
+        #         lat: .trackPoint.point.x,
+        #         lon: .trackPoint.point.y
+        #     },
+        #     additional: {
+        #         teamId: .teamId,
+        #         entityId: .entityId,
+        #         source: .source
+        #     }
+        # }
+        # """
+        # webhook_config_data = {
+        #     "jq_filter": jq_everywhere_to_position,  # JQ filter to transform JSON data
+        #     "output_type": "obv",
+        #     "json_schema": schema_dict
+        # }
+
+        # Generic Liquidtech Example
+        schema_dict = {"title": "LiquidTechPayload", "type": "object", "properties": {"hex_format": {"title": "Hex Format", "type": "object"}, "hex_data_field": {"title": "Hex Data Field", "type": "string"}, "device": {"title": "Device", "type": "string"}, "time": {"title": "Time", "type": "string"}, "type": {"title": "Type", "type": "string"}, "data": {"title": "Data", "type": "hex_string", "example": "123456789ABCDEF", "description": "Hex string data"}}, "required": ["device", "time", "data"]}
+        jq_liquidtech_to_position = """
+        {
+            source: .device,
+            title: .device,
+            event_type: "water_meter_rep",
+            recorded_at: (.time | tonumber | todateiso8601),
             location: {
-                lat: .trackPoint.point.x,
-                lon: .trackPoint.point.y
+                lat: 0.0,
+                lon: 0.0
             },
-            additional: {
-                teamId: .teamId,
-                entityId: .entityId,    
-                source: .source
+            event_details: {
+                alerts_list: [
+                    if .data.unpacked_data.meter_batter_alarm then {alert_name: "Meter Batter Alarm", alert_value: .data.unpacked_data.meter_batter_alarm} else empty end,
+                    if .data.unpacked_data.empty_pipe_alarm then {alert_name: "Empty Pipe Alarm", alert_value: .data.unpacked_data.empty_pipe_alarm} else empty end,
+                    if .data.unpacked_data.reverse_flow_alarm then {alert_name: "Reverse Flow Alarm", alert_value: .data.unpacked_data.reverse_flow_alarm} else empty end,
+                    if .data.unpacked_data.over_range_alarm then {alert_name: "Over Range Alarm", alert_value: .data.unpacked_data.over_range_alarm} else empty end,
+                    if .data.unpacked_data.temp_alarm then {alert_name: "Temp Alarm", alert_value: .data.unpacked_data.temp_alarm} else empty end,
+                    if .data.unpacked_data.ee_error then {alert_name: "EE Error", alert_value: .data.unpacked_data.ee_error} else empty end,
+                    if .data.unpacked_data.transduce_in_error then {alert_name: "Transduce In Error", alert_value: .data.unpacked_data.transduce_in_error} else empty end,
+                    if .data.unpacked_data.transduce_out_error then {alert_name: "Transduce Out Error", alert_value: .data.unpacked_data.transduce_out_error} else empty end
+                ] | map(select(.alert_value == true))
             }
         }
         """
+        hex_data_fmt = {
+            "byte_order": "<",
+            "fields": [
+                {
+                    "name": "start_bit",
+                    "format": "B",
+                    "output_type": "int"
+                },
+                {
+                    "name": "v",
+                    "format": "I"
+                },
+                {
+                    "name": "interval",
+                    "format": "H",
+                    "output_type": "int"
+                },
+                {
+                    "name": "meter_state_1",
+                    "format": "B",
+                },
+                {
+                    "name": "meter_state_2",
+                    "format": "B",
+                    "bit_fields": [
+                        {
+                            "name": "meter_batter_alarm",
+                            "start_bit": 0,
+                            "end_bit": 0,
+                            "output_type": "bool"
+                        },
+                        {
+                            "name": "empty_pipe_alarm",
+                            "start_bit": 1,
+                            "end_bit": 1,
+                            "output_type": "bool"
+                        },
+                        {
+                            "name": "reverse_flow_alarm",
+                            "start_bit": 2,
+                            "end_bit": 2,
+                            "output_type": "bool"
+                        },
+                        {
+                            "name": "over_range_alarm",
+                            "start_bit": 3,
+                            "end_bit": 3,
+                            "output_type": "bool"
+                        },
+                        {
+                            "name": "temp_alarm",
+                            "start_bit": 4,
+                            "end_bit": 4,
+                            "output_type": "bool"
+                        },
+                        {
+                            "name": "ee_error",
+                            "start_bit": 5,
+                            "end_bit": 5,
+                            "output_type": "bool"
+                        },
+                        {
+                            "name": "transduce_in_error",
+                            "start_bit": 6,
+                            "end_bit": 6,
+                            "output_type": "bool"
+                        },
+                        {
+                            "name": "transduce_out_error",
+                            "start_bit": 7,
+                            "end_bit": 7,
+                            "output_type": "bool"
+                        },
+                        {
+                            "name": "transduce_out_error",
+                            "start_bit": 7,
+                            "end_bit": 7,
+                            "output_type": "bool"
+                        }
+                    ]
+                },
+                {
+                    "name": "r1",
+                    "format": "B",
+                    "output_type": "int"
+                },
+                {
+                    "name": "r2",
+                    "format": "B",
+                    "output_type": "int"
+                },
+                {
+                    "name": "crc",
+                    "format": "B",
+                },
+            ]
+        }
         webhook_config_data = {
-            "jq_filter": jq_everywhere_to_position,  # JQ filter to transform JSON data
-            "output_type": "obv",
-            "json_schema": schema_dict
+            "jq_filter": jq_liquidtech_to_position,  # JQ filter to transform JSON data
+            "output_type": "ev", #"obv",
+            "json_schema": schema_dict,
+            "hex_data_field": "data",
+            "hex_format": hex_data_fmt
         }
         parsed_config = config_model.parse_obj(webhook_config_data) if config_model else {}
         if parsed_config and issubclass(config_model, HexStringConfig):
-            json_content["hex_data_field"] = parsed_config.hex_data_field
-            json_content["hex_format"] = parsed_config.hex_format
+            json_content["hex_data_field"] = json_content.get("hex_data_field", parsed_config.hex_data_field)
+            json_content["hex_format"] = json_content.get("hex_format", parsed_config.hex_format)
         # Parse payload if a model was defined in webhooks/configurations.py
         if payload_model:
             try:
@@ -171,7 +303,7 @@ async def process_webhook(request: Request):
                     # Build the model from a json schema
                     model_factory = DyntamicFactory(
                         json_schema=parsed_config.json_schema,
-                        base_model=WebhookPayload,
+                        base_model=payload_model,
                         ref_template="definitions"
                     )
                     dynamic_payload_model = model_factory.make()

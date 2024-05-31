@@ -1,3 +1,4 @@
+import struct
 from typing import Annotated, Union
 import typing
 from pydantic import create_model
@@ -13,6 +14,71 @@ def find_config_for_action(configurations, action_id):
         ),
         None
     )
+
+
+class StructHexString:
+    def __init__(self, value: str, hex_format):
+        self.value = value
+        self.hex_format = hex_format
+        self.format_spec = hex_format.get("byte_order", "<") + ''.join(f["format"] for f in hex_format["fields"])
+        self.unpacked_data = self._unpack_data()
+
+    @classmethod
+    def __get_validators__(cls):
+        yield cls.validate
+
+    @classmethod
+    def validate(cls, v: str, values, field):
+        hex_format = values['hex_format']  # Assumes format is already set in the parent model
+        format_spec = hex_format.get("byte_order", "<") + ''.join(d["format"] for d in hex_format["fields"])
+        try:
+            bytes_data = bytes.fromhex(v)
+            if len(bytes_data) != struct.calcsize(format_spec):
+                raise ValueError("Hex string does not match the expected length for format")
+        except (ValueError, struct.error) as e:
+            raise ValueError(f"Invalid hex string for format '{format_spec}': {str(e)}")
+
+        return cls(v, hex_format)
+
+    @classmethod
+    def __modify_schema__(cls, field_schema):
+        field_schema.update(type="hex_string", example="123456789ABCDEF", description="Hex string data")
+
+    def _unpack_data(self):
+        field_values = []
+        unpacked_fields = struct.unpack(self.format_spec, bytes.fromhex(self.value))
+        for s, v in zip(self.hex_format["fields"], unpacked_fields):
+            field_values.append(self._cast_output(value=v, output_type=s.get("output_type", "int")))
+        field_names = [f["name"] for f in self.hex_format["fields"]]
+        fields_with_bitfields = [f for f in self.hex_format["fields"] if "bit_fields" in f]
+        for field in fields_with_bitfields:
+            bit_fields = field["bit_fields"]
+            for bit_field in bit_fields:
+                start_bit = bit_field["start_bit"]
+                end_bit = bit_field["end_bit"]
+                field_value = unpacked_fields[field_names.index(field["name"])]
+                bits_value = (field_value >> start_bit) & (2 ** (end_bit - start_bit + 1) - 1)
+                field_values.append(self._cast_output(value=bits_value, output_type=bit_field.get("output_type", "bool")))
+                field_names.append(bit_field["name"])
+        return dict(zip(field_names, field_values))
+
+    def _cast_output(self, value, output_type="hex"):
+        if output_type == "bool":
+            return bool(value)
+        elif output_type == "int":
+            return int(value)
+        else:  # hex string by default
+            return hex(value)
+
+    def __repr__(self) -> str:
+        return f"StructHexString(value={self.value}, hex_format={self.hex_format})"
+
+    def to_dict(self) -> typing.Dict[str, typing.Any]:
+        return {
+            "value": self.value,
+            "hex_format": self.hex_format,
+            "unpacked_data": self.unpacked_data
+        }
 
 
 Model = typing.TypeVar('Model', bound='BaseModel')
@@ -31,6 +97,8 @@ class DyntamicFactory:
         'integer': int,
         'float': float,
         'number': float,
+        'object': dict,
+        'hex_string': StructHexString
         # ToDo: test with custom types such as StructHexString
     }
 
