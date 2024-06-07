@@ -119,10 +119,10 @@ class DyntamicFactory:
             >> _instance = dynamic_model.model_validate(json_with_data)
             >> validated_data = model_instance.model_dump()
         """
-        self.class_name = json_schema.get('title')
+        self.class_name = json_schema.get('title', "DataSchema")
         self.class_type = json_schema.get('type')
-        self.required = json_schema.get('required', False)
-        self.raw_fields = json_schema.get('properties')
+        self.required = json_schema.get('required', [])
+        self.raw_fields = json_schema.get('properties', [])
         self.ref_template = ref_template
         self.definitions = json_schema.get(ref_template)
         self.fields = {}
