@@ -26,7 +26,7 @@ async def get_integration(request):
 
 async def process_webhook(request: Request):
     try:
-        # Try to relate the request o an the integration
+        # Try to relate the request to an integration
         integration = await get_integration(request=request)
         # Look for the handler function in webhooks/handlers.py
         webhook_handler, payload_model, config_model = get_webhook_handler()
