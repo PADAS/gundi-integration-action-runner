@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
     on=(aiohttp.ClientError, asyncio.TimeoutError),
     attempts=5,
     wait_initial=1.0,
-    wait_max=10,
+    wait_max=30,
     wait_jitter=3.0
 )
 async def publish_event(event: SystemEventBaseModel, topic_name: str):
