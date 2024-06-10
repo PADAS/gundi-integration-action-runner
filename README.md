@@ -4,9 +4,9 @@ Template repo for integration in Gundi v2.
 ## Usage
 - Fork this repo
 - Implement your own actions in `actions/handlers.py`
-- Define configurations needed for your actions in `action/config.py`
+- Define configurations needed for your actions in `action/configurations.py`
 - Or implement a webhooks handler in `webhooks/handlers.py`
-- and define configurations needed for your webhooks in `webhooks/config.py`
+- and define configurations needed for your webhooks in `webhooks/configurations.py`
 - Optionally, add the @activity_logger decorator to log common events which you can later see in the portal:
     - Action execution started
     - Action execution finished
@@ -162,7 +162,7 @@ async def webhook_handler(payload: GenericJsonPayload, integration=None, webhook
 
 
 ### Simple JSON Transformations
-For simple JSON to JSON transformations, you can use the [JQ language](https://jqlang.github.io/jq/manual/#basic-filters) to transform the incoming data. To do that, annotate the webhook_config arg with the `GenericJsonTransformConfig` model or a subclass. Then you can specify th JQ filter and the output type (event ot observation) in Gundi.
+For simple JSON to JSON transformations, you can use the [JQ language](https://jqlang.github.io/jq/manual/#basic-filters) to transform the incoming data. To do that, annotate the webhook_config arg with the `GenericJsonTransformConfig` model or a subclass. Then you can specify the `jq_filter` and the `output_type` (`ev` for event or `obv` for observation) in Gundi.
 ```python
 # webhooks/configurations.py
 import pydantic
@@ -197,18 +197,11 @@ async def webhook_handler(payload: MyWebhookPayload, integration=None, webhook_c
     transformation_rules = webhook_config.jq_filter
     transformed_data = pyjq.all(transformation_rules, input_data)
     print(f"Transformed Data:\n: {transformed_data}")
-    if webhook_config.output_type == "obv":
-        response = await send_observations_to_gundi(
-            observations=transformed_data,
-            integration_id=integration.id
-        )
-    elif webhook_config.output_type == "ev":
-        response = await send_events_to_gundi(
-            events=transformed_data,
-            integration_id=integration.id
-        )
-    else:
-        raise ValueError(f"Invalid output type: {webhook_config.output_type}. Please review the configuration.")
+    # webhook_config.output_type == "obv":
+    response = await send_observations_to_gundi(
+        observations=transformed_data,
+        integration_id=integration.id
+    )
     data_points_qty = len(transformed_data) if isinstance(transformed_data, list) else 1
     print(f"{data_points_qty} data point(s) sent to Gundi.")
     return {"data_points_qty": data_points_qty}
@@ -231,18 +224,11 @@ async def webhook_handler(payload: GenericJsonPayload, integration=None, webhook
     filter_expression = webhook_config.jq_filter.replace("\n", ""). replace(" ", "")
     transformed_data = pyjq.all(filter_expression, input_data)
     print(f"Transformed Data:\n: {transformed_data}")
-    if webhook_config.output_type == "obv":
-        response = await send_observations_to_gundi(
-            observations=transformed_data,
-            integration_id=integration.id
-        )
-    elif webhook_config.output_type == "ev":
-        response = await send_events_to_gundi(
-            events=transformed_data,
-            integration_id=integration.id
-        )
-    else:
-        raise ValueError(f"Invalid output type: {webhook_config.output_type}. Please review the configuration.")
+    # webhook_config.output_type == "obv":
+    response = await send_observations_to_gundi(
+        observations=transformed_data,
+        integration_id=integration.id
+    )
     data_points_qty = len(transformed_data) if isinstance(transformed_data, list) else 1
     print(f"{data_points_qty} data point(s) sent to Gundi.")
     return {"data_points_qty": data_points_qty}
