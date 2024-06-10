@@ -80,13 +80,19 @@ async def execute(
     print(f"Payload: {payload}")
     json_payload = json.loads(payload)
     print(f"JSON Payload: {json_payload}")
-    # Run in background and ack the message asap
-    background_tasks.add_task(
-        execute_action,
-        integration_id=json_payload.get("integration_id"),
-        action_id=json_payload.get("action_id"),
-        config_overrides=json_payload.get("config_overrides"),
-    )
+    if settings.PROCESS_PUBSUB_MESSAGES_IN_BACKGROUND:
+        background_tasks.add_task(
+            execute_action,
+            integration_id=json_payload.get("integration_id"),
+            action_id=json_payload.get("action_id"),
+            config_overrides=json_payload.get("config_overrides"),
+        )
+    else:
+        await execute_action(
+            integration_id=json_payload.get("integration_id"),
+            action_id=json_payload.get("action_id"),
+            config_overrides=json_payload.get("config_overrides"),
+        )
     return {}
 
 
