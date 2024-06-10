@@ -10,3 +10,4 @@ stamina~=23.2.0
 redis~=5.0.1
 gcloud-aio-pubsub~=6.0.0
 click~=8.1.7
+pyjq~=2.6.0
