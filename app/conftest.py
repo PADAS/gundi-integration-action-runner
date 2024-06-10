@@ -22,7 +22,8 @@ from gundi_core.events import (
 )
 
 from app.actions import PullActionConfiguration
-from app.webhooks import GenericJsonTransformConfig, GenericJsonPayload
+from app.webhooks import GenericJsonTransformConfig, GenericJsonPayload, WebhookPayload
+
 
 class AsyncMock(MagicMock):
     async def __call__(self, *args, **kwargs):
@@ -821,7 +822,7 @@ def mock_get_webhook_handler_for_generic_json_payload(mocker, mock_webhook_handl
     return mock_get_webhook_handler
 
 
-class MockWebhookPayloadModel(pydantic.BaseModel):
+class MockWebhookPayloadModel(WebhookPayload):
     device_id: str
     received_at: str
     lat: float
