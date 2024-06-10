@@ -8,12 +8,14 @@ import httpx
 from app.actions import action_handlers, AuthActionConfiguration, PullActionConfiguration, PushActionConfiguration
 from app.settings import INTEGRATION_TYPE_SLUG, INTEGRATION_SERVICE_URL
 from .core import ActionTypeEnum
-from app.webhooks.core import get_webhook_handler
+from app.webhooks.core import get_webhook_handler, GenericJsonTransformConfig
 
 logger = logging.getLogger(__name__)
 
 
 async def register_integration_in_gundi(gundi_client, type_slug=None, service_url=None):
+    #from ..webhooks.configurations import LiquidTechPayload
+    #print(GenericJsonTransformConfig.schema_json())
     # Prepare the integration name and value
     integration_type_slug = type_slug or INTEGRATION_TYPE_SLUG
     if not integration_type_slug:
