@@ -2,11 +2,12 @@ import asyncio
 import datetime
 import json
 
+import pydantic
 import pytest
 from unittest.mock import MagicMock
 from app import settings
 from gcloud.aio import pubsub
-from gundi_core.schemas.v2 import Integration, IntegrationActionConfiguration, IntegrationActionSummery
+from gundi_core.schemas.v2 import Integration, IntegrationActionConfiguration, IntegrationActionSummary
 from gundi_core.events import (
     SystemEventBaseModel,
     IntegrationActionCustomLog,
@@ -21,6 +22,7 @@ from gundi_core.events import (
 )
 
 from app.actions import PullActionConfiguration
+from app.webhooks import GenericJsonTransformConfig, GenericJsonPayload, WebhookPayload
 
 
 class AsyncMock(MagicMock):
@@ -104,6 +106,359 @@ def integration_v2():
 
 
 @pytest.fixture
+def integration_v2_with_webhook():
+    return Integration.parse_obj(
+        {
+            "id": "abced116-efb4-4fb1-9d68-0ecc4b0996b2",
+            "name": "Integration Tech X",
+            "base_url": "",
+            "enabled": True,
+            "type": {
+                "id": "f9891512-a334-4b36-95aa-50089cef25d3",
+                "name": "Tech X",
+                "value": "techx",
+                "description": "Default type for integrations with Onyesha Wh",
+                "actions": [],
+                "webhook": {
+                    "id": "1242a1bb-6d26-4dde-9ecb-72cb208695c2",
+                    "name": "Tech X Webhook",
+                    "value": "techx_webhook",
+                    "description": "Webhook Integration with Tech X",
+                    "schema": {
+                        "title": "MockWebhookConfigModel",
+                        "type": "object",
+                        "properties": {
+                            "allowed_devices_list": {"title": "Allowed Devices List", "type": "array", "items": {}},
+                            "deduplication_enabled": {"title": "Deduplication Enabled", "type": "boolean"}},
+                        "required": ["allowed_devices_list", "deduplication_enabled"]
+                    }
+                }
+            },
+            "owner": {
+                "id": "a91b400b-482a-4546-8fcb-ee42b01deeb6",
+                "name": "Test Org",
+                "description": ""
+            },
+            "configurations": [],
+            "webhook_configuration": {
+                "id": "66904406-938a-48db-bbfe-08a99951dcb0",
+                "integration": "ed8ed116-efb4-4fb1-9d68-0ecc4b0996a1",
+                "webhook": {
+                    "id": "1242a1bb-6d26-4dde-9ecb-72cb208695c2",
+                    "name": "Tech X Webhook",
+                    "value": "techx_webhook",
+                },
+                "data": {
+                    "allowed_devices_list": ["device1", "device2"],
+                    "deduplication_enabled": True
+                }
+            },
+            "additional": {},
+            "default_route": None,
+            "status": {
+                "id": "mockid-b16a-4dbd-ad32-197c58aeef59",
+                "is_healthy": True,
+                "details": "Last observation has been delivered with success.",
+                "observation_delivered_24hrs": 50231,
+                "last_observation_delivered_at": "2023-03-31T11:20:00+0200"
+            }
+        }
+    )
+
+
+@pytest.fixture
+def integration_v2_with_webhook_generic():
+    return Integration.parse_obj(
+        {
+            "id": "ed8ed116-efb4-4fb1-9d68-0ecc4b0996a1",
+            "name": "Smart Parks LT10",
+            "base_url": "",
+            "enabled": True,
+            "type": {
+                "id": "f9891512-a334-4b36-95aa-50089cef25d3",
+                "name": "Onyesha Wh",
+                "value": "onyesha_wh",
+                "description": "Default type for integrations with Onyesha Wh",
+                "actions": [],
+                "webhook": {
+                    "id": "3a42a1bb-6d26-4dde-9ecb-72cb208695c2",
+                    "name": "Onyesha Wh Webhook",
+                    "value": "onyesha_wh_webhook",
+                    "description": "Webhook Integration with Onyesha Wh",
+                    "schema": {
+                        "type": "object",
+                        "title": "GenericJsonTransformConfig",
+                        "required": [
+                            "json_schema",
+                            "output_type"
+                        ],
+                        "properties": {
+                            "jq_filter": {
+                                "type": "string",
+                                "title": "Jq Filter",
+                                "default": ".",
+                                "example": ". | map(select(.isActive))",
+                                "description": "JQ filter to transform JSON data."
+                            },
+                            "json_schema": {
+                                "type": "object",
+                                "title": "Json Schema"
+                            },
+                            "output_type": {
+                                "type": "string",
+                                "title": "Output Type",
+                                "description": "Output type for the transformed data: 'obv' or 'event'"
+                            }
+                        }
+                    }
+                }
+            },
+            "owner": {
+                "id": "a91b400b-482a-4546-8fcb-ee42b01deeb6",
+                "name": "Test Org",
+                "description": ""
+            },
+            "configurations": [],
+            "webhook_configuration": {
+                "id": "66904406-938a-48db-bbfe-08a99951dcb0",
+                "integration": "ed8ed116-efb4-4fb1-9d68-0ecc4b0996a1",
+                "webhook": {
+                    "id": "3a42a1bb-6d26-4dde-9ecb-72cb208695c2",
+                    "name": "Onyesha Wh Webhook",
+                    "value": "onyesha_wh_webhook"
+                },
+                "data": {
+                    "jq_filter": "{     \"source\": .end_device_ids.device_id,     \"source_name\": .end_device_ids.device_id,     \"type\": .uplink_message.locations.\"frm-payload\".source,     \"recorded_at\": .uplink_message.settings.time,     \"location\": {       \"lat\": .uplink_message.locations.\"frm-payload\".latitude,       \"lon\": .uplink_message.locations.\"frm-payload\".longitude     },     \"additional\": {       \"application_id\": .end_device_ids.application_ids.application_id,       \"dev_eui\": .end_device_ids.dev_eui,       \"dev_addr\": .end_device_ids.dev_addr,       \"batterypercent\": .uplink_message.decoded_payload.batterypercent,       \"gps\": .uplink_message.decoded_payload.gps     }   }",
+                    "json_schema": {
+                        "type": "object",
+                        "properties": {
+                            "received_at": {
+                                "type": "string",
+                                "format": "date-time"
+                            },
+                            "end_device_ids": {
+                                "type": "object",
+                                "properties": {
+                                    "dev_eui": {
+                                        "type": "string"
+                                    },
+                                    "dev_addr": {
+                                        "type": "string"
+                                    },
+                                    "device_id": {
+                                        "type": "string"
+                                    },
+                                    "application_ids": {
+                                        "type": "object",
+                                        "properties": {
+                                            "application_id": {
+                                                "type": "string"
+                                            }
+                                        },
+                                        "additionalProperties": False
+                                    }
+                                },
+                                "additionalProperties": False
+                            },
+                            "uplink_message": {
+                                "type": "object",
+                                "properties": {
+                                    "f_cnt": {
+                                        "type": "integer"
+                                    },
+                                    "f_port": {
+                                        "type": "integer"
+                                    },
+                                    "settings": {
+                                        "type": "object",
+                                        "properties": {
+                                            "time": {
+                                                "type": "string",
+                                                "format": "date-time"
+                                            },
+                                            "data_rate": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "lora": {
+                                                        "type": "object",
+                                                        "properties": {
+                                                            "bandwidth": {
+                                                                "type": "integer"
+                                                            },
+                                                            "coding_rate": {
+                                                                "type": "string"
+                                                            },
+                                                            "spreading_factor": {
+                                                                "type": "integer"
+                                                            }
+                                                        },
+                                                        "additionalProperties": False
+                                                    }
+                                                },
+                                                "additionalProperties": False
+                                            },
+                                            "frequency": {
+                                                "type": "string"
+                                            },
+                                            "timestamp": {
+                                                "type": "integer"
+                                            }
+                                        },
+                                        "additionalProperties": False
+                                    },
+                                    "locations": {
+                                        "type": "object",
+                                        "properties": {
+                                            "frm-payload": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "source": {
+                                                        "type": "string"
+                                                    },
+                                                    "latitude": {
+                                                        "type": "number"
+                                                    },
+                                                    "longitude": {
+                                                        "type": "number"
+                                                    }
+                                                },
+                                                "additionalProperties": False
+                                            }
+                                        },
+                                        "additionalProperties": False
+                                    },
+                                    "frm_payload": {
+                                        "type": "string"
+                                    },
+                                    "network_ids": {
+                                        "type": "object",
+                                        "properties": {
+                                            "ns_id": {
+                                                "type": "string"
+                                            },
+                                            "net_id": {
+                                                "type": "string"
+                                            },
+                                            "tenant_id": {
+                                                "type": "string"
+                                            },
+                                            "cluster_id": {
+                                                "type": "string"
+                                            },
+                                            "tenant_address": {
+                                                "type": "string"
+                                            },
+                                            "cluster_address": {
+                                                "type": "string"
+                                            }
+                                        },
+                                        "additionalProperties": False
+                                    },
+                                    "received_at": {
+                                        "type": "string",
+                                        "format": "date-time"
+                                    },
+                                    "rx_metadata": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "snr": {
+                                                    "type": "number"
+                                                },
+                                                "rssi": {
+                                                    "type": "integer"
+                                                },
+                                                "time": {
+                                                    "type": "string",
+                                                    "format": "date-time"
+                                                },
+                                                "gps_time": {
+                                                    "type": "string",
+                                                    "format": "date-time"
+                                                },
+                                                "timestamp": {
+                                                    "type": "integer"
+                                                },
+                                                "gateway_ids": {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "eui": {
+                                                            "type": "string"
+                                                        },
+                                                        "gateway_id": {
+                                                            "type": "string"
+                                                        }
+                                                    },
+                                                    "additionalProperties": False
+                                                },
+                                                "received_at": {
+                                                    "type": "string",
+                                                    "format": "date-time"
+                                                },
+                                                "channel_rssi": {
+                                                    "type": "integer"
+                                                },
+                                                "uplink_token": {
+                                                    "type": "string"
+                                                },
+                                                "channel_index": {
+                                                    "type": "integer"
+                                                }
+                                            },
+                                            "additionalProperties": False
+                                        }
+                                    },
+                                    "decoded_payload": {
+                                        "type": "object",
+                                        "properties": {
+                                            "gps": {
+                                                "type": "string"
+                                            },
+                                            "latitude": {
+                                                "type": "number"
+                                            },
+                                            "longitude": {
+                                                "type": "number"
+                                            },
+                                            "batterypercent": {
+                                                "type": "integer"
+                                            }
+                                        },
+                                        "additionalProperties": False
+                                    },
+                                    "consumed_airtime": {
+                                        "type": "string"
+                                    }
+                                },
+                                "additionalProperties": False
+                            },
+                            "correlation_ids": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                }
+                            }
+                        },
+                        "additionalProperties": False
+                    },
+                    "output_type": "obv"
+                }
+            },
+            "additional": {},
+            "default_route": None,
+            "status": {
+                "id": "mockid-b16a-4dbd-ad32-197c58aeef59",
+                "is_healthy": True,
+                "details": "Last observation has been delivered with success.",
+                "observation_delivered_24hrs": 50231,
+                "last_observation_delivered_at": "2023-03-31T11:20:00+0200"
+            }
+        }
+    )
+
+
+@pytest.fixture
 def pull_observations_config():
     return MockPullActionConfiguration(lookback_days=30)
 
@@ -118,6 +473,38 @@ def mock_gundi_client_v2(
     mock_client.get_integration_api_key.return_value = async_return(mock_get_gundi_api_key),
     mock_client.get_integration_details.return_value = async_return(
         integration_v2
+    )
+    mock_client.register_integration_type = AsyncMock()
+    mock_client.__aenter__.return_value = mock_client
+    return mock_client
+
+
+@pytest.fixture
+def mock_gundi_client_v2_for_webhooks(
+        mocker,
+        integration_v2_with_webhook,
+        mock_get_gundi_api_key
+):
+    mock_client = mocker.MagicMock()
+    mock_client.get_integration_api_key.return_value = async_return(mock_get_gundi_api_key),
+    mock_client.get_integration_details.return_value = async_return(
+        integration_v2_with_webhook
+    )
+    mock_client.register_integration_type = AsyncMock()
+    mock_client.__aenter__.return_value = mock_client
+    return mock_client
+
+
+@pytest.fixture
+def mock_gundi_client_v2_for_webhooks_generic(
+        mocker,
+        integration_v2_with_webhook_generic,
+        mock_get_gundi_api_key
+):
+    mock_client = mocker.MagicMock()
+    mock_client.get_integration_api_key.return_value = async_return(mock_get_gundi_api_key),
+    mock_client.get_integration_details.return_value = async_return(
+        integration_v2_with_webhook_generic
     )
     mock_client.register_integration_type = AsyncMock()
     mock_client.__aenter__.return_value = mock_client
@@ -241,7 +628,7 @@ def mock_pubsub_client(
 @pytest.fixture
 def integration_event_pubsub_message():
     return pubsub.PubsubMessage(
-        b'{"event_id": "6214c049-f786-45eb-9877-2efb2c2cf8e9", "timestamp": "2024-01-26 14:03:46.199385+00:00", "schema_version": "v1", "payload": {"integration_id": "779ff3ab-5589-4f4c-9e0a-ae8d6c9edff0", "action_id": "pull_observations", "config_data": {"end_datetime": "2024-01-01T00:00:00-00:00", "start_datetime": "2024-01-10T23:59:59-00:00", "force_run_since_start": true}}, "event_type": "IntegrationActionStarted"}'
+        b'{"event_id": "6214c049-f786-45eb-9877-2efb2c2cf8e9", "timestamp": "2024-01-26 14:03:46.199385+00:00", "schema_version": "v1", "payload": {"integration_id": "779ff3ab-5589-4f4c-9e0a-ae8d6c9edff0", "action_id": "pull_observations", "config_data": {"end_datetime": "2024-01-01T00:00:00-00:00", "start_datetime": "2024-01-10T23:59:59-00:00", "force_run_since_start": True}}, "event_type": "IntegrationActionStarted"}'
     )
 
 
@@ -419,3 +806,132 @@ def system_event(request, action_started_event, action_complete_event, action_fa
     if request.param == "custom_activity_log_event":
         return custom_activity_log_event
     return None
+
+
+@pytest.fixture
+def mock_webhook_handler():
+    return AsyncMock()
+
+
+@pytest.fixture
+def mock_get_webhook_handler_for_generic_json_payload(mocker, mock_webhook_handler):
+    mock_get_webhook_handler = mocker.MagicMock()
+    payload_model = GenericJsonPayload
+    config_model = GenericJsonTransformConfig
+    mock_get_webhook_handler.return_value = mock_webhook_handler, payload_model, config_model
+    return mock_get_webhook_handler
+
+
+class MockWebhookPayloadModel(WebhookPayload):
+    device_id: str
+    received_at: str
+    lat: float
+    lon: float
+
+
+class MockWebhookConfigModel(pydantic.BaseModel):
+    allowed_devices_list: list
+    deduplication_enabled: bool
+
+
+@pytest.fixture
+def mock_get_webhook_handler_for_fixed_json_payload(mocker, mock_webhook_handler):
+    mock_get_webhook_handler = mocker.MagicMock()
+    payload_model = MockWebhookPayloadModel
+    config_model = MockWebhookConfigModel
+    mock_get_webhook_handler.return_value = mock_webhook_handler, payload_model, config_model
+    return mock_get_webhook_handler
+
+
+@pytest.fixture
+def mock_webhook_request_headers_onyesha():
+    return {
+        "apikey": "testapikey",
+        "x-consumer-username": "integration:testintegrationid",
+        "x-gundi-integration-type": "onyesha_wh"
+    }
+
+
+@pytest.fixture
+def mock_webhook_request_payload_for_dynamic_schema():
+    return {
+        "end_device_ids": {
+            "device_id": "lt10-1234",
+            "application_ids": {
+                "application_id": "lt10-myapp"
+            },
+            "dev_eui": "0123456789ABCDEF",
+            "dev_addr": "789ABCDE"
+        },
+        "correlation_ids": [
+            "gs:uplink:FAKEWXYZK41B1ZE12346578ABC"
+        ],
+        "received_at": "2024-06-07T15:08:20.179713582Z",
+        "uplink_message": {
+            "f_port": 2,
+            "f_cnt": 2904,
+            "frm_payload": "gFAKExojovxCZCE=",
+            "decoded_payload": {
+                "batterypercent": 100,
+                "gps": "3D fix",
+                "latitude": -2.3828796,
+                "longitude": 37.338060999999996
+            },
+            "rx_metadata": [
+                {
+                    "gateway_ids": {
+                        "gateway_id": "my-gateway-006",
+                        "eui": "123ABCDEFF1234A1"
+                    },
+                    "time": "2024-06-07T15:08:19.841Z",
+                    "timestamp": 1569587228,
+                    "rssi": -60,
+                    "channel_rssi": -60,
+                    "snr": 6.5,
+                    "uplink_token": "FakeTokenlvbi1ndWFyZGlhbnMtMDA2Eghk13r//gFake123LjsBRoMCOPEjLMGELbnpsADIODawZXXgw4qDAjjxTestBhDAyIKRAw==",
+                    "channel_index": 7,
+                    "gps_time": "2024-06-07T15:08:19.841Z",
+                    "received_at": "2024-06-07T15:08:19.880458765Z"
+                }
+            ],
+            "settings": {
+                "data_rate": {
+                    "lora": {
+                        "bandwidth": 125000,
+                        "spreading_factor": 11,
+                        "coding_rate": "4/5"
+                    }
+                },
+                "frequency": "867900000",
+                "timestamp": 1569587228,
+                "time": "2024-06-07T15:08:19.841Z"
+            },
+            "received_at": "2024-06-07T15:08:19.940799259Z",
+            "consumed_airtime": "1.482752s",
+            "locations": {
+                "frm-payload": {
+                    "latitude": -5.1234567,
+                    "longitude": 32.132456789999999,
+                    "source": "SOURCE_GPS"
+                }
+            },
+            "network_ids": {
+                "net_id": "000015",
+                "ns_id": "ABC1230000456789",
+                "tenant_id": "faketenant",
+                "cluster_id": "eu1",
+                "cluster_address": "eu1.cloud.thethings.industries",
+                "tenant_address": "faketenant.eu1.cloud.thethings.industries"
+            }
+        }
+    }
+
+
+@pytest.fixture
+def mock_webhook_request_payload_for_fixed_schema():
+    return {
+        "device_id": "device1",
+        "received_at": "2024-06-07T15:08:20.179713582Z",
+        "lat": -2.3828796,
+        "lon": 35.3380609
+    }

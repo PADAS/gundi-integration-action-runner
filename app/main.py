@@ -3,20 +3,17 @@ import json
 import logging
 import os
 from contextlib import asynccontextmanager
-
-import uvicorn
-from fastapi import FastAPI, Request, status, Depends, BackgroundTasks
+from fastapi import FastAPI, Request, status, BackgroundTasks
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from app.routers import (
-    actions,
-)
+from app.routers import actions, webhooks
 import app.settings as settings
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.services.action_runner import execute_action, _portal
 from app.services.self_registration import register_integration_in_gundi
+
 
 # For running behind a proxy, we'll want to configure the root path for OpenAPI browser.
 root_path = os.environ.get("ROOT_PATH", "")
@@ -83,18 +80,27 @@ async def execute(
     print(f"Payload: {payload}")
     json_payload = json.loads(payload)
     print(f"JSON Payload: {json_payload}")
-    # Run in background and ack the message asap
-    background_tasks.add_task(
-        execute_action,
-        integration_id=json_payload.get("integration_id"),
-        action_id=json_payload.get("action_id"),
-        config_overrides=json_payload.get("config_overrides"),
-    )
+    if settings.PROCESS_PUBSUB_MESSAGES_IN_BACKGROUND:
+        background_tasks.add_task(
+            execute_action,
+            integration_id=json_payload.get("integration_id"),
+            action_id=json_payload.get("action_id"),
+            config_overrides=json_payload.get("config_overrides"),
+        )
+    else:
+        await execute_action(
+            integration_id=json_payload.get("integration_id"),
+            action_id=json_payload.get("action_id"),
+            config_overrides=json_payload.get("config_overrides"),
+        )
     return {}
 
 
 app.include_router(
     actions.router, prefix="/v1/actions", tags=["actions"], responses={}
+)
+app.include_router(
+    webhooks.router, prefix="/webhooks", tags=["webhooks"], responses={}
 )
 
 
