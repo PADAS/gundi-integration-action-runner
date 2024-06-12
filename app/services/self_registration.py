@@ -8,12 +8,14 @@ import httpx
 from app.actions import action_handlers, AuthActionConfiguration, PullActionConfiguration, PushActionConfiguration
 from app.settings import INTEGRATION_TYPE_SLUG, INTEGRATION_SERVICE_URL
 from .core import ActionTypeEnum
-
+from app.webhooks.core import get_webhook_handler, GenericJsonTransformConfig
 
 logger = logging.getLogger(__name__)
 
 
 async def register_integration_in_gundi(gundi_client, type_slug=None, service_url=None):
+    #from ..webhooks.configurations import LiquidTechPayload
+    #print(GenericJsonTransformConfig.schema_json())
     # Prepare the integration name and value
     integration_type_slug = type_slug or INTEGRATION_TYPE_SLUG
     if not integration_type_slug:
@@ -29,6 +31,7 @@ async def register_integration_in_gundi(gundi_client, type_slug=None, service_ur
     if integration_service_url := service_url or INTEGRATION_SERVICE_URL:
         logger.info(f"Registering '{integration_type_slug}' with service_url: '{integration_service_url}'")
         data["service_url"] = integration_service_url
+
     # Prepare the actions and schemas
     actions = []
     for action_id, handler in action_handlers.items():
@@ -54,6 +57,21 @@ async def register_integration_in_gundi(gundi_client, type_slug=None, service_ur
             }
         )
     data["actions"] = actions
+
+    try:  # Register webhook config if available
+        webhook_handler, payload_model, config_model = get_webhook_handler()
+    except (ImportError, AttributeError, NotImplementedError) as e:
+        logger.info(f"Webhook handler not found. Skipping webhook registration.")
+    except Exception as e:
+        logger.warning(f"Error getting webhook handler: {e}. Skipping webhook registration.")
+    else:
+        data["webhook"] = {
+            "name": f"{integration_type_name} Webhook",
+            "value": f"{integration_type_slug}_webhook",
+            "description": f"Webhook Integration with {integration_type_name}",
+            "schema": json.loads(config_model.schema_json()),
+        }
+
     logger.info(f"Registering '{integration_type_slug}' with actions: '{actions}'")
     # Register the integration type and actions in Gundi
     async for attempt in stamina.retry_context(on=httpx.HTTPError, wait_initial=datetime.timedelta(seconds=1),attempts=3):
