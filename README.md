@@ -7,11 +7,15 @@ Template repo for integration in Gundi v2.
 - Define configurations needed for your actions in `action/configurations.py`
 - Or implement a webhooks handler in `webhooks/handlers.py`
 - and define configurations needed for your webhooks in `webhooks/configurations.py`
-- Optionally, add the @activity_logger decorator to log common events which you can later see in the portal:
+- Optionally, add the `@activity_logger()` decorator in actions to log common events which you can later see in the portal:
     - Action execution started
-    - Action execution finished
+    - Action execution complete
     - Error occurred during action execution
-- Optionally, use the `log_activity()` method to log custom messages which you can later see in the portal
+- Optionally, add the `@webhook_activity_logger()` decorator in the webhook handler to log common events which you can later see in the portal:
+    - Webhook execution started
+    - Webhook execution complete
+    - Error occurred during webhook execution
+- Optionally, use  `log_action_activity()` or `log_webhook_activity()` to log custom messages which you can later see in the portal
 
 
 ## Action Examples: 
@@ -104,10 +108,12 @@ class MyWebhookConfig(WebhookConfiguration):
 Your webhook handler function must be named webhook_handler and it must accept the payload and config as arguments. The payload will be validated and parsed using the annotated Pydantic model. The config will be validated and parsed using the annotated Pydantic model. You can then implement your business logic to extract the data and send it to Gundi.
 ```python
 # webhooks/handlers.py
+from app.services.activity_logger import webhook_activity_logger
 from app.services.gundi import send_observations_to_gundi
 from .configurations import MyWebhookPayload, MyWebhookConfig
 
 
+@webhook_activity_logger()
 async def webhook_handler(payload: MyWebhookPayload, integration=None, webhook_config: MyWebhookConfig = None):
     # Implement your custom logic to process the payload here...
     
@@ -151,10 +157,12 @@ class MyWebhookConfig(DynamicSchemaConfig):
 ```
 ```python
 # webhooks/handlers.py
+from app.services.activity_logger import webhook_activity_logger
 from .core import GenericJsonPayload
 from .configurations import MyWebhookConfig
 
 
+@webhook_activity_logger()
 async def webhook_handler(payload: GenericJsonPayload, integration=None, webhook_config: MyWebhookConfig = None):
     # Implement your custom logic to process the payload here...
     return {"observations_extracted": 1}
@@ -187,10 +195,12 @@ class MyWebhookConfig(GenericJsonTransformConfig):
 # webhooks/handlers.py
 import json
 import pyjq
+from app.services.activity_logger import webhook_activity_logger
+from app.services.gundi import send_observations_to_gundi
 from .configurations import MyWebhookPayload, MyWebhookConfig
-from app.services.gundi import send_observations_to_gundi, send_events_to_gundi
 
 
+@webhook_activity_logger()
 async def webhook_handler(payload: MyWebhookPayload, integration=None, webhook_config: MyWebhookConfig = None):
     # Sample implementation using the JQ language to transform the incoming data
     input_data = json.loads(payload.json())
@@ -214,10 +224,12 @@ You can combine the dynamic schema and JSON transformations by annotating the pa
 # webhooks/handlers.py
 import json
 import pyjq
+from app.services.activity_logger import webhook_activity_logger
+from app.services.gundi import send_observations_to_gundi
 from .core import GenericJsonPayload, GenericJsonTransformConfig
-from app.services.gundi import send_observations_to_gundi, send_events_to_gundi
 
 
+@webhook_activity_logger()
 async def webhook_handler(payload: GenericJsonPayload, integration=None, webhook_config: GenericJsonTransformConfig = None):
     # Sample implementation using the JQ language to transform the incoming data
     input_data = json.loads(payload.json())
