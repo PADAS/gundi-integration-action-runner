@@ -97,13 +97,13 @@ async def log_action_activity(integration_id: str, action_id: str, title: str, l
 
 
 async def log_webhook_activity(
-        integration_id: str, webhook_id: str, title: str, level="INFO", config_data: dict = None, data: dict = None
+        integration_id: str, title: str, webhook_id: str="webhook", level="INFO", config_data: dict = None, data: dict = None
 ):
     """
         This is a helper method to send custom activity logs to the portal.
         :param integration_id: UUID of the integration
-        :param webhook_id: str id of the webhook being executed
         :param title: A human-readable string that will appear in the activity log
+        :param webhook_id: str id of the webhook being executed
         :param level: The level of the log, e.g. DEBUG, INFO, WARNING, ERROR
         :param data: Any extra data to be logged as a dict
         :return: None
@@ -186,7 +186,7 @@ def webhook_activity_logger(on_start=True, on_completion=True, on_error=True):
             integration_id = str(integration.id) if integration else None
             webhook_config = kwargs.get("webhook_config")
             config_data = webhook_config.dict() if webhook_config else {} or {}
-            webhook_id = integration.webhook_configuration.id if integration and integration.webhook_configuration else "webhook"
+            webhook_id = str(integration.webhook_configuration.webhook.value) if integration and integration.webhook_configuration else "webhook"
             if on_start:
                 await publish_event(
                     event=IntegrationWebhookStarted(
