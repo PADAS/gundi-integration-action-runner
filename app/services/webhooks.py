@@ -92,8 +92,8 @@ async def process_webhook(request: Request):
         await publish_event(
             event=IntegrationWebhookFailed(
                 payload=WebhookExecutionFailed(
-                    integration_id=str(integration.id) if integration else "unknown",
-                    webhook_id=str(integration.type.webhook.value) if integration and integration.type.webhook else "unknown",
+                    integration_id=str(integration.id) if integration else None,
+                    webhook_id=str(integration.type.webhook.value) if integration and integration.type.webhook else None,
                     config_data=webhook_config_data,
                     error=message
                 )
