@@ -1,9 +1,10 @@
 import importlib
 import logging
 from fastapi import Request
-from app.services.activity_logger import log_activity
+from app import settings
+from app.services.activity_logger import log_activity, publish_event
 from gundi_client_v2 import GundiClient
-
+from gundi_core.events import IntegrationWebhookFailed, WebhookExecutionFailed
 from app.services.utils import DyntamicFactory
 from app.webhooks.core import get_webhook_handler, DynamicSchemaConfig, HexStringConfig, GenericJsonPayload
 
@@ -57,10 +58,17 @@ async def process_webhook(request: Request):
             except Exception as e:
                 message = f"Error parsing payload: {str(e)}. Please review configurations."
                 logger.exception(message)
-                # await log_activity(
-                #     level="error",
-                #     title=message,
-                # )
+                await publish_event(
+                    event=IntegrationWebhookFailed(
+                        payload=WebhookExecutionFailed(
+                            integration_id=str(integration.id),
+                            webhook_id=str(integration.type.webhook.value),
+                            config_data=webhook_config_data,
+                            error=message
+                        )
+                    ),
+                    topic_name=settings.INTEGRATION_EVENTS_TOPIC,
+                )
                 return {}
         else:  # Pass the raw payload
             parsed_payload = json_content
@@ -68,17 +76,29 @@ async def process_webhook(request: Request):
     except (ImportError, AttributeError, NotImplementedError) as e:
         message = "Webhooks handler not found. Please implement a 'webhook_handler' function in app/webhooks/handlers.py"
         logger.exception(message)
-        # ToDo: Update activity logger to support non action-related webhooks
-        # await log_activity(
-        #     level="error",
-        #     title=message,
-        # )
+        await publish_event(
+            event=IntegrationWebhookFailed(
+                payload=WebhookExecutionFailed(
+                    integration_id=str(integration.id),
+                    webhook_id=str(integration.type.webhook.value),
+                    error=message
+                )
+            ),
+            topic_name=settings.INTEGRATION_EVENTS_TOPIC,
+        )
     except Exception as e:
         message = f"Error processing webhook: {str(e)}"
         logger.exception(message)
-        # await log_activity(
-        #     level="error",
-        #     title=message,
-        # )
+        await publish_event(
+            event=IntegrationWebhookFailed(
+                payload=WebhookExecutionFailed(
+                    integration_id=str(integration.id) if integration else None,
+                    webhook_id=str(integration.type.webhook.value) if integration and integration.type.webhook else None,
+                    config_data=webhook_config_data,
+                    error=message
+                )
+            ),
+            topic_name=settings.INTEGRATION_EVENTS_TOPIC,
+        )
     return {}
 
