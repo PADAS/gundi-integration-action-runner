@@ -5,7 +5,7 @@ from app.services.activity_logger import webhook_activity_logger
 from .core import GenericJsonPayload,  GenericJsonTransformConfig
 
 
-@webhook_activity_logger
+@webhook_activity_logger()
 async def webhook_handler(payload: GenericJsonPayload, integration=None, webhook_config: GenericJsonTransformConfig = None):
     print(f"Webhook handler executed with integration: {integration}. \nPayload: {payload}. \nConfig: {webhook_config}")
     if isinstance(payload, list):
