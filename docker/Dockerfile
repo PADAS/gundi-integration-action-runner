@@ -1,5 +1,8 @@
 FROM python:3.10-slim
 
+# This command is for webhooks support
+RUN apt-get update && apt-get install -y autoconf libtool python3-dev
+
 WORKDIR /code
 
 COPY requirements.txt .
