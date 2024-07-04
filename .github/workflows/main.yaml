@@ -25,7 +25,7 @@ jobs:
           echo "tf_file_prod=environments/prod/integrations/${{ github.event.repository.name }}/terragrunt.hcl" >> $GITHUB_OUTPUT
   
   build:
-    uses: PADAS/gundi-workflows/.github/workflows/build_docker.yml@v1-stable
+    uses: PADAS/gundi-workflows/.github/workflows/build_docker.yml@v2
     needs: vars
     with:
       repository: ${{ needs.vars.outputs.repository }}
@@ -34,7 +34,7 @@ jobs:
       service_account: ${{ vars.GUNDI_INTEGRATIONS_SERVICE_ACCOUNT }}
 
   deploy_dev:
-    uses: PADAS/gundi-workflows/.github/workflows/update_hcl.yml@v1-stable
+    uses: PADAS/gundi-workflows/.github/workflows/update_hcl.yml@v2
     if: startsWith(github.ref, 'refs/heads/main')
     needs: [vars, build]
     with:
@@ -42,11 +42,12 @@ jobs:
       file_location: ${{ needs.vars.outputs.tf_file_dev }}
       key_name: image
       new_value: "${{ needs.vars.outputs.repository }}:${{ needs.vars.outputs.tag }}"
+      environment: dev
     secrets:
       ssh-key: ${{ secrets.GUNDI_INTEGRATIONS_DEPLOY_KEY }}
 
   deploy_stage:
-    uses: PADAS/gundi-workflows/.github/workflows/update_hcl.yml@v1-stable
+    uses: PADAS/gundi-workflows/.github/workflows/update_hcl.yml@v2
     if: startsWith(github.ref, 'refs/heads/release')
     needs: [vars, build]
     with:
@@ -54,11 +55,12 @@ jobs:
       file_location: ${{ needs.vars.outputs.tf_file_stage }}
       key_name: image
       new_value: "${{ needs.vars.outputs.repository }}:${{ needs.vars.outputs.tag }}"
+      environment: stage
     secrets:
       ssh-key: ${{ secrets.GUNDI_INTEGRATIONS_DEPLOY_KEY }}
 
   deploy_prod:
-    uses: PADAS/gundi-workflows/.github/workflows/update_hcl.yml@v1-stable
+    uses: PADAS/gundi-workflows/.github/workflows/update_hcl.yml@v2
     if: startsWith(github.ref, 'refs/heads/release')
     needs: [vars, build, deploy_stage]
     with:
@@ -66,5 +68,7 @@ jobs:
       file_location: ${{ needs.vars.outputs.tf_file_prod }}
       key_name: image
       new_value: "${{ needs.vars.outputs.repository }}:${{ needs.vars.outputs.tag }}"
+      environment: prod
     secrets:
       ssh-key: ${{ secrets.GUNDI_INTEGRATIONS_DEPLOY_KEY }}
+
