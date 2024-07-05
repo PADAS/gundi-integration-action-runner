@@ -16,6 +16,14 @@ from gundi_core.events import (
     ActionExecutionFailed,
     IntegrationActionComplete,
     ActionExecutionComplete,
+    IntegrationWebhookCustomLog,
+    IntegrationWebhookStarted,
+    WebhookExecutionStarted,
+    IntegrationWebhookComplete,
+    WebhookExecutionComplete,
+    IntegrationWebhookFailed,
+    WebhookExecutionFailed,
+    CustomWebhookLog,
 )
 from app import settings
 
@@ -57,21 +65,55 @@ async def publish_event(event: SystemEventBaseModel, topic_name: str):
 
 
 async def log_activity(integration_id: str, action_id: str, title: str, level="INFO", config_data: dict = None, data: dict = None):
+    # Show a deprecation warning in favor of using either log_action_activity or log_webhook_activity
+    logger.warning("log_activity is deprecated. Please use log_action_activity or log_webhook_activity instead.")
+    return await log_action_activity(integration_id, action_id, title, level, config_data, data)
+
+
+async def log_action_activity(integration_id: str, action_id: str, title: str, level="INFO", config_data: dict = None, data: dict = None):
     """
-    This is a helper method to send custom activity logs to the portal.
-    :param integration_id: UUID of the integration
-    :param action_id: str id of the action being executed
-    :param title: A human-readable string that will appear in the activity log
-    :param level: The level of the log, e.g. DEBUG, INFO, WARNING, ERROR
-    :param data: Any extra data to be logged as a dict
-    :return: None
-    """
+        This is a helper method to send custom activity logs to the portal.
+        :param integration_id: UUID of the integration
+        :param action_id: str id of the action being executed
+        :param title: A human-readable string that will appear in the activity log
+        :param level: The level of the log, e.g. DEBUG, INFO, WARNING, ERROR
+        :param data: Any extra data to be logged as a dict
+        :return: None
+        """
     logger.debug(f"Logging custom activity: {title}. Integration: {integration_id}. Action: {action_id}.")
     await publish_event(
         event=IntegrationActionCustomLog(
             payload=CustomActivityLog(
                 integration_id=integration_id,
                 action_id=action_id,
+                config_data=config_data or {},
+                title=title,
+                level=level,
+                data=data
+            )
+        ),
+        topic_name=settings.INTEGRATION_EVENTS_TOPIC,
+    )
+
+
+async def log_webhook_activity(
+        integration_id: str, title: str, webhook_id: str="webhook", level="INFO", config_data: dict = None, data: dict = None
+):
+    """
+        This is a helper method to send custom activity logs to the portal.
+        :param integration_id: UUID of the integration
+        :param title: A human-readable string that will appear in the activity log
+        :param webhook_id: str id of the webhook being executed
+        :param level: The level of the log, e.g. DEBUG, INFO, WARNING, ERROR
+        :param data: Any extra data to be logged as a dict
+        :return: None
+        """
+    logger.debug(f"Logging custom activity: {title}. Integration: {integration_id}. Webhook: {webhook_id}.")
+    await publish_event(
+        event=IntegrationWebhookCustomLog(
+            payload=CustomWebhookLog(
+                integration_id=integration_id,
+                webhook_id=webhook_id,
                 config_data=config_data or {},
                 title=title,
                 level=level,
@@ -136,3 +178,55 @@ def activity_logger(on_start=True, on_completion=True, on_error=True):
     return decorator
 
 
+def webhook_activity_logger(on_start=True, on_completion=True, on_error=True):
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            integration = kwargs.get("integration")
+            integration_id = str(integration.id) if integration else None
+            webhook_config = kwargs.get("webhook_config")
+            config_data = webhook_config.dict() if webhook_config else {} or {}
+            webhook_id = str(integration.webhook_configuration.webhook.value) if integration and integration.webhook_configuration else "webhook"
+            if on_start:
+                await publish_event(
+                    event=IntegrationWebhookStarted(
+                        payload=WebhookExecutionStarted(
+                            integration_id=integration_id,
+                            webhook_id=webhook_id,
+                            config_data=config_data,
+                        )
+                    ),
+                    topic_name=settings.INTEGRATION_EVENTS_TOPIC,
+                )
+            try:
+                result = await func(*args, **kwargs)
+            except Exception as e:
+                if on_error:
+                    await publish_event(
+                        event=IntegrationWebhookFailed(
+                            payload=WebhookExecutionFailed(
+                                integration_id=integration_id,
+                                webhook_id=webhook_id,
+                                config_data=config_data,
+                                error=str(e)
+                            )
+                        ),
+                        topic_name=settings.INTEGRATION_EVENTS_TOPIC,
+                    )
+                raise e
+            else:
+                if on_completion:
+                    await publish_event(
+                        event=IntegrationWebhookComplete(
+                            payload=WebhookExecutionComplete(
+                                integration_id=integration_id,
+                                webhook_id=webhook_id,
+                                config_data=config_data,
+                                result=result
+                            )
+                        ),
+                        topic_name=settings.INTEGRATION_EVENTS_TOPIC,
+                    )
+                return result
+        return wrapper
+    return decorator
