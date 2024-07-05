@@ -748,11 +748,19 @@ def mock_gundi_client_v2_class(mocker, mock_gundi_client_v2):
 
 
 @pytest.fixture
-def mock_gundi_sensors_client_class(mocker, events_created_response, observations_created_response):
+def mock_gundi_sensors_client_class(
+        mocker,
+        events_created_response,
+        event_attachment_created_response,
+        observations_created_response
+):
     mock_gundi_sensors_client_class = mocker.MagicMock()
     mock_gundi_sensors_client = mocker.MagicMock()
     mock_gundi_sensors_client.post_events.return_value = async_return(
         events_created_response
+    )
+    mock_gundi_sensors_client.post_event_attachments.return_value = async_return(
+        event_attachment_created_response
     )
     mock_gundi_sensors_client.post_observations.return_value = async_return(
         observations_created_response
@@ -791,6 +799,22 @@ def events_created_response():
                 "site_name": "MM Spot",
                 "species": "lion"
             }
+        }
+    ]
+
+
+@pytest.fixture
+def event_attachment_created_response():
+    return [
+        {
+            "object_id": "af8e2946-bad6-4d02-8a26-99dde34bd9fa",
+            "created_at": "2024-07-04T13:15:26.559894Z",
+            "updated_at": None
+        },
+        {
+            "object_id": "gat51h73-dd71-dj88-91uh-jah7162hy6fs",
+            "created_at": "2024-07-03T13:15:26.559894Z",
+            "updated_at": None
         }
     ]
 
