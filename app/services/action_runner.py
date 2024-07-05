@@ -28,8 +28,9 @@ async def execute_action(integration_id: str, action_id: str, config_overrides: 
     """
     logger.info(f"Executing action '{action_id}' for integration '{integration_id}'...")
     try:  # Get the integration config from the portal
-        async for attempt in stamina.retry_context(on=httpx.HTTPError, wait_initial=datetime.timedelta(seconds=1), attempts=3):
+        async for attempt in stamina.retry_context(on=httpx.HTTPError, wait_initial=1.0, wait_jitter=5.0, wait_max=32.0):
             with attempt:
+                # ToDo: Store configs and update it on changes (event-driven architecture)
                 integration = await _portal.get_integration_details(integration_id=integration_id)
     except Exception as e:
         message = f"Error retrieving configuration for integration '{integration_id}': {e}"

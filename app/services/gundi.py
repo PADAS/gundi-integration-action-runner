@@ -5,7 +5,7 @@ import stamina
 from gundi_client_v2.client import GundiClient, GundiDataSenderClient
 
 
-@stamina.retry(on=httpx.HTTPError, attempts=3, wait_initial=datetime.timedelta(seconds=1), wait_max=datetime.timedelta(seconds=10))
+@stamina.retry(on=httpx.HTTPError, wait_initial=1.0, wait_jitter=5.0, wait_max=32.0)
 async def _get_gundi_api_key(integration_id):
     async with GundiClient() as gundi_client:
         return await gundi_client.get_integration_api_key(
@@ -22,7 +22,7 @@ async def _get_sensors_api_client(integration_id):
     return sensors_api_client
 
 
-@stamina.retry(on=httpx.HTTPError, attempts=3, wait_initial=datetime.timedelta(seconds=1), wait_max=datetime.timedelta(seconds=10))
+@stamina.retry(on=httpx.HTTPError, wait_initial=1.0, wait_jitter=5.0, wait_max=32.0)
 async def send_events_to_gundi(events: List[dict], **kwargs) -> dict:
     """
     Send Events to Gundi using the REST API v2
@@ -51,7 +51,22 @@ async def send_events_to_gundi(events: List[dict], **kwargs) -> dict:
     return await sensors_api_client.post_events(data=events)
 
 
-@stamina.retry(on=httpx.HTTPError, attempts=3, wait_initial=datetime.timedelta(seconds=1), wait_max=datetime.timedelta(seconds=10))
+@stamina.retry(on=httpx.HTTPError, wait_initial=1.0, wait_jitter=5.0, wait_max=32.0)
+async def send_event_attachments_to_gundi(event_id: str, attachments: List[bytes], **kwargs) -> dict:
+    """
+    Send Event Attachments to Gundi using the REST API v2
+    :param event_id: Created event in which the attachments are going to be linked
+    :param attachments: A list of attachments (in bytes)
+    :param kwargs: integration_id: The UUID of the related integration
+    :return: A dict with the response from the API
+    """
+    integration_id = kwargs.get("integration_id")
+    assert integration_id, "integration_id is required"
+    sensors_api_client = await _get_sensors_api_client(integration_id=str(integration_id))
+    return await sensors_api_client.post_event_attachments(event_id=event_id, attachments=attachments)
+
+
+@stamina.retry(on=httpx.HTTPError, wait_initial=1.0, wait_jitter=5.0, wait_max=32.0)
 async def send_observations_to_gundi(observations: List[dict], **kwargs) -> dict:
     """
     Send Observations to Gundi using the REST API v2
