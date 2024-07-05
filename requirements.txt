@@ -55,7 +55,7 @@ gcloud-aio-pubsub==6.0.1
     # via -r requirements-base.in
 gundi-client-v2==2.3.0
     # via -r requirements-base.in
-gundi-core==1.4.0
+gundi-core==1.4.1
     # via
     #   -r requirements-base.in
     #   gundi-client-v2

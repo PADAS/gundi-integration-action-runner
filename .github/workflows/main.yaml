@@ -71,3 +71,4 @@ jobs:
       environment: prod
     secrets:
       ssh-key: ${{ secrets.GUNDI_INTEGRATIONS_DEPLOY_KEY }}
+
