@@ -48,6 +48,8 @@ jobs:
         run: python -m ensurepip --upgrade
       - name: Install pytest
         run: pip install pytest
+      - name: Install dependencies
+        run: pip install -r requirements-base.in
       - name: Run auth precondition test
         run: pytest 
 
