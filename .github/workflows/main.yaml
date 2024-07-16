@@ -46,8 +46,8 @@ jobs:
           python-version: '3.8' 
       - name: Install pip
         run: python -m ensurepip --upgrade
-      - name: Install test runner
-        run: pip install -r requirements.in
+      - name: Install pytest
+        run: pip install pytest
       - name: Run auth precondition test
         run: pytest 
 
