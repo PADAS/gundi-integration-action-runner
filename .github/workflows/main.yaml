@@ -31,6 +31,7 @@ jobs:
     with:
       repository: ${{ needs.vars.outputs.repository }}
       tag: ${{ needs.vars.outputs.tag }}
+      dockerfile: docker/Dockerfile.test
       workload_identity_provider: ${{ vars.GUNDI_INTEGRATIONS_WORKLOAD_IDENTITY_PROVIDER}}
       service_account: ${{ vars.GUNDI_INTEGRATIONS_SERVICE_ACCOUNT }}
 
