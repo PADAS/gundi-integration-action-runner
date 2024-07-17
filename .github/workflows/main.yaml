@@ -49,7 +49,7 @@ jobs:
       - name: Install pytest
         run: pip install pytest
       - name: Install dependencies
-        run: pip install -r requirements-base.in
+        run: pip install -r requirements-base.in -r requirements-dev.in
       - name: Run auth precondition test
         run: pytest 
 
