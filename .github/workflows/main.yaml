@@ -4,7 +4,6 @@ on:
     branches:
       - main
       - 'release-**'
-      - 'gundi-3067'
 
 jobs:
   vars:
@@ -24,15 +23,6 @@ jobs:
           echo "tf_file_dev=environments/dev/integrations/${{ github.event.repository.name }}/terragrunt.hcl" >> $GITHUB_OUTPUT
           echo "tf_file_stage=environments/stage/integrations/${{ github.event.repository.name }}/terragrunt.hcl" >> $GITHUB_OUTPUT
           echo "tf_file_prod=environments/prod/integrations/${{ github.event.repository.name }}/terragrunt.hcl" >> $GITHUB_OUTPUT
-  
-  # build:
-  #   uses: PADAS/gundi-workflows/.github/workflows/build_docker.yml@v2
-  #   needs: vars
-  #   with:
-  #     repository: ${{ needs.vars.outputs.repository }}
-  #     tag: ${{ needs.vars.outputs.tag }}
-  #     workload_identity_provider: ${{ vars.GUNDI_INTEGRATIONS_WORKLOAD_IDENTITY_PROVIDER}}
-  #     service_account: ${{ vars.GUNDI_INTEGRATIONS_SERVICE_ACCOUNT }}
 
   run_unit_tests:
     runs-on: ubuntu-latest
@@ -53,11 +43,21 @@ jobs:
         run: pip install -r requirements.txt
       - name: Run unit tests
         run: pytest 
+    
+  build:
+    uses: PADAS/gundi-workflows/.github/workflows/build_docker.yml@v2
+    needs: [run_unit_tests, vars]
+    with:
+      repository: ${{ needs.vars.outputs.repository }}
+      tag: ${{ needs.vars.outputs.tag }}
+      workload_identity_provider: ${{ vars.GUNDI_INTEGRATIONS_WORKLOAD_IDENTITY_PROVIDER}}
+      service_account: ${{ vars.GUNDI_INTEGRATIONS_SERVICE_ACCOUNT }}
+
 
   deploy_dev:
     uses: PADAS/gundi-workflows/.github/workflows/update_hcl.yml@v2
     if: startsWith(github.ref, 'refs/heads/main')
-    needs: [run_unit_tests]
+    needs: [build]
     with:
       git_repository: PADAS/gundi-integrations-v2-infra
       file_location: ${{ needs.vars.outputs.tf_file_dev }}
@@ -70,7 +70,7 @@ jobs:
   deploy_stage:
     uses: PADAS/gundi-workflows/.github/workflows/update_hcl.yml@v2
     if: startsWith(github.ref, 'refs/heads/release')
-    needs: [run_unit_tests]
+    needs: [build]
     with:
       git_repository: PADAS/gundi-integrations-v2-infra
       file_location: ${{ needs.vars.outputs.tf_file_stage }}
@@ -83,7 +83,7 @@ jobs:
   deploy_prod:
     uses: PADAS/gundi-workflows/.github/workflows/update_hcl.yml@v2
     if: startsWith(github.ref, 'refs/heads/release')
-    needs: [run_unit_tests, deploy_stage]
+    needs: [build, deploy_stage]
     with:
       git_repository: PADAS/gundi-integrations-v2-infra
       file_location: ${{ needs.vars.outputs.tf_file_prod }}
