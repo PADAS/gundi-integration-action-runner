@@ -25,14 +25,14 @@ jobs:
           echo "tf_file_stage=environments/stage/integrations/${{ github.event.repository.name }}/terragrunt.hcl" >> $GITHUB_OUTPUT
           echo "tf_file_prod=environments/prod/integrations/${{ github.event.repository.name }}/terragrunt.hcl" >> $GITHUB_OUTPUT
   
-  build:
-    uses: PADAS/gundi-workflows/.github/workflows/build_docker.yml@v2
-    needs: vars
-    with:
-      repository: ${{ needs.vars.outputs.repository }}
-      tag: ${{ needs.vars.outputs.tag }}
-      workload_identity_provider: ${{ vars.GUNDI_INTEGRATIONS_WORKLOAD_IDENTITY_PROVIDER}}
-      service_account: ${{ vars.GUNDI_INTEGRATIONS_SERVICE_ACCOUNT }}
+  # build:
+  #   uses: PADAS/gundi-workflows/.github/workflows/build_docker.yml@v2
+  #   needs: vars
+  #   with:
+  #     repository: ${{ needs.vars.outputs.repository }}
+  #     tag: ${{ needs.vars.outputs.tag }}
+  #     workload_identity_provider: ${{ vars.GUNDI_INTEGRATIONS_WORKLOAD_IDENTITY_PROVIDER}}
+  #     service_account: ${{ vars.GUNDI_INTEGRATIONS_SERVICE_ACCOUNT }}
 
   run_unit_tests:
     runs-on: ubuntu-latest
