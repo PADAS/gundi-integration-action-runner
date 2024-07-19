@@ -52,11 +52,14 @@ async def send_events_to_gundi(events: List[dict], **kwargs) -> dict:
 
 
 @stamina.retry(on=httpx.HTTPError, wait_initial=1.0, wait_jitter=5.0, wait_max=32.0)
-async def send_event_attachments_to_gundi(event_id: str, attachments: List[bytes], **kwargs) -> dict:
+async def send_event_attachments_to_gundi(event_id: str, attachments: List[tuple], **kwargs) -> dict:
     """
     Send Event Attachments to Gundi using the REST API v2
     :param event_id: Created event in which the attachments are going to be linked
-    :param attachments: A list of attachments (in bytes)
+    :param attachments: A list of attachments (tuples with filename, file in bytes). Example:
+    filename = 'example.png'
+    file_in_bytes = open(filename, 'rb')
+    attachments = [(filename, file_in_bytes)]
     :param kwargs: integration_id: The UUID of the related integration
     :return: A dict with the response from the API
     """
