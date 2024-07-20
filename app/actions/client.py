@@ -429,12 +429,22 @@ async def get_api_keys(auth, integration):
     return api_keys
 
 
-def aoi_from_url(url) -> str:
-    href = httpx.get(url, verify=True, timeout=10, follow_redirects=True).url
-    try:
-        matches = re.match(".*globalforestwatch.org.*aoi/([^/]+).*", str(href))
+async def aoi_from_url(url) -> str:
+    """
+    Extracts the AOI ID from a GFW share link URL.
+    """
+
+    URL_PATTERN = ".*globalforestwatch.org.*aoi/([^/]+).*"
+    if matches := re.match(URL_PATTERN, url):
         return matches[1]
-    except IndexError as ie:
+    
+    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=3.1)) as client:
+        head = await client.head(url, follow_redirects=True)
+
+    try:
+        matches = re.match(".*globalforestwatch.org.*aoi/([^/]+).*", str(head.url))
+        return matches[1]
+    except IndexError:
         logger.error("Unable to parse AOI from globalforestwatch URL: %s", url)
 
 
@@ -626,7 +636,7 @@ async def get_aoi_data(integration, config):
     auth = get_auth_config(integration)
     try:
         token = await get_token(integration, auth)
-        aoi_id = aoi_from_url(config.gfw_share_link_url)
+        aoi_id = await aoi_from_url(config.gfw_share_link_url)
         aoi_data = await get_aoi(integration, auth, aoi_id, token)
     except Exception as e:
         message = f"Unhandled exception occurred. Exception: {e}"
