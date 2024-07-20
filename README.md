@@ -1,21 +1,5 @@
-# gundi-integration-action-runner
-Template repo for integration in Gundi v2.
-
-## Usage
-- Fork this repo
-- Implement your own actions in `actions/handlers.py`
-- Define configurations needed for your actions in `action/configurations.py`
-- Or implement a webhooks handler in `webhooks/handlers.py`
-- and define configurations needed for your webhooks in `webhooks/configurations.py`
-- Optionally, add the `@activity_logger()` decorator in actions to log common events which you can later see in the portal:
-    - Action execution started
-    - Action execution complete
-    - Error occurred during action execution
-- Optionally, add the `@webhook_activity_logger()` decorator in the webhook handler to log common events which you can later see in the portal:
-    - Webhook execution started
-    - Webhook execution complete
-    - Error occurred during webhook execution
-- Optionally, use  `log_action_activity()` or `log_webhook_activity()` to log custom messages which you can later see in the portal
+# gundi-integration-gfw
+Gundi Integration for Global Forest Watch
 
 
 ## Action Examples: 
