@@ -11,14 +11,14 @@ def generate_rectangle_cells(xmin, ymin, xmax, ymax, interval=0.3):
         xmin += interval
 
 
-def generate_geometry_fragments(geometry_collection):
+def generate_geometry_fragments(geometry_collection, interval=0.3):
     envelope = geometry_collection.envelope
     for xmin, ymin, xmax, ymax in generate_rectangle_cells(
         envelope.bounds[0],
         envelope.bounds[1],
         envelope.bounds[2],
         envelope.bounds[3],
-        interval=2.0,
+        interval=interval,
     ):
         rectangle_shape = shapely.geometry.Polygon(
             [(xmin, ymin), (xmin, ymax), (xmax, ymax), (xmax, ymin)]

@@ -5,7 +5,7 @@ import pydantic
 import random
 import re
 import stamina
-
+import backoff
 import app.actions.utils as utils
 
 from app.actions.configurations import AuthenticateConfig
@@ -428,7 +428,7 @@ async def get_api_keys(auth, integration):
 
     return api_keys
 
-
+@backoff.on_exception(backoff.expo, httpx.HTTPError)
 async def aoi_from_url(url) -> str:
     """
     Extracts the AOI ID from a GFW share link URL.
@@ -631,25 +631,32 @@ async def get_token(integration, config):
 
     return response.json()["data"]
 
-
+@backoff.on_exception(backoff.expo, httpx.HTTPError, max_tries=3)
 async def get_aoi_data(integration, config):
     auth = get_auth_config(integration)
     try:
         token = await get_token(integration, auth)
         aoi_id = await aoi_from_url(config.gfw_share_link_url)
         aoi_data = await get_aoi(integration, auth, aoi_id, token)
-    except Exception as e:
-        message = f"Unhandled exception occurred. Exception: {e}"
+        return aoi_data
+    except httpx.HTTPError as e: # Todo: narrow this.
         logger.exception(
-            message,
+            f"Failed getting AOI Data for integration {integration.id}",
             extra={
-                "integration_id": str(integration.id),
-                "attention_needed": True
-            }
+                "integration_id": str(integration.id), 
+                "gfw_share_link_url": config.gfw_share_link_url,
+                }
         )
         raise e
-    else:
-        return aoi_data
+    except Exception as e: # Todo: narrow this.
+        logger.exception(
+            f"Failed getting AOI Data for integration {integration.id}",
+            extra={
+                "integration_id": str(integration.id), 
+                "gfw_share_link_url": config.gfw_share_link_url,
+                }
+        )
+        raise e
 
 
 async def get_fire_alerts(aoi_data, integration, config):
@@ -766,7 +773,8 @@ async def get_integrated_alerts(aoi_data, integration, config):
                 ]
             )
             for geometry_fragment in utils.generate_geometry_fragments(
-                    geometry_collection=geometry_collection
+                    geometry_collection=geometry_collection,
+                    interval=0.5
             ):
 
                 geojson_area = mapping(geometry_fragment)

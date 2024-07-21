@@ -10,10 +10,17 @@ LOGGING_LEVEL = env.str("LOGGING_LEVEL", "INFO")
 DEFAULT_LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
+    "formatters": {
+        "json": {
+            "format": "%(asctime)s %(levelname)s %(processName)s %(thread)d %(name)s %(message)s",
+            "class": "pythonjsonlogger.jsonlogger.JsonFormatter"
+        }
+    },
     "handlers": {
         "console": {
             "level": LOGGING_LEVEL,
             "class": "logging.StreamHandler",
+            "formatter": "json",
             "stream": sys.stdout
         },
     },
