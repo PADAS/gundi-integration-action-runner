@@ -262,7 +262,8 @@ async def get_alerts(
 
         @backoff.on_exception(backoff.constant, httpx.HTTPError, max_tries=3, interval=10)
         async def fn():
-            async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=10.0, read=60.0)) as session:
+            # This is a really long timeout, but the GFW API can be slow.
+            async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0)) as session:
                 response = await session.post(
                     f"{DATA_API_ROOT_URL}/dataset/{dataset}/latest/query/json",
                     headers=headers,
