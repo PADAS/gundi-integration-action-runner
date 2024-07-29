@@ -40,7 +40,7 @@ jobs:
   deploy_dev:
     uses: PADAS/gundi-workflows/.github/workflows/update_hcl.yml@v2
     if: startsWith(github.ref, 'refs/heads/main')
-    needs: [build]
+    needs: [vars, build]
     with:
       git_repository: PADAS/gundi-integrations-v2-infra
       file_location: ${{ needs.vars.outputs.tf_file_dev }}
@@ -53,7 +53,7 @@ jobs:
   deploy_stage:
     uses: PADAS/gundi-workflows/.github/workflows/update_hcl.yml@v2
     if: startsWith(github.ref, 'refs/heads/release')
-    needs: [build]
+    needs: [vars, build]
     with:
       git_repository: PADAS/gundi-integrations-v2-infra
       file_location: ${{ needs.vars.outputs.tf_file_stage }}
@@ -66,7 +66,7 @@ jobs:
   deploy_prod:
     uses: PADAS/gundi-workflows/.github/workflows/update_hcl.yml@v2
     if: startsWith(github.ref, 'refs/heads/release')
-    needs: [build, deploy_stage]
+    needs: [vars, build, deploy_stage]
     with:
       git_repository: PADAS/gundi-integrations-v2-infra
       file_location: ${{ needs.vars.outputs.tf_file_prod }}
