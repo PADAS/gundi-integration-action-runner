@@ -1,7 +1,7 @@
 FROM python:3.10-slim
 
-# Add the required packages for the building python packages
-RUN apt-get update && apt-get install -y autoconf automake libtool python3-dev
+# This command is for webhooks support
+RUN apt-get update && apt-get install -y autoconf automake libtool make python3-dev
 
 WORKDIR /code
 
