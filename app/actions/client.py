@@ -36,31 +36,6 @@ SQL_TEMPLATE = """SELECT pt.*
 """
 
 
-class ClusteredIntegratedAlert(pydantic.BaseModel):
-    latitude: float
-    longitude: float
-    confidence_label: str = pydantic.Field(
-        ..., alias="gfw_integrated_alerts__confidence"
-    )
-    confidence: float = 0.0
-    num_clustered_alerts: int = 1
-    recorded_at: datetime = pydantic.Field(..., alias="gfw_integrated_alerts__date")
-
-    @pydantic.validator(
-        "recorded_at",
-        pre=True,
-    )
-    def sanitized_date(cls, val) -> datetime:
-        return datetime.strptime(val, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-
-    @pydantic.root_validator
-    def compute_confidence(cls, values):
-        values["confidence"] = (
-            1.0 if values.get("confidence_label", "") in {"high", "highest"} else 0.0
-        )
-        return values
-
-
 class DatasetStatus(pydantic.BaseModel):
     latest_updated_on: datetime = pydantic.Field(
         default_factory=lambda: datetime(1970, 1, 1, tzinfo=timezone.utc)
@@ -146,6 +121,9 @@ class DataAPIAuthException(Exception):
 class DataAPIQueryException(Exception):
     pass
 
+class GFWClientException(Exception):
+    pass
+
 
 def random_string(n=4):
     return "".join(random.sample([chr(x) for x in range(97, 97 + 26)], n))
@@ -213,92 +191,29 @@ class FireAlert(pydantic.BaseModel):
     bright_ti5: float
     frp: float
     daynight: str
-    num_clustered_alerts: Optional[int] = 1
 
 
-class GFWClientException(Exception):
-    pass
+class Geometry(pydantic.BaseModel):
+    type: str
+    coordinates: List[List[List[float]]]
 
 
-alerts_request_semaphore = asyncio.Semaphore(1)
+class CreatedGeostore(pydantic.BaseModel):
+    created_on: datetime
+    updated_on: datetime
+    gfw_geostore_id: str
+    gfw_geojson: Geometry
+    gfw_area__ha: float
+    gfw_bbox: List[float]
 
-async def get_alerts(
-        *,
-        integration,
-        auth,
-        dataset: str,
-        fields: Set[str],
-        date_field: str,
-        geometry: dict,
-        daterange: Tuple[datetime, datetime],
-        extra_where: str = "",
-):
-    alerts = []
-    # 'coordinates' might be an empty array.
-    if not geometry.get("coordinates"):
-        return alerts
-
-    api_keys = await get_api_keys(auth, integration)
-    headers = {"x-api-key": api_keys.api_key}
-
-    fields = {"latitude", "longitude"} | fields or set()
-
-    lower_bound = daterange[0]
-    upper_bound = min(daterange[1], datetime.now(tz=timezone.utc))
-
-    block_size = timedelta(days=2)
-    while lower_bound < upper_bound:
-        lower_date = lower_bound.strftime("%Y-%m-%d")
-        upper_date = (lower_bound + block_size).strftime("%Y-%m-%d")
-        sql_query = f"SELECT {','.join(fields)} FROM results WHERE ({date_field} >= '{lower_date}' AND {date_field} <= '{upper_date}')"
-        if extra_where:
-            sql_query += f" AND {extra_where}"
-
-        logger.debug(f"Querying dataset with sql: {sql_query}")
-        payload = {
-            "geometry": geometry,
-            "sql": sql_query,
-        }
-
-        @backoff.on_exception(backoff.constant, httpx.HTTPError, max_tries=3, interval=10)
-        async def fn():
-            # This is a really long timeout, but the GFW API can be slow.
-            async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0)) as session:
-                response = await session.post(
-                    f"{DATA_API_ROOT_URL}/dataset/{dataset}/latest/query/json",
-                    headers=headers,
-                    json=payload,
-                    follow_redirects=True
-                )
-
-                response.raise_for_status()
-            return response.json()
-
-        async with alerts_request_semaphore:
-            response = await fn()
-
-        data_len = len(response.get("data"))
-        logger.info(f"Extracted {data_len} alerts for period {lower_date} - {upper_date}.")
-        alerts.extend(response.get("data", []))
-
-        lower_bound = lower_bound + block_size
-
-    return alerts
+    @pydantic.validator("created_on", "updated_on")
+    def clean_timestamp(val):
+        return val if val.tzinfo else val.replace(tzinfo=timezone.utc)
 
 
-async def get_gfw_integrated_alerts(integration, auth, date_range, geometry):
-    fields = {"gfw_integrated_alerts__date", "gfw_integrated_alerts__confidence"}
-    response = await get_alerts(
-        integration=integration,
-        auth=auth,
-        dataset="gfw_integrated_alerts",
-        geometry=geometry,
-        date_field="gfw_integrated_alerts__date",
-        daterange=date_range,
-        fields=fields,
-        extra_where="(gfw_integrated_alerts__confidence = 'highest')"
-    )
-    return response
+class GeoStoreResponse(pydantic.BaseModel):
+    data: CreatedGeostore
+    status: str
 
 
 @backoff.on_exception(backoff.constant, httpx.HTTPError, max_tries=3, interval=10)
@@ -361,11 +276,13 @@ async def auth_generator(auth):
 async def get_auth_header(auth, _auth_gen=None, refresh=False):
     if not _auth_gen or refresh:
         _auth_gen = auth_generator(auth)
+
     try:
         token = await anext(_auth_gen)
     except StopIteration:
         _auth_gen = auth_generator(auth)
         token = await anext(_auth_gen)
+
     return {"authorization": f"{token.token_type} {token.access_token}"}
 
 
@@ -409,6 +326,7 @@ async def get_api_keys(auth, integration):
 
     return api_keys
 
+
 @backoff.on_exception(backoff.constant, httpx.HTTPError, max_tries=3, interval=10)
 async def aoi_from_url(url) -> str:
     """
@@ -419,37 +337,14 @@ async def aoi_from_url(url) -> str:
     if matches := re.match(URL_PATTERN, url):
         return matches[1]
     
-    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=3.1)) as client:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=5)) as client:
         head = await client.head(url, follow_redirects=True)
 
     try:
-        matches = re.match(".*globalforestwatch.org.*aoi/([^/]+).*", str(head.url))
+        matches = re.match(URL_PATTERN, str(head.url))
         return matches[1]
     except IndexError:
         logger.error("Unable to parse AOI from globalforestwatch URL: %s", url)
-
-
-@backoff.on_exception(backoff.constant, httpx.HTTPError, max_tries=3, interval=10)
-async def get_aoi(integration, auth, aoi_id: str, token):
-    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=5.0)) as client:
-        response = await client.get(
-            url=f"{integration.base_url}/v2/area/{aoi_id}",
-            headers={"Authorization": f'Bearer {token["token"]}'},
-            follow_redirects=True
-        )
-        response.raise_for_status()
-        response = response.json()
-
-        try:
-            return AOIData.parse_obj(response.get("data"))
-        except pydantic.ValidationError as e:
-            logger.exception(f"Unexpected error parsing AOI data: {e}")
-
-        logger.error(
-            "Failed to get AOI for id: %s. result is: %s", aoi_id, response.text[:250]
-        )
-
-        raise GFWClientException(f"Failed to get AOI for id: '{aoi_id}'")
 
 
 @backoff.on_exception(backoff.constant, httpx.HTTPError, max_tries=3, interval=10)
@@ -472,31 +367,6 @@ async def get_geostore(integration, geostore_id):
         )
 
         raise GFWClientException(f"Failed to get Geostore for id: '{geostore_id}'")
-
-
-async def get_aoi_geojson_geometry(integration, aoi_data):
-    geostore = await get_geostore(integration, aoi_data.attributes.geostore)
-    geojson_geometry = (
-        geostore.attributes.geojson
-    )
-    return geojson_geometry
-
-
-@backoff.on_exception(backoff.constant, httpx.HTTPError, max_tries=3, interval=10)
-async def get_dataset_metadata(dataset, auth, integration):
-    api_keys = await get_api_keys(auth, integration)
-    headers = {"x-api-key": api_keys.api_key}
-
-    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=10.0)) as client:
-        response = await client.get(
-            f"{DATA_API_ROOT_URL}/dataset/{dataset}/latest",
-            headers=headers,
-            follow_redirects=True
-        )
-        response.raise_for_status()
-        response = response.json()
-
-        return DatasetResponseItem.parse_obj(response.get("data"))
 
 
 async def get_fire_alerts_response(integration, config, aoi_data, start_date, end_date):
@@ -590,34 +460,7 @@ async def get_token(integration, config):
     )
 
     return response.json()["data"]
-
-@backoff.on_exception(backoff.constant, httpx.HTTPError, max_tries=3, interval=10)
-async def get_aoi_data(integration, config):
-    auth = get_auth_config(integration)
-    try:
-        token = await get_token(integration, auth)
-        aoi_id = await aoi_from_url(config.gfw_share_link_url)
-        aoi_data = await get_aoi(integration, auth, aoi_id, token)
-        return aoi_data
-    except httpx.HTTPError as e: # Todo: narrow this.
-        logger.exception(
-            f"Failed getting AOI Data for integration {integration.id}",
-            extra={
-                "integration_id": str(integration.id), 
-                "gfw_share_link_url": config.gfw_share_link_url,
-                }
-        )
-        raise e
-    except Exception as e: # Todo: narrow this.
-        logger.exception(
-            f"Failed getting AOI Data for integration {integration.id}",
-            extra={
-                "integration_id": str(integration.id), 
-                "gfw_share_link_url": config.gfw_share_link_url,
-                }
-        )
-        raise e
-
+    
 
 async def get_fire_alerts(aoi_data, integration, config):
     auth = get_auth_config(integration)
@@ -663,125 +506,37 @@ async def get_fire_alerts(aoi_data, integration, config):
         return alerts
 
 
-@backoff.on_exception(backoff.constant, (ValueError, httpx.HTTPError), max_tries=3, interval=10)
-async def get_integrated_alerts(aoi_data, integration, config):
+class GFWClient:
 
-    auth = get_auth_config(integration)
-    integrated_alerts_response = []
+    def __init__(self, url: str, username: str, password: str):
+        self.url = url
+        self.username = username
+        self.password = password
 
-    logger.info(
-        f"Processing integrated alerts for '{auth.email}' ",
-        extra={
-            "integration_id": str(integration.id),
-            "endpoint": integration.base_url,
-            "username": auth.email,
-        },
-    )
+    async def get_aoi_data(self, aoi_id):
+        pass
 
-    try:
-        dataset_metadata = await get_dataset_metadata(
-            DATASET_GFW_INTEGRATED_ALERTS,
-            auth,
-            integration
-        )
+    async def get_token(self, integration, config):
+        pass
 
-        dataset_status = await state_manager.get_state(
-            str(integration.id),
-            "pull_events",
-            DATASET_GFW_INTEGRATED_ALERTS
-        )
+    @backoff.on_exception(backoff.constant, httpx.HTTPError, max_tries=3, interval=10)
+    async def get_aoi(aoi_id: str, token):
+        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=5.0)) as client:
+            response = await client.get(
+                url=f"{integration.base_url}/v2/area/{aoi_id}",
+                headers={"Authorization": f'Bearer {token["token"]}'},
+                follow_redirects=True
+            )
+            response.raise_for_status()
+            response = response.json()
 
-        if dataset_status:
-            dataset_status = DatasetStatus.parse_obj(json.loads(dataset_status))
-        else:
-            dataset_status = DatasetStatus(
-                dataset=dataset_metadata.dataset,
-                version=dataset_metadata.version,
+            try:
+                return AOIData.parse_obj(response.get("data"))
+            except pydantic.ValidationError as e:
+                logger.exception(f"Unexpected error parsing AOI data: {e}")
+
+            logger.error(
+                "Failed to get AOI for id: %s. result is: %s", aoi_id, response.text[:250]
             )
 
-        # If I've saved a status for this dataset, compare 'updated_on' timestamp to avoid redundant queries.
-        if dataset_status.latest_updated_on >= dataset_metadata.updated_on:
-            logger.info(
-                "No updates reported for dataset '%s' so skipping integrated_alerts queries",
-                DATASET_GFW_INTEGRATED_ALERTS,
-                extra={
-                    "integration_id": str(integration.id),
-                    "integration_login": auth.email,
-                    "dataset_updated_on": dataset_metadata.updated_on.isoformat(),
-                },
-            )
-        else:
-            logger.info(
-                "Found updated dataset %s with updated_on: %s",
-                DATASET_GFW_INTEGRATED_ALERTS,
-                dataset_metadata.updated_on.isoformat(),
-                extra={
-                    "integration_id": str(integration.id),
-                    "integration_login": auth.email,
-                    "dataset_updated_on": dataset_metadata.updated_on.isoformat(),
-                },
-            )
-
-            geojson_geometry = await get_aoi_geojson_geometry(integration, aoi_data)
-
-            end = datetime.now(tz=timezone.utc)
-            start = end - timedelta(days=config.integrated_alerts_lookback_days)
-
-            # NOTE: buffer(0) is a trick for fixing scenarios where polygons have overlapping coordinates
-            geometry_collection = GeometryCollection(
-                [
-                    shape(feature["geometry"]).buffer(0)
-                    for feature in geojson_geometry["features"]
-                ]
-            )
-            for geometry_fragment in utils.generate_geometry_fragments(
-                    geometry_collection=geometry_collection,
-                    interval=0.5
-            ):
-
-                geojson_area = mapping(geometry_fragment)
-                query_arguments = dict(
-                    date_range=(start, end), geometry=geojson_area
-                )
-
-                integrated_alerts = await get_gfw_integrated_alerts(
-                    integration,
-                    auth,
-                    **query_arguments
-                )
-
-                if integrated_alerts:
-                    integrated_alerts_response.extend(
-                        [ClusteredIntegratedAlert.parse_obj(x) for x in integrated_alerts]
-                    )
-
-            dataset_status.latest_updated_on = dataset_metadata.updated_on
-            await state_manager.set_state(
-                str(integration.id),
-                "pull_events",
-                dataset_status.json(),
-                DATASET_GFW_INTEGRATED_ALERTS
-            )
-
-    except pydantic.ValidationError as ve:
-        message = f'Error while parsing GFW "get_fire_alerts" endpoint. {ve.json()}'
-        logger.exception(
-            message,
-            extra={
-                "integration_id": str(integration.id),
-                "attention_needed": True
-            }
-        )
-        raise ve
-    except httpx.HTTPError as e:
-        message = f"HTTPError exception occurred. Exception: {e}"
-        logger.exception(
-            message,
-            extra={
-                "integration_id": str(integration.id),
-                "attention_needed": True
-            }
-        )
-        raise e
-    else:
-        return integrated_alerts_response, dataset_status, dataset_metadata
+            raise GFWClientException(f"Failed to get AOI for id: '{aoi_id}'")

@@ -11,7 +11,9 @@ def generate_rectangle_cells(xmin, ymin, xmax, ymax, interval=0.3):
         xmin += interval
 
 
-def generate_geometry_fragments(geometry_collection, interval=0.3):
+def generate_geometry_fragments(geometry_collection, interval=1):
+
+    geometry_collection = geometry_collection.simplify(tolerance=0.0005, preserve_topology=True)
     envelope = geometry_collection.envelope
     for xmin, ymin, xmax, ymax in generate_rectangle_cells(
         envelope.bounds[0],
@@ -25,5 +27,6 @@ def generate_geometry_fragments(geometry_collection, interval=0.3):
         )
 
         intersection = rectangle_shape.intersection(geometry_collection)
+        if not intersection.is_empty:
+            yield intersection if intersection.geometryType() == 'Polygon' else intersection.convex_hull
 
-        yield intersection
