@@ -15,6 +15,7 @@ from typing import Optional, List, Set, Tuple, Dict
 
 logger = logging.getLogger(__name__)
 
+DATASET_GFW_INTEGRATED_ALERTS = "gfw_integrated_alerts"
 
 def random_string(n=4):
     return "".join(random.sample([chr(x) for x in range(97, 97 + 26)], n))
@@ -391,31 +392,7 @@ class DataAPI:
             )
 
             raise GFWClientException(f"Failed to get Geostore for id: '{geostore_id}'")
-
-    @backoff.on_exception(backoff.constant, httpx.HTTPError, max_tries=3, interval=10)
-    async def get_geostore_view(self, geostore_id=None):
-        api_keys = await self.get_api_keys()
-        headers = {"x-api-key": api_keys[0].api_key}
-
-        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=10.0)) as client:
-            response = await client.get(
-                url=f"{self.RESOURCE_WATCH_URL}/v2/geostore/{str(uuid.UUID(geostore_id))}/view",
-                follow_redirects=True,
-                headers=headers
-            )
-            response.raise_for_status()
-            response = response.json()
-
-            try:
-                return GeostoreView.parse_obj(response)
-            except pydantic.ValidationError as e:
-                logger.exception(f"Unexpected error parsing Geostore data: {e}")
-
-            logger.error(
-                "Failed to get Geostore View for id: %s. result is: %s", geostore_id, response.text[:250]
-            )
-
-            raise GFWClientException(f"Failed to get Geostore View for id: '{geostore_id}'")
+        
 
     @backoff.on_exception(backoff.expo, (httpx.TimeoutException, httpx.HTTPStatusError), max_tries=3)
     async def create_geostore(self, geometry) -> CreatedGeostore:
@@ -505,7 +482,7 @@ class DataAPI:
                 date_field="gfw_integrated_alerts__date",
                 daterange=date_range,
                 fields=fields,
-                extra_where="(gfw_integrated_alerts__confidence = 'high' or gfw_integrated_alerts__confidence = 'highest')",
+                extra_where="(gfw_integrated_alerts__confidence = 'highest')",
                 geostore_id=geostore_id
             )
         
@@ -548,3 +525,58 @@ class DataAPI:
             return matches[1]
         except IndexError:
             logger.error("Unable to parse AOI from globalforestwatch URL: %s", url)
+
+    
+class CartoDBClient:
+    def __init__(self):
+        pass
+
+    @backoff.on_exception(backoff.constant, httpx.HTTPError, max_tries=3, interval=10)
+    async def get_fire_alerts_response(self, geojson:dict, carto_url:str, start_date, end_date):
+
+        geojson_geometry = geojson.get("features")[0]["geometry"]
+
+        latest_cartodb_id = 0
+
+        geojson_geometry = json.dumps(geojson_geometry)
+
+        SQL_TEMPLATE = """SELECT pt.*
+            FROM suomi_viirs_c2_global_7d pt
+            where acq_date >= \'{start_date}\'
+                AND acq_date <= \'{end_date}\'
+                AND cartodb_id > {cartodb_id} 
+                AND ST_INTERSECTS(ST_SetSRID(ST_GeomFromGeoJSON(\'{geometry}\'), 4326), the_geom)
+        """
+
+        sql = SQL_TEMPLATE.format(
+            start_date=start_date,
+            end_date=end_date,
+            cartodb_id=latest_cartodb_id,
+            geometry=geojson_geometry,
+        )
+
+        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=3.1)) as session:
+            response = await session.post(
+                url=carto_url,
+                data={"format": "json", "q": sql}
+            )
+            response.raise_for_status()
+
+        response = response.json()
+        rows = response.get("rows")
+        rows = [r for r in rows if r['confidence'] in ('high', 'highest')]
+
+        return pydantic.parse_obj_as(List[FireAlert], rows) if rows else []
+        
+
+    async def get_fire_alerts(self, geojson:dict, carto_url: str, fire_lookback_days: int) -> List[FireAlert]:
+
+        end_date = (datetime.now(tz=timezone.utc) + timedelta(hours=24)).replace(hour=0, minute=0, second=0, microsecond=0)
+        start_date = end_date - timedelta(days=fire_lookback_days)
+
+        alerts = await self.get_fire_alerts_response(geojson, carto_url, start_date, end_date)
+
+        logger.info(f"Got {len(alerts)} fire alerts")
+        return alerts
+
+
