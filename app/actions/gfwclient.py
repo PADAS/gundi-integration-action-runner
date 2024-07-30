@@ -174,6 +174,29 @@ class FireAlert(pydantic.BaseModel):
     frp: float
     daynight: str
 
+class IntegratedAlert(pydantic.BaseModel):
+    latitude: float
+    longitude: float
+    confidence_label: str = pydantic.Field(
+        ..., alias="gfw_integrated_alerts__confidence"
+    )
+    confidence: float = 0.0
+    num_clustered_alerts: int = 1
+    recorded_at: datetime = pydantic.Field(..., alias="gfw_integrated_alerts__date")
+
+    @pydantic.validator(
+        "recorded_at",
+        pre=True,
+    )
+    def sanitized_date(cls, val) -> datetime:
+        return datetime.strptime(val, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+
+    @pydantic.root_validator
+    def compute_confidence(cls, values):
+        values["confidence"] = (
+            1.0 if values.get("confidence_label", "") in {"high", "highest"} else 0.0
+        )
+        return values
 
 class Geometry(pydantic.BaseModel):
     type: str
@@ -434,8 +457,7 @@ class DataAPI:
 
         fields = {"latitude", "longitude"} | fields or set()
 
-        lower_bound = daterange[0]
-        upper_bound = min(daterange[1], datetime.now(tz=timezone.utc))
+        lower_bound, upper_bound = daterange
 
         lower_date = lower_bound.strftime("%Y-%m-%d")
         upper_date = upper_bound.strftime("%Y-%m-%d")
@@ -478,7 +500,7 @@ class DataAPI:
 
         async with semaphore:
             fields = {"gfw_integrated_alerts__date", "gfw_integrated_alerts__confidence"}
-            return await self.get_alerts(
+            alerts = await self.get_alerts(
                 dataset="gfw_integrated_alerts",
                 date_field="gfw_integrated_alerts__date",
                 daterange=date_range,
@@ -486,6 +508,9 @@ class DataAPI:
                 extra_where="(gfw_integrated_alerts__confidence = 'high' or gfw_integrated_alerts__confidence = 'highest')",
                 geostore_id=geostore_id
             )
+        
+        return [IntegratedAlert.parse_obj(alert) for alert in alerts] if alerts else []
+        
 
     @backoff.on_exception(backoff.expo, (httpx.TimeoutException, httpx.HTTPStatusError), max_tries=3)
     async def get_dataset_metadata(self, dataset: str = "", version: str = "latest"):

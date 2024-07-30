@@ -475,7 +475,7 @@ async def get_fire_alerts(aoi_data, integration, config):
     )
 
     try:
-        end_date = datetime.now()
+        end_date = datetime.now(tz=timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         start_date = end_date - timedelta(days=config.fire_lookback_days)
 
         alerts = await get_fire_alerts_response(integration, config, aoi_data, start_date, end_date)
@@ -505,38 +505,3 @@ async def get_fire_alerts(aoi_data, integration, config):
         logger.info(f"Got {len(alerts)} fire alerts")
         return alerts
 
-
-class GFWClient:
-
-    def __init__(self, url: str, username: str, password: str):
-        self.url = url
-        self.username = username
-        self.password = password
-
-    async def get_aoi_data(self, aoi_id):
-        pass
-
-    async def get_token(self, integration, config):
-        pass
-
-    @backoff.on_exception(backoff.constant, httpx.HTTPError, max_tries=3, interval=10)
-    async def get_aoi(aoi_id: str, token):
-        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=5.0)) as client:
-            response = await client.get(
-                url=f"{integration.base_url}/v2/area/{aoi_id}",
-                headers={"Authorization": f'Bearer {token["token"]}'},
-                follow_redirects=True
-            )
-            response.raise_for_status()
-            response = response.json()
-
-            try:
-                return AOIData.parse_obj(response.get("data"))
-            except pydantic.ValidationError as e:
-                logger.exception(f"Unexpected error parsing AOI data: {e}")
-
-            logger.error(
-                "Failed to get AOI for id: %s. result is: %s", aoi_id, response.text[:250]
-            )
-
-            raise GFWClientException(f"Failed to get AOI for id: '{aoi_id}'")

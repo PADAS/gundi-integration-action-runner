@@ -2,6 +2,7 @@ import asyncio
 import httpx
 import logging
 import random
+import app.settings
 import app.actions.client as client
 from app.actions import utils
 from app.actions.gfwclient import DataAPI, Geostore, DatasetStatus
@@ -12,12 +13,13 @@ from app.actions.configurations import AuthenticateConfig, PullEventsConfig
 from app.services.activity_logger import activity_logger
 from app.services.gundi import send_events_to_gundi
 from app.services.state import IntegrationStateManager
-from gundi_core.schemas.v2 import Integration, IntegrationAction, IntegrationType, UUID, IntegrationActionConfiguration, IntegrationActionSummary, ConnectionRoute, Organization
+from gundi_core.schemas.v2 import Integration
 
 
 GFW_INTEGRATED_ALERTS = "gfwgladalert"
 GFW_FIRE_ALERT = "gfwfirealert"
 
+MAX_DAYS_PER_QUERY = 2
 
 logger = logging.getLogger(__name__)
 state_manager = IntegrationStateManager()
@@ -211,19 +213,19 @@ async def get_integrated_alerts(integration:Integration, action_config: PullEven
     aoi_id = await gfwclient.aoi_from_url(action_config.gfw_share_link_url)
     aoi_data = await gfwclient.get_aoi(aoi_id=aoi_id)
 
-    val:Geostore = await gfwclient.get_geostore(geostore_id=aoi_data.attributes.geostore)
-
     # Date ranges are in whole days, so we round to next midnight.
     end_date = (datetime.now(tz=timezone.utc) + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-    start_date = end_date - timedelta(days=2)
+    start_date = end_date - timedelta(days=action_config.integrated_alerts_lookback_days)
 
     geostore_ids = await state_manager.get_geostore_ids(aoi_data.id)
 
     if not geostore_ids:
+        geostore:Geostore = await gfwclient.get_geostore(geostore_id=aoi_data.attributes.geostore)
+
         geometry_collection = GeometryCollection(
             [
                 shape(feature["geometry"]).buffer(0)
-                for feature in val.attributes.geojson["features"]
+                for feature in geostore.attributes.geojson["features"]
             ]
         )
         for partition in utils.generate_geometry_fragments(geometry_collection=geometry_collection):
@@ -236,8 +238,18 @@ async def get_integrated_alerts(integration:Integration, action_config: PullEven
 
     geostore_ids = await state_manager.get_geostore_ids(aoi_data.id)
 
-    sema = asyncio.Semaphore(5)
-    for t in asyncio.as_completed([gfwclient.get_gfw_integrated_alerts(geostore_id=geostore_id.decode('utf8'), date_range=(start_date, end_date), semaphore=sema) for geostore_id in geostore_ids]):
+    def generate_date_pairs(lower_date, upper_date, interval=MAX_DAYS_PER_QUERY):
+        while lower_date < upper_date:
+            yield lower_date, min(lower_date + timedelta(days=interval), upper_date)
+            lower_date += timedelta(days=interval)
+
+    sema = asyncio.Semaphore(app.settings.INTEGRATED_ALERTS_REQUEST_CONCURRENCY)
+    # Generate tasks for each geostore_id and 48 hour partition.
+    tasks = [gfwclient.get_gfw_integrated_alerts(geostore_id=geostore_id.decode('utf8'), date_range=(lower, upper), semaphore=sema)
+              for geostore_id in geostore_ids 
+              for lower, upper in generate_date_pairs(start_date, end_date)]
+    
+    for t in asyncio.as_completed(tasks):
         integrated_alerts = await t
         if integrated_alerts:
             logger.info(f"Integrated alerts pulled with success.")
