@@ -117,7 +117,7 @@ def get_auth_config(integration):
 @activity_logger()
 async def action_pull_events(integration:Integration, action_config: PullEventsConfig):
 
-    if await state_manager.is_quiet_period(str(integration.id), "pull_events"):
+    if not action_config.force_fetch and await state_manager.is_quiet_period(str(integration.id), "pull_events"):
         return {"message": 'Quiet period is active.'}
 
 
@@ -174,7 +174,7 @@ async def get_fire_alerts(integration, action_config, auth_config, aoi_data):
         fire_lookback_days=action_config.fire_lookback_days,
     )
     if fire_alerts:
-        logger.info(f"Fire alerts pulled with success.")
+        logger.info(f"Fire alerts pulled with success.", extra={"integration_id": str(integration.id), "aoi_id": aoi_data.id})
         transformed_data = [transform_fire_alert(alert) for alert in fire_alerts]
         response = await handle_transformed_data(
             transformed_data,
@@ -182,6 +182,8 @@ async def get_fire_alerts(integration, action_config, auth_config, aoi_data):
             "pull_events"
         )
         return {"type": 'fire_alerts', "response": response}
+    else:
+        logger.info(f"No new fire alerts found.", extra={"integration_id": str(integration.id), "aoi_id": aoi_data.id})
     
     return {"type": 'fire_alerts', "message": 'No new data available.'}
 
@@ -209,7 +211,7 @@ async def get_integrated_alerts(integration:Integration, action_config: PullEven
         )
 
         # If I've saved a status for this dataset, compare 'updated_on' timestamp to avoid redundant queries.
-    if dataset_status.latest_updated_on >= dataset_metadata.updated_on:
+    if not action_config.force_fetch and dataset_status.latest_updated_on >= dataset_metadata.updated_on:
         logger.info(
             "No updates reported for dataset '%s' so skipping integrated_alerts queries",
             DATASET_GFW_INTEGRATED_ALERTS,

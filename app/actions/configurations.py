@@ -38,3 +38,9 @@ class PullEventsConfig(PullActionConfiguration):
         title="Integrated deforestation alerts lookback days",
         description="Number of days to look back for integrated deforestation alerts."
     )
+
+    force_fetch: bool = pydantic.Field(
+        False,
+        title="Force fetch",
+        description="Force fetch even if in a quiet period."
+    )
