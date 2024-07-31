@@ -54,14 +54,14 @@ def f_create_api_key_response():
 async def test_get_api_keys(f_api_keys_response, f_auth_token_response, f_create_api_key_response):
     # Mock the response from the API
 
-    access_token_route = respx.post("https://data-api.globalforestwatch.org/auth/token").respond(status_code=200, json=f_auth_token_response)
+    access_token_route = respx.post(f"{DataAPI.DATA_API_URL}/auth/token").respond(status_code=200, json=f_auth_token_response)
 
     # Mock lookup for apikeys, before and after creation.
-    respx.get("https://data-api.globalforestwatch.org/auth/apikeys").mock(
+    respx.get(f"{DataAPI.DATA_API_URL}/auth/apikeys").mock(
         side_effect=[httpx.Response(status_code=404), httpx.Response(status_code=200, json=f_api_keys_response)]
     )
     
-    create_api_key_route = respx.post("https://data-api.globalforestwatch.org/auth/apikey").mock(
+    create_api_key_route = respx.post(f"{DataAPI.DATA_API_URL}/auth/apikey").mock(
         side_effect=[httpx.Response(status_code=201, json=f_create_api_key_response),]
     )
 
