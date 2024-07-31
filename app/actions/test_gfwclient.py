@@ -50,7 +50,7 @@ def f_create_api_key_response():
     }
 
 @pytest.mark.asyncio
-@respx.mock()
+@respx.mock
 async def test_get_api_keys(f_api_keys_response, f_auth_token_response, f_create_api_key_response):
     # Mock the response from the API
 
@@ -64,7 +64,6 @@ async def test_get_api_keys(f_api_keys_response, f_auth_token_response, f_create
     create_api_key_route = respx.post("https://data-api.globalforestwatch.org/auth/apikey").mock(
         side_effect=[httpx.Response(status_code=201, json=f_create_api_key_response),]
     )
-    
 
     client = DataAPI(username="test@example.com", password="test_password")
     api_keys = await client.get_api_keys()
