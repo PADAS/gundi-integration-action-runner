@@ -1,6 +1,5 @@
 import pytest
 import httpx
-from mock import patch
 import respx
 
 from app.actions.gfwclient import DataAPI, DataAPIKeysResponse
