@@ -288,8 +288,9 @@ class DataAPI:
                     ttl = (expire_at - present).total_seconds()
                     logger.debug(f"Using cached auth, expires in {ttl} seconds.")
 
-            except Exception as e:  # Catch all exceptions to avoid a fast, endless loop.
+            except DataAPIAuthException as e:
                 logger.exception(f"Failed to authenticate with GFW Data API: {e}")
+                raise e
             else:
                 yield token
 
