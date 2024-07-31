@@ -255,17 +255,20 @@ class DataAPI:
     async def get_access_token(self):
 
         async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=3.1)) as client:
-            response = await client.post(
-                url=f"{self.DATA_API_URL}/auth/token",
-                data={"username": self._username, "password": self._password},
-                follow_redirects=True
-            )
+            try:
+                response = await client.post(
+                    url=f"{self.DATA_API_URL}/auth/token",
+                    data={"username": self._username, "password": self._password},
+                    follow_redirects=True
+                )
+            except Exception as e:
+                logger.exception(f"Failed to get an access token for username {self._username}. {e}")
+            else:
+                if httpx.codes.is_success(response.status_code):
+                    dapitoken = DataAPIToken.parse_obj(response.json()["data"])
+                    return dapitoken
 
-            if httpx.codes.is_success(response.status_code):
-                dapitoken = DataAPIToken.parse_obj(response.json()["data"])
-                return dapitoken
-
-            raise DataAPIAuthException("Failed to get an access token.")
+            raise DataAPIAuthException("Failed to get an access token for username {self._username}.")
 
     async def auth_generator(self):
         """
@@ -321,10 +324,10 @@ class DataAPI:
             )
 
             if httpx.codes.is_success(response.status_code):
-                return DataAPIKeyResponse.parse_obj(response.json()["data"])
+                return DataAPIKeyResponse.parse_obj(response.json())
 
     @backoff.on_exception(backoff.expo, (httpx.TimeoutException, httpx.HTTPStatusError), max_tries=3)
-    async def get_api_keys(self):
+    async def get_api_keys(self) -> List[DataAPIKey]:
 
         if not self._api_keys:
 
@@ -342,8 +345,8 @@ class DataAPI:
                         if data.data:
                             self._api_keys = data.data
                             break
-                        # Assume we need to create an API key.
-                        data = await self.create_api_key()
+                    # Assume we need to create an API key.
+                    data = await self.create_api_key()
 
         return self._api_keys
 
