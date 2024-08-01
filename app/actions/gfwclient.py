@@ -235,7 +235,7 @@ def giveup_handler(details):
     logger.error(f"Failed to get alerts for dataset: {details['kwargs']['dataset']}, geostore_id:{details['kwargs']['geostore_id']}, daterange: ({d1} - {d2})")
 
 def backoff_hdlr(details):
-    print ("Backing off {wait:0.1f} seconds afters {tries} tries "
+    print ("Backing off {wait:0.1f} seconds after {tries} tries "
            "calling function {target} with args {args} and kwargs "
            "{kwargs}".format(**details))
     
@@ -535,7 +535,14 @@ class CartoDBClient:
     def __init__(self):
         pass
 
-    @backoff.on_exception(backoff.constant, httpx.HTTPError, max_tries=3, interval=10)
+    @backoff.on_exception(
+        backoff.constant,
+        httpx.HTTPError,
+        max_tries=3,
+        interval=10,
+        raise_on_giveup=False,
+        on_backoff=backoff_hdlr
+    )
     async def get_fire_alerts_response(self, geojson:dict, carto_url:str, start_date, end_date):
 
         geojson_geometry = geojson.get("features")[0]["geometry"]
@@ -580,7 +587,9 @@ class CartoDBClient:
 
         alerts = await self.get_fire_alerts_response(geojson, carto_url, start_date, end_date)
 
-        logger.info(f"Got {len(alerts)} fire alerts")
-        return alerts
+        if alerts:
+            logger.info(f"Got {len(alerts)} fire alerts")
+            return alerts
+        return []
 
 

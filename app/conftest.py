@@ -32,6 +32,9 @@ from gundi_core.events import (
 from app.actions import PullActionConfiguration
 from app.webhooks import GenericJsonTransformConfig, GenericJsonPayload, WebhookPayload
 
+# Integration-related fixtures load
+from app.actions.tests.fixtures import *
+
 
 class AsyncMock(MagicMock):
     async def __call__(self, *args, **kwargs):
