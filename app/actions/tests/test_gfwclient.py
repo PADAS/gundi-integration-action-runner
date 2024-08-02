@@ -5,7 +5,7 @@ import pytest
 import httpx
 import respx
 
-from app.actions.gfwclient import DataAPI, DataAPIKeysResponse, CartoDBClient
+from app.actions.gfwclient import DataAPI, DataAPIKeysResponse
 
 @pytest.fixture
 def f_api_keys_response():
@@ -112,109 +112,3 @@ async def test_fetch_integrated_alerts(f_api_keys_response, f_auth_token_respons
     alerts = await client.get_gfw_integrated_alerts(geostore_id="668c84df810f3b001fe61acf", date_range=(start_date, end_date), semaphore=sema)
 
     assert len(alerts) == len(f_get_alerts_response['data'])
-
-@pytest.fixture
-def f_get_fire_alerts_response():
-    return {
-        "rows": [
-            {
-                "cartodb_id": 1,
-                "the_geom": "fake geom",
-                "the_geom_webmercator": "fake geom",
-                "latitude": -7.91765,
-                "longitude": -74.09495,
-                "bright_ti4": 328.1,
-                "scan": 1,
-                "track": 1,
-                "acq_date": "2024-07-25 00:00:00",
-                "acq_time": "00:00:00",
-                "satellite": "Terra",
-                "confidence": "high",
-                "version": "1.0",
-                "bright_ti5": 328.1,
-                "frp": 328.1,
-                "daynight": "D"
-            },            {
-                "cartodb_id": 1,
-                "the_geom": "fake geom",
-                "the_geom_webmercator": "fake geom",
-                "latitude": -7.1,
-                "longitude": -74.1,
-                "bright_ti4": 328.1,
-                "scan": 1,
-                "track": 1,
-                "acq_date": "2024-07-25 00:00:00",
-                "acq_time": "00:00:00",
-                "satellite": "Terra",
-                "confidence": "nominal",
-                "version": "1.0",
-                "bright_ti5": 328.1,
-                "frp": 328.1,
-                "daynight": "D"
-            },            {
-                "cartodb_id": 1,
-                "the_geom": "fake geom",
-                "the_geom_webmercator": "fake geom",
-                "latitude": -7.91765,
-                "longitude": -74.09495,
-                "bright_ti4": 328.1,
-                "scan": 1,
-                "track": 1,
-                "acq_date": "2024-07-25 00:00:00",
-                "acq_time": "00:00:00",
-                "satellite": "Terra",
-                "confidence": "highest",
-                "version": "1.0",
-                "bright_ti5": 328.1,
-                "frp": 328.1,
-                "daynight": "D"
-            },            {
-                "cartodb_id": 1,
-                "the_geom": "fake geom",
-                "the_geom_webmercator": "fake geom",
-                "latitude": -7.91765,
-                "longitude": -74.09495,
-                "bright_ti4": 328.1,
-                "scan": 1,
-                "track": 1,
-                "acq_date": "2024-07-25 00:00:00",
-                "acq_time": "00:00:00",
-                "satellite": "Terra",
-                "confidence": "nominal",
-                "version": "1.0",
-                "bright_ti5": 328.1,
-                "frp": 328.1,
-                "daynight": "D"
-            },            {
-                "cartodb_id": 1,
-                "the_geom": "fake geom",
-                "the_geom_webmercator": "fake geom",
-                "latitude": -7.91765,
-                "longitude": -74.09495,
-                "bright_ti4": 328.1,
-                "scan": 1,
-                "track": 1,
-                "acq_date": "2024-07-25 00:00:00",
-                "acq_time": "00:00:00",
-                "satellite": "Terra",
-                "confidence": "high",
-                "version": "1.0",
-                "bright_ti5": 328.1,
-                "frp": 328.1,
-                "daynight": "D"
-            },
-        ]
-    }
-
-@pytest.mark.asyncio
-@respx.mock
-async def test_get_fire_alerts(f_get_fire_alerts_response):
-    client = CartoDBClient()
-    
-    respx.post("https://wri-01.carto.com/api/v2/sql").respond(status_code=200, json=f_get_fire_alerts_response)
-    fire_alerts = await client.get_fire_alerts(geojson={"type":"FeatureCollection","features":[{"type":"Feature","properties":{},"geometry":{"type":"Polygon","coordinates":[[[-74.17565,-7.98705],[-74.16675,-7.98785],[-74.09185,-7.95045],[-74.09185,-7.95025],[-74.09195,-7.95025],[-74.10715,-7.94975],[-74.11125,-7.94895],[-74.08285,-7.94575],[-74.06825,-7.94555],[-74.09495,-7.91765],[-74.17565,-7.98705]]]}}]},
-                                 carto_url="https://wri-01.carto.com/api/v2/sql",
-                                 fire_lookback_days=7)  
-    assert len(fire_alerts) == len([r for r in f_get_fire_alerts_response['rows'] if r['confidence'] in ('high', 'highest')]) 
-
-
