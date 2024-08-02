@@ -1,0 +1,26 @@
+repos:
+  - repo: https://github.com/gitguardian/ggshield
+    rev: v1.26.0
+    hooks:
+      - id: ggshield
+        language_version: python3
+        stages: [commit]
+
+#  - repo: https://github.com/pre-commit/pre-commit-hooks
+#    rev: v4.6.0
+#    hooks:
+#    -   id: check-yaml
+#    -   id: end-of-file-fixer
+#    -   id: trailing-whitespace
+  - repo: https://github.com/psf/black
+    rev: 24.4.0
+    hooks:
+    -   id: black
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.4.0
+    hooks:
+    -   id: detect-secrets
+        name: Detect secrets
+        language: python
+        entry: detect-secrets-hook
+        args: ['--baseline', '.secrets.baseline']
