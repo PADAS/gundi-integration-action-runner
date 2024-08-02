@@ -230,7 +230,7 @@ def giveup_handler(details):
     logger.error(f"Failed to get alerts for dataset: {details['kwargs']['dataset']}, geostore_id:{details['kwargs']['geostore_id']}, daterange: ({d1} - {d2})")
 
 def backoff_hdlr(details):
-    logger.warning("Backing off {wait:0.1f} seconds afters {tries} tries "
+    logger.warning("Backing off {wait:0.1f} seconds after {tries} tries "
            "calling function {target} with args {args} and kwargs "
            "{kwargs}".format(**details))
     
