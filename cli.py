@@ -13,7 +13,7 @@ def cli():
     pass
 
 common_options = [
-    click.option('--username', help='username/email', required=True),
+    click.option('--username', help='username/email used to log into Global Forest Watch dashboard', required=True),
     click.option('--password', help='password', required=True),
 ]
 
@@ -86,6 +86,14 @@ def nasa_viirs_fire_alerts(url, username, password):
             print(fire_alerts)
     asyncio.run(fn())
 
+@cli.command(help="List Datasets")
+def datasets():
+    client = DataAPI()
+
+    async def fn():
+        datasets = await client.get_datasets()
+        print(datasets.json(indent=2))
+    asyncio.run(fn())
 
 @cli.command(help="Dataset Metadata")
 @click.argument('dataset', type=str)
@@ -98,8 +106,37 @@ def dataset_metadata(dataset, username, password):
         print(metadata.json(indent=2))
     asyncio.run(fn())
     
-    
-state_manager = IntegrationStateManager()
+@cli.command(help="Get Datasets")
+@click.option('--search', type=str, required=False)
+def get_datasets(search=None):
+    client = DataAPI()
+
+    async def fn():
+        datasets = await client.get_datasets()
+        return datasets
+    val = asyncio.run(fn())
+
+    if search:
+        search = search.lower()
+        val = [d for d in val if search in d.dataset.lower()]
+
+    for d in val:
+        print(d.dataset)
+
+
+@cli.command(help="Get Dataset Fields")
+@click.argument('dataset', type=str, required=True)
+@click.option('--version', type=str, required=False, default="latest")
+def get_dataset_fields(dataset, version):
+    client = DataAPI()
+
+    async def fn():
+        f = await client.get_dataset_fields(dataset=dataset, version=version)
+        return f
+    val = asyncio.run(fn())
+    for v in val:
+        print(v.json())
+
 
 if __name__ == '__main__':
     cli()

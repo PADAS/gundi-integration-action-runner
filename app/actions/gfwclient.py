@@ -10,7 +10,7 @@ import uuid
 
 import httpx
 from datetime import datetime, timedelta, timezone
-from typing import Optional, List, Set, Tuple, Dict
+from typing import Optional, List, Set, Tuple, Dict, Any
 
 
 logger = logging.getLogger(__name__)
@@ -51,14 +51,14 @@ class DataAPIToken(pydantic.BaseModel):
         return values
 
 
-class DatasetMetadata(pydantic.BaseModel):
-    title: str
-    subtitle: str
-    function: str
-    resolution: str
-    geographic_coverage: str
-    source: str
-    update_frequency: str
+# class DatasetMetadata(pydantic.BaseModel):
+#     title: str
+#     subtitle: str
+#     function: str
+#     resolution: str
+#     geographic_coverage: str
+#     source: str
+#     update_frequency: str
 
 
 class DatasetResponseItem(pydantic.BaseModel):
@@ -221,6 +221,67 @@ class CreatedGeostore(pydantic.BaseModel):
 class GeoStoreResponse(pydantic.BaseModel):
     data: CreatedGeostore
     status: str
+
+class DatasetMetadata(pydantic.BaseModel):
+    created_on: Optional[datetime] = None
+    updated_on: Optional[datetime] = None
+    resolution: Optional[int] = None
+    geographic_coverage: Optional[str] = None
+    update_frequency: Optional[str] = None
+    scale: Optional[str] = None
+    citation: Optional[str] = None
+    title: Optional[str] = None
+    source: Optional[str] = None
+    license: Optional[str] = None
+    data_language: Optional[str] = None
+    overview: Optional[str] = None
+    function: Optional[str] = None
+    cautions: Optional[str] = None
+    key_restrictions: Optional[str] = None
+    tags: Optional[List[str]] = pydantic.Field(default_factory=list)
+    why_added: Optional[Any] = None
+    learn_more: Optional[Any] = None
+    id: Optional[str] = None
+
+    @pydantic.validator("created_on", "updated_on")
+    def clean_timestamp(val):
+        return val if val.tzinfo else val.replace(tzinfo=timezone.utc)
+
+
+class Dataset(pydantic.BaseModel):
+    created_on: datetime
+    updated_on: datetime
+    dataset: str
+    is_downloadable: bool
+    metadata: DatasetMetadata
+    versions: Optional[List[str]] = pydantic.Field(default_factory=list)
+
+    @pydantic.validator("created_on", "updated_on")
+    def clean_timestamp(val):
+        return val if val.tzinfo else val.replace(tzinfo=timezone.utc)
+
+
+class DatasetsResponse(pydantic.BaseModel):
+    data: List[Dataset] = []
+    status: Optional[str] = None
+
+class DatasetResponse(pydantic.BaseModel):
+    data: Optional[Dataset] = None
+    status: Optional[str] = None
+
+class DatasetField(pydantic.BaseModel):
+    name: str
+    alias: str
+    description: Any
+    data_type: str
+    unit: Any
+    is_feature_info: bool
+    is_filter: bool
+
+
+class DatasetFields(pydantic.BaseModel):
+    data: Optional[List[DatasetField]] = None
+    status: Optional[str] = None
 
 
 def giveup_handler(details):
@@ -541,3 +602,29 @@ class DataAPI:
             return matches[1]
         except IndexError:
             logger.error("Unable to parse AOI from globalforestwatch URL: %s", url)
+
+
+    @backoff.on_exception(backoff.constant, httpx.HTTPError, max_tries=3, interval=10)
+    async def get_datasets(self):
+        async with httpx.AsyncClient(timeout=DEFAULT_REQUEST_TIMEOUT) as client:
+            response = await client.get(
+                f"{self.DATA_API_URL}/datasets",
+                follow_redirects=True
+            )
+            response.raise_for_status()
+            content = response.json()
+            datasets_response = DatasetsResponse.parse_obj(content)
+            return datasets_response.data
+        
+    @backoff.on_exception(backoff.constant, httpx.HTTPError, max_tries=3, interval=10)
+    async def get_dataset_fields(self, *, dataset:str, version:str="latest"):
+        async with httpx.AsyncClient(timeout=DEFAULT_REQUEST_TIMEOUT) as client:
+            response = await client.get(
+                f"{self.DATA_API_URL}/dataset/{dataset}/{version}/fields",
+                follow_redirects=True
+            )
+            response.raise_for_status()
+            content = response.json()
+            fields_response = DatasetFields.parse_obj(content)
+
+            return fields_response.data
