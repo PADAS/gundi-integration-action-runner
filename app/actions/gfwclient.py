@@ -51,16 +51,6 @@ class DataAPIToken(pydantic.BaseModel):
         return values
 
 
-# class DatasetMetadata(pydantic.BaseModel):
-#     title: str
-#     subtitle: str
-#     function: str
-#     resolution: str
-#     geographic_coverage: str
-#     source: str
-#     update_frequency: str
-
-
 class DatasetResponseItem(pydantic.BaseModel):
     created_on: datetime
     updated_on: datetime
@@ -301,7 +291,7 @@ class DataAPI:
 
     DATA_API_URL = "https://data-api.globalforestwatch.org"
     RESOURCE_WATCH_URL = "https://api.resourcewatch.org"
-    
+
     def __init__(self, *, username: str = None, password: str = None):
 
         self._username = username
