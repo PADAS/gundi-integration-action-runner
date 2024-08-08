@@ -301,6 +301,7 @@ class DataAPI:
 
     DATA_API_URL = "https://data-api.globalforestwatch.org"
     RESOURCE_WATCH_URL = "https://api.resourcewatch.org"
+    
     def __init__(self, *, username: str = None, password: str = None):
 
         self._username = username

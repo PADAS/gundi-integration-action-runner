@@ -56,8 +56,9 @@ def geostore_info(url, username, password):
 
 @cli.command(help="Get NASA Viirs Fire Alerts for the provided URL")
 @click.argument('url', type=str)
+@click.option('--days', type=int, required=False, default=7)
 @add_options(common_options)
-def nasa_viirs_fire_alerts(url, username, password):
+def nasa_viirs_fire_alerts(url, username, password, days):
     client = DataAPI(username=username, password=password)
 
     async def fn():
@@ -80,7 +81,7 @@ def nasa_viirs_fire_alerts(url, username, password):
 
             fire_alerts = await client.get_nasa_viirs_fire_alerts(
                 geostore_id=geostore.gfw_geostore_id,
-                date_range=(datetime.now(tz=timezone.utc) - timedelta(days=15), datetime.now(tz=timezone.utc)),
+                date_range=(datetime.now(tz=timezone.utc) - timedelta(days=days), datetime.now(tz=timezone.utc)),
                 semaphore=asyncio.Semaphore(5)    
             )
             print(fire_alerts)
