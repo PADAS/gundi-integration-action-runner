@@ -8,7 +8,7 @@ from shapely.geometry import GeometryCollection, shape, mapping
 from app.services.state import IntegrationStateManager
 
 
-@click.group(help="A group of commands for getting data from a SMART Connect Server")
+@click.group(help="A group of commands for getting data from Global Forest Watch API.")
 def cli():
     pass
 
@@ -56,7 +56,7 @@ def geostore_info(url, username, password):
 
 @cli.command(help="Get NASA Viirs Fire Alerts for the provided URL")
 @click.argument('url', type=str)
-@click.option('--days', type=int, required=False, default=7)
+@click.option('--days', type=int, required=False, default=2, help="Number of days to look back for fire alerts")
 @add_options(common_options)
 def nasa_viirs_fire_alerts(url, username, password, days):
     client = DataAPI(username=username, password=password)
