@@ -378,24 +378,35 @@ class DataAPI:
     @backoff.on_exception(backoff.expo, (httpx.TimeoutException, httpx.HTTPStatusError), max_tries=3)
     async def get_api_keys(self) -> List[DataAPIKey]:
 
-        if not self._api_keys:
+        # If we already have API keys, filter to only those that are still valid.
+        if self._api_keys:
+            good_api_keys = [
+                                api_key for api_key in self._api_keys if api_key.expires_on > datetime.now(tz=timezone.utc)
+                            ]
+            if good_api_keys:
+                return good_api_keys
+            
+        # Otherwise, go back, get them from the API and cache them.
+        headers = await self.get_auth_header()
 
-            headers = await self.get_auth_header()
+        for _ in range(0, 2):
+            async with httpx.AsyncClient(timeout=DEFAULT_REQUEST_TIMEOUT) as client:
+                response = await client.get(
+                    f"{self.DATA_API_URL}/auth/apikeys", headers=headers,
+                    follow_redirects=True
+                )
 
-            for _ in range(0, 2):
-                async with httpx.AsyncClient(timeout=DEFAULT_REQUEST_TIMEOUT) as client:
-                    response = await client.get(
-                        f"{self.DATA_API_URL}/auth/apikeys", headers=headers,
-                        follow_redirects=True
-                    )
+                if httpx.codes.is_success(response.status_code):
+                    data = DataAPIKeysResponse.parse_obj(response.json())
 
-                    if httpx.codes.is_success(response.status_code):
-                        data = DataAPIKeysResponse.parse_obj(response.json())
-                        if data.data:
-                            self._api_keys = data.data
-                            break
-                    # Assume we need to create an API key.
-                    data = await self.create_api_key()
+                    if good_api_keys := list([
+                        api_key for api_key in data.data if api_key.expires_on > datetime.now(tz=timezone.utc)
+                    ]):
+                        self._api_keys = good_api_keys
+                        break
+
+                # Assume we need to create an API key.
+                data = await self.create_api_key()
 
         return self._api_keys
 
