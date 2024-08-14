@@ -1,8 +1,8 @@
-# gundi-integration-action-runner
-Template repo for integration in Gundi v2.
+# gundi-integration-ebird
+Gundi integration for eBird, from CornellLab of Ornithology.
 
 ## Usage
-- Fork this repo
+- Fork this repo ✔️
 - Implement your own actions in `actions/handlers.py`
 - Define configurations needed for your actions in `action/configurations.py`
 - Or implement a webhooks handler in `webhooks/handlers.py`
