@@ -8,7 +8,7 @@ class AuthenticateConfig(AuthActionConfiguration):
 
 
 class PullEventsConfig(PullActionConfiguration):
-    carto_url: str = "https://rw-nrt.carto.com/api/v2/sql"
+
     gfw_share_link_url: pydantic.HttpUrl = pydantic.Field(
         ...,
         title="GFW share link URL",

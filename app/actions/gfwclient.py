@@ -10,12 +10,13 @@ import uuid
 
 import httpx
 from datetime import datetime, timedelta, timezone
-from typing import Optional, List, Set, Tuple, Dict
+from typing import Optional, List, Set, Tuple, Dict, Any
 
 
 logger = logging.getLogger(__name__)
 
 DATASET_GFW_INTEGRATED_ALERTS = "gfw_integrated_alerts"
+DATASET_NASA_VIIRS_FIRE_ALERTS = "nasa_viirs_fire_alerts"
 
 def random_string(n=4):
     return "".join(random.sample([chr(x) for x in range(97, 97 + 26)], n))
@@ -48,16 +49,6 @@ class DataAPIToken(pydantic.BaseModel):
                 seconds=values["expires_in"]
             )
         return values
-
-
-class DatasetMetadata(pydantic.BaseModel):
-    title: str
-    subtitle: str
-    function: str
-    resolution: str
-    geographic_coverage: str
-    source: str
-    update_frequency: str
 
 
 class DatasetResponseItem(pydantic.BaseModel):
@@ -157,24 +148,6 @@ class Geostore(pydantic.BaseModel):
 class GeostoreView(pydantic.BaseModel):
     view_link: str
 
-class FireAlert(pydantic.BaseModel):
-    cartodb_id: int
-    the_geom: str
-    the_geom_webmercator: str
-    latitude: float
-    longitude: float
-    bright_ti4: float
-    scan: float
-    track: float
-    acq_date: datetime
-    acq_time: str
-    satellite: str
-    confidence: str
-    version: str
-    bright_ti5: float
-    frp: float
-    daynight: str
-
 class IntegratedAlert(pydantic.BaseModel):
     latitude: float
     longitude: float
@@ -182,8 +155,8 @@ class IntegratedAlert(pydantic.BaseModel):
         ..., alias="gfw_integrated_alerts__confidence"
     )
     confidence: float = 0.0
-    num_clustered_alerts: int = 1
     recorded_at: datetime = pydantic.Field(..., alias="gfw_integrated_alerts__date")
+    intensity: float = pydantic.Field(0.0, alias="gfw_integrated_alerts__intensity")
 
     @pydantic.validator(
         "recorded_at",
@@ -198,6 +171,18 @@ class IntegratedAlert(pydantic.BaseModel):
             1.0 if values.get("confidence_label", "") in {"high", "highest"} else 0.0
         )
         return values
+
+class NasaViirsFireAlert(pydantic.BaseModel):
+    latitude: float
+    longitude: float
+    confidence: str = pydantic.Field(..., alias="confidence__cat")
+
+    alert_date: datetime = pydantic.Field(..., alias="alert__date")
+
+    @pydantic.validator("alert_date", pre=True)
+    def sanitized_date(cls, val) -> datetime:
+        return datetime.strptime(val, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+
 
 class Geometry(pydantic.BaseModel):
     type: str
@@ -227,6 +212,67 @@ class GeoStoreResponse(pydantic.BaseModel):
     data: CreatedGeostore
     status: str
 
+class DatasetMetadata(pydantic.BaseModel):
+    created_on: Optional[datetime] = None
+    updated_on: Optional[datetime] = None
+    resolution: Optional[int] = None
+    geographic_coverage: Optional[str] = None
+    update_frequency: Optional[str] = None
+    scale: Optional[str] = None
+    citation: Optional[str] = None
+    title: Optional[str] = None
+    source: Optional[str] = None
+    license: Optional[str] = None
+    data_language: Optional[str] = None
+    overview: Optional[str] = None
+    function: Optional[str] = None
+    cautions: Optional[str] = None
+    key_restrictions: Optional[str] = None
+    tags: Optional[List[str]] = pydantic.Field(default_factory=list)
+    why_added: Optional[Any] = None
+    learn_more: Optional[Any] = None
+    id: Optional[str] = None
+
+    @pydantic.validator("created_on", "updated_on")
+    def clean_timestamp(val):
+        return val if val.tzinfo else val.replace(tzinfo=timezone.utc)
+
+
+class Dataset(pydantic.BaseModel):
+    created_on: datetime
+    updated_on: datetime
+    dataset: str
+    is_downloadable: bool
+    metadata: DatasetMetadata
+    versions: Optional[List[str]] = pydantic.Field(default_factory=list)
+
+    @pydantic.validator("created_on", "updated_on")
+    def clean_timestamp(val):
+        return val if val.tzinfo else val.replace(tzinfo=timezone.utc)
+
+
+class DatasetsResponse(pydantic.BaseModel):
+    data: List[Dataset] = []
+    status: Optional[str] = None
+
+class DatasetResponse(pydantic.BaseModel):
+    data: Optional[Dataset] = None
+    status: Optional[str] = None
+
+class DatasetField(pydantic.BaseModel):
+    name: str
+    alias: str
+    description: Any
+    data_type: str
+    unit: Any
+    is_feature_info: bool
+    is_filter: bool
+
+
+class DatasetFields(pydantic.BaseModel):
+    data: Optional[List[DatasetField]] = None
+    status: Optional[str] = None
+
 
 def giveup_handler(details):
     d1, d2 = details['kwargs']['daterange']
@@ -235,15 +281,17 @@ def giveup_handler(details):
     logger.error(f"Failed to get alerts for dataset: {details['kwargs']['dataset']}, geostore_id:{details['kwargs']['geostore_id']}, daterange: ({d1} - {d2})")
 
 def backoff_hdlr(details):
-    print ("Backing off {wait:0.1f} seconds after {tries} tries "
+    logger.warning("Backing off {wait:0.1f} seconds after {tries} tries "
            "calling function {target} with args {args} and kwargs "
            "{kwargs}".format(**details))
     
 
+DEFAULT_REQUEST_TIMEOUT = httpx.Timeout(60.0, connect=3.1)
 class DataAPI:
 
     DATA_API_URL = "https://data-api.globalforestwatch.org"
     RESOURCE_WATCH_URL = "https://api.resourcewatch.org"
+
     def __init__(self, *, username: str = None, password: str = None):
 
         self._username = username
@@ -254,7 +302,7 @@ class DataAPI:
     @backoff.on_exception(backoff.expo, (httpx.TimeoutException, httpx.HTTPStatusError), max_tries=3)
     async def get_access_token(self):
 
-        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=3.1)) as client:
+        async with httpx.AsyncClient(timeout=DEFAULT_REQUEST_TIMEOUT) as client:
             try:
                 response = await client.post(
                     url=f"{self.DATA_API_URL}/auth/token",
@@ -316,7 +364,7 @@ class DataAPI:
             "domains": [],
         }
 
-        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=3.1)) as client:
+        async with httpx.AsyncClient(timeout=DEFAULT_REQUEST_TIMEOUT) as client:
             response = await client.post(
                 url=f"{self.DATA_API_URL}/auth/apikey",
                 headers=headers,
@@ -330,30 +378,41 @@ class DataAPI:
     @backoff.on_exception(backoff.expo, (httpx.TimeoutException, httpx.HTTPStatusError), max_tries=3)
     async def get_api_keys(self) -> List[DataAPIKey]:
 
-        if not self._api_keys:
+        # If we already have API keys, filter to only those that are still valid.
+        if self._api_keys:
+            good_api_keys = [
+                                api_key for api_key in self._api_keys if api_key.expires_on > datetime.now(tz=timezone.utc)
+                            ]
+            if good_api_keys:
+                return good_api_keys
+            
+        # Otherwise, go back, get them from the API and cache them.
+        headers = await self.get_auth_header()
 
-            headers = await self.get_auth_header()
+        for _ in range(0, 2):
+            async with httpx.AsyncClient(timeout=DEFAULT_REQUEST_TIMEOUT) as client:
+                response = await client.get(
+                    f"{self.DATA_API_URL}/auth/apikeys", headers=headers,
+                    follow_redirects=True
+                )
 
-            for _ in range(0, 2):
-                async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=3.1)) as client:
-                    response = await client.get(
-                        f"{self.DATA_API_URL}/auth/apikeys", headers=headers,
-                        follow_redirects=True
-                    )
+                if httpx.codes.is_success(response.status_code):
+                    data = DataAPIKeysResponse.parse_obj(response.json())
 
-                    if httpx.codes.is_success(response.status_code):
-                        data = DataAPIKeysResponse.parse_obj(response.json())
-                        if data.data:
-                            self._api_keys = data.data
-                            break
-                    # Assume we need to create an API key.
-                    data = await self.create_api_key()
+                    if good_api_keys := list([
+                        api_key for api_key in data.data if api_key.expires_on > datetime.now(tz=timezone.utc)
+                    ]):
+                        self._api_keys = good_api_keys
+                        break
+
+                # Assume we need to create an API key.
+                data = await self.create_api_key()
 
         return self._api_keys
 
     @backoff.on_exception(backoff.constant, httpx.HTTPError, max_tries=3, interval=10)
     async def get_aoi(self, aoi_id: str):
-        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=5.0)) as client:
+        async with httpx.AsyncClient(timeout=DEFAULT_REQUEST_TIMEOUT) as client:
             response = await client.get(
                 url=f"{self.RESOURCE_WATCH_URL}/v2/area/{aoi_id}",
                 headers=await self.get_auth_header()
@@ -377,7 +436,7 @@ class DataAPI:
 
     @backoff.on_exception(backoff.constant, httpx.HTTPError, max_tries=3, interval=10)
     async def get_geostore(self, geostore_id=None):
-        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=10.0)) as client:
+        async with httpx.AsyncClient(timeout=DEFAULT_REQUEST_TIMEOUT) as client:
             response = await client.get(
                 url=f"{self.RESOURCE_WATCH_URL}/v2/geostore/{geostore_id}",
                 follow_redirects=True,
@@ -403,7 +462,7 @@ class DataAPI:
         
         headers = await self.get_auth_header()
 
-        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0)) as client:
+        async with httpx.AsyncClient(timeout=DEFAULT_REQUEST_TIMEOUT) as client:
             response = await client.post(
                 # url=f"{integration.base_url}/geostore",
                 url=f"{self.DATA_API_URL}/geostore/",
@@ -454,7 +513,7 @@ class DataAPI:
         }
 
         async def fn():
-            async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=5.0)) as client:
+            async with httpx.AsyncClient(timeout=DEFAULT_REQUEST_TIMEOUT) as client:
 
                 response = await client.get(f"{self.DATA_API_URL}/dataset/{dataset}/latest/query/json",
                     headers=headers,
@@ -465,7 +524,7 @@ class DataAPI:
                 if httpx.codes.is_success(response.status_code):
                     data = response.json()
                     data_len = len(data.get("data"))
-                    logger.info(f"Extracted {data_len} alerts for period {lower_date} - {upper_date}.")
+                    logger.info(f"Extracted {data_len} alerts from dataset {dataset} for period {lower_date} - {upper_date}.")
                     return data.get("data", [])
                 else:
                     logger.error(
@@ -492,6 +551,22 @@ class DataAPI:
         
         return [IntegratedAlert.parse_obj(alert) for alert in alerts] if alerts else []
         
+    @backoff.on_exception(backoff.expo, (httpx.TimeoutException, httpx.HTTPStatusError), max_tries=3, on_backoff=backoff_hdlr)
+    async def get_nasa_viirs_fire_alerts(self, *, geostore_id: str,date_range: Tuple[datetime, datetime], semaphore: asyncio.Semaphore = None):
+
+        async with semaphore:
+            fields = {"confidence__cat", "alert__date"}
+            alerts = await self.get_alerts(
+                dataset="nasa_viirs_fire_alerts",
+                date_field="alert__date",
+                daterange=date_range,
+                fields=fields,
+                extra_where="(confidence__cat = 'h')",
+                geostore_id=geostore_id
+            )
+        
+        return [NasaViirsFireAlert.parse_obj(alert) for alert in alerts] if alerts else []
+        
 
     @backoff.on_exception(backoff.expo, (httpx.TimeoutException, httpx.HTTPStatusError), max_tries=3)
     async def get_dataset_metadata(self, dataset: str = "", version: str = "latest"):
@@ -499,7 +574,7 @@ class DataAPI:
         api_keys = await self.get_api_keys()
         headers = {"x-api-key": api_keys[0].api_key}
 
-        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=3.1)) as client:
+        async with httpx.AsyncClient(timeout=DEFAULT_REQUEST_TIMEOUT) as client:
             response = await client.get(
                 f"{self.DATA_API_URL}/dataset/{dataset}/{version}",
                 headers=headers,
@@ -521,7 +596,7 @@ class DataAPI:
         if matches := re.match(URL_PATTERN, url):
             return matches[1]
         
-        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=5)) as client:
+        async with httpx.AsyncClient(timeout=DEFAULT_REQUEST_TIMEOUT) as client:
             head = await client.head(url, follow_redirects=True)
 
         try:
@@ -530,66 +605,28 @@ class DataAPI:
         except IndexError:
             logger.error("Unable to parse AOI from globalforestwatch URL: %s", url)
 
-    
-class CartoDBClient:
-    def __init__(self):
-        pass
 
-    @backoff.on_exception(
-        backoff.constant,
-        httpx.HTTPError,
-        max_tries=3,
-        interval=10,
-        raise_on_giveup=False,
-        on_backoff=backoff_hdlr
-    )
-    async def get_fire_alerts_response(self, geojson:dict, carto_url:str, start_date, end_date):
-
-        geojson_geometry = geojson.get("features")[0]["geometry"]
-
-        latest_cartodb_id = 0
-
-        geojson_geometry = json.dumps(geojson_geometry)
-
-        SQL_TEMPLATE = """SELECT pt.*
-            FROM suomi_viirs_c2_global_7d pt
-            where acq_date >= \'{start_date}\'
-                AND acq_date <= \'{end_date}\'
-                AND cartodb_id > {cartodb_id} 
-                AND ST_INTERSECTS(ST_SetSRID(ST_GeomFromGeoJSON(\'{geometry}\'), 4326), the_geom)
-        """
-
-        sql = SQL_TEMPLATE.format(
-            start_date=start_date,
-            end_date=end_date,
-            cartodb_id=latest_cartodb_id,
-            geometry=geojson_geometry,
-        )
-
-        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=3.1)) as session:
-            response = await session.post(
-                url=carto_url,
-                data={"format": "json", "q": sql}
+    @backoff.on_exception(backoff.constant, httpx.HTTPError, max_tries=3, interval=10)
+    async def get_datasets(self):
+        async with httpx.AsyncClient(timeout=DEFAULT_REQUEST_TIMEOUT) as client:
+            response = await client.get(
+                f"{self.DATA_API_URL}/datasets",
+                follow_redirects=True
             )
             response.raise_for_status()
-
-        response = response.json()
-        rows = response.get("rows")
-        rows = [r for r in rows if r['confidence'] in ('high', 'highest')]
-
-        return pydantic.parse_obj_as(List[FireAlert], rows) if rows else []
+            content = response.json()
+            datasets_response = DatasetsResponse.parse_obj(content)
+            return datasets_response.data
         
+    @backoff.on_exception(backoff.constant, httpx.HTTPError, max_tries=3, interval=10)
+    async def get_dataset_fields(self, *, dataset:str, version:str="latest"):
+        async with httpx.AsyncClient(timeout=DEFAULT_REQUEST_TIMEOUT) as client:
+            response = await client.get(
+                f"{self.DATA_API_URL}/dataset/{dataset}/{version}/fields",
+                follow_redirects=True
+            )
+            response.raise_for_status()
+            content = response.json()
+            fields_response = DatasetFields.parse_obj(content)
 
-    async def get_fire_alerts(self, geojson:dict, carto_url: str, fire_lookback_days: int) -> List[FireAlert]:
-
-        end_date = (datetime.now(tz=timezone.utc) + timedelta(hours=24)).replace(hour=0, minute=0, second=0, microsecond=0)
-        start_date = end_date - timedelta(days=fire_lookback_days)
-
-        alerts = await self.get_fire_alerts_response(geojson, carto_url, start_date, end_date)
-
-        if alerts:
-            logger.info(f"Got {len(alerts)} fire alerts")
-            return alerts
-        return []
-
-
+            return fields_response.data

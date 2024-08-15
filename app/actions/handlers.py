@@ -5,7 +5,8 @@ import random
 import app.settings
 
 from app.actions import utils
-from app.actions.gfwclient import DataAPI, Geostore, DatasetStatus, DATASET_GFW_INTEGRATED_ALERTS, CartoDBClient
+from app.actions.gfwclient import DataAPI, Geostore, DatasetStatus, \
+    AOIData, DATASET_GFW_INTEGRATED_ALERTS, DATASET_NASA_VIIRS_FIRE_ALERTS
 from shapely.geometry import GeometryCollection, shape, mapping
 from datetime import timezone, timedelta, datetime
 
@@ -49,7 +50,7 @@ async def handle_transformed_data(transformed_data, integration_id, action_id):
 
 
 def transform_fire_alert(alert):
-    event_time = alert.acq_date.replace(tzinfo=timezone.utc).isoformat()
+    event_time = alert.alert_date.replace(tzinfo=timezone.utc).isoformat()
     title = "GFW VIIRS Alert"
 
     return dict(
@@ -58,12 +59,8 @@ def transform_fire_alert(alert):
         recorded_at=event_time,
         location={"lat": alert.latitude, "lon": alert.longitude},
         event_details=dict(
-            bright_ti4=alert.bright_ti4,
-            bright_ti5=alert.bright_ti5,
-            scan=alert.scan,
-            satellite=alert.satellite,
-            frp=alert.frp,
-            track=alert.track,
+            confidence=alert.confidence,
+            alert_time=event_time
         )
     )
 
@@ -145,9 +142,39 @@ async def action_pull_events(integration:Integration, action_config: PullEventsC
         )
         return [msg]
 
-        # Create a list of tasks.
-    tasklist = [asyncio.create_task(get_fire_alerts(integration, action_config, auth_config, aoi_data)),
-                 asyncio.create_task(get_integrated_alerts(integration, action_config, auth_config))
+    # Get AOI and Geostore data.
+    aoi_id = await dataapi.aoi_from_url(action_config.gfw_share_link_url)
+    aoi_data = await dataapi.get_aoi(aoi_id=aoi_id)
+
+    geostore_ids = await state_manager.get_geostore_ids(aoi_data.id)
+
+    if not geostore_ids:
+        geostore:Geostore = await dataapi.get_geostore(geostore_id=aoi_data.attributes.geostore)
+
+        geometry_collection = GeometryCollection(
+            [
+                shape(feature["geometry"]).buffer(0)
+                for feature in geostore.attributes.geojson["features"]
+            ]
+        )
+        for partition in utils.generate_geometry_fragments(geometry_collection=geometry_collection):
+
+            geostore = await dataapi.create_geostore(geometry=mapping(partition))
+
+            await state_manager.add_geostore_id(aoi_data.id, geostore.gfw_geostore_id)
+
+        await state_manager.set_geostores_id_ttl(aoi_data.id, 86400*7)
+
+    # This semaphore is meant to limit the concurrent requests to GFW's dataset API query endpoints.
+    # When configuring a cloud run service, include this in a calculation so that 
+    # GFW_DATASET_QUERY_CONCURRENCY * maximum-number-of-instances * maximum-concurrent-requests-per-instance <= N
+    # where N is the maximum concurrent requests allowed by GFW's API. 
+    # (ex. in practice, N is around 50)
+    sema = asyncio.Semaphore(app.settings.GFW_DATASET_QUERY_CONCURRENCY)
+
+    # Create a list of tasks.
+    tasklist = [get_nasa_viirs_fire_alerts(integration, action_config, auth_config, aoi_data, sema),
+                 get_integrated_alerts(integration, action_config, auth_config, aoi_data, sema)
                  ]
     
     # Wait until they're all finished.
@@ -158,37 +185,16 @@ async def action_pull_events(integration:Integration, action_config: PullEventsC
 
     # The results are in the order of the tasklist.
     return results
- 
-
-async def get_fire_alerts(integration, action_config, auth_config, aoi_data):
-
-    if not action_config.include_fire_alerts:
-        return {'type': 'fire_alerts', "message": 'Not included in action config.'}
-
-    dataapi = DataAPI(username=auth_config.email, password=auth_config.password)
-    geostore:Geostore = await dataapi.get_geostore(geostore_id=aoi_data.attributes.geostore)
-
-    fire_alerts = await CartoDBClient().get_fire_alerts(
-        geojson=geostore.attributes.geojson,
-        carto_url=action_config.carto_url,
-        fire_lookback_days=action_config.fire_lookback_days,
-    )
-    if fire_alerts:
-        logger.info(f"Fire alerts pulled with success.", extra={"integration_id": str(integration.id), "aoi_id": aoi_data.id})
-        transformed_data = [transform_fire_alert(alert) for alert in fire_alerts]
-        response = await handle_transformed_data(
-            transformed_data,
-            str(integration.id),
-            "pull_events"
-        )
-        return {"type": 'fire_alerts', "response": response}
-    else:
-        logger.info(f"No new fire alerts found.", extra={"integration_id": str(integration.id), "aoi_id": aoi_data.id})
-    
-    return {"type": 'fire_alerts', "message": 'No new data available.'}
 
 
-async def get_integrated_alerts(integration:Integration, action_config: PullEventsConfig, auth_config: AuthenticateConfig):
+def generate_date_pairs(lower_date, upper_date, interval=MAX_DAYS_PER_QUERY):
+    while upper_date > lower_date:
+        yield max(lower_date, upper_date - timedelta(days=interval)), upper_date
+        upper_date -= timedelta(days=interval)
+
+
+async def get_integrated_alerts(integration:Integration, action_config: PullEventsConfig, auth_config: AuthenticateConfig,
+                                aoi_data: AOIData, sema: asyncio.Semaphore):
 
     if not action_config.include_integrated_alerts:
         return {'dataset': DATASET_GFW_INTEGRATED_ALERTS, "message": 'Not included in action config.'}
@@ -226,37 +232,14 @@ async def get_integrated_alerts(integration:Integration, action_config: PullEven
     aoi_id = await dataapi.aoi_from_url(action_config.gfw_share_link_url)
     aoi_data = await dataapi.get_aoi(aoi_id=aoi_id)
 
+    geostore_ids = await state_manager.get_geostore_ids(aoi_data.id)
+
     # Date ranges are in whole days, so we round to next midnight.
     end_date = (datetime.now(tz=timezone.utc) + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
     start_date = end_date - timedelta(days=action_config.integrated_alerts_lookback_days)
 
     geostore_ids = await state_manager.get_geostore_ids(aoi_data.id)
 
-    if not geostore_ids:
-        geostore:Geostore = await dataapi.get_geostore(geostore_id=aoi_data.attributes.geostore)
-
-        geometry_collection = GeometryCollection(
-            [
-                shape(feature["geometry"]).buffer(0)
-                for feature in geostore.attributes.geojson["features"]
-            ]
-        )
-        for partition in utils.generate_geometry_fragments(geometry_collection=geometry_collection):
-
-            geostore = await dataapi.create_geostore(geometry=mapping(partition))
-
-            await state_manager.add_geostore_id(aoi_data.id, geostore.gfw_geostore_id)
-
-        await state_manager.set_geostores_id_ttl(aoi_data.id, 86400*7)
-
-    geostore_ids = await state_manager.get_geostore_ids(aoi_data.id)
-
-    def generate_date_pairs(lower_date, upper_date, interval=MAX_DAYS_PER_QUERY):
-        while upper_date > lower_date:
-            yield max(lower_date, upper_date - timedelta(days=interval)), upper_date
-            upper_date -= timedelta(days=interval)
-
-    sema = asyncio.Semaphore(app.settings.INTEGRATED_ALERTS_REQUEST_CONCURRENCY)
     # Generate tasks for each geostore_id and 48 hour partition.
     tasks = [dataapi.get_gfw_integrated_alerts(geostore_id=geostore_id.decode('utf8'), date_range=(lower, upper), semaphore=sema)
               for geostore_id in geostore_ids 
@@ -273,7 +256,6 @@ async def get_integrated_alerts(integration:Integration, action_config: PullEven
                 "pull_events"
             )
 
-
     dataset_status = DatasetStatus(
         dataset=dataset_metadata.dataset,
         version=dataset_metadata.version,
@@ -289,5 +271,80 @@ async def get_integrated_alerts(integration:Integration, action_config: PullEven
 
     return {"dataset": DATASET_GFW_INTEGRATED_ALERTS, "response": dataset_status.dict()}
 
+
+async def get_nasa_viirs_fire_alerts(integration:Integration, action_config: PullEventsConfig, auth_config: AuthenticateConfig,
+                                     aoi_data: AOIData, sema: asyncio.Semaphore):
+
+    if not action_config.include_fire_alerts:
+        return {'dataset': DATASET_NASA_VIIRS_FIRE_ALERTS, "message": 'Not included in action config.'}
+
+    dataapi = DataAPI(username=auth_config.email, password=auth_config.password)
+
+    dataset_metadata = await dataapi.get_dataset_metadata(DATASET_NASA_VIIRS_FIRE_ALERTS)
+    dataset_status = await state_manager.get_state(
+        str(integration.id),
+        "pull_events",
+        DATASET_NASA_VIIRS_FIRE_ALERTS
+    )
+
+    if dataset_status:
+        dataset_status = DatasetStatus.parse_raw(dataset_status)
+    else:
+        dataset_status = DatasetStatus(
+            dataset=dataset_metadata.dataset,
+            version=dataset_metadata.version,
+        )
+
+        # If I've saved a status for this dataset, compare 'updated_on' timestamp to avoid redundant queries.
+    if not action_config.force_fetch and dataset_status.latest_updated_on >= dataset_metadata.updated_on:
+        logger.info(
+            "No updates reported for dataset '%s' so skipping integrated_alerts queries",
+            DATASET_NASA_VIIRS_FIRE_ALERTS,
+            extra={
+                "integration_id": str(integration.id),
+                "integration_login": auth_config.email,
+                "dataset_updated_on": dataset_metadata.updated_on.isoformat(),
+            },
+        )
+        return {"dataset": DATASET_NASA_VIIRS_FIRE_ALERTS, "message": 'No new data available.'}
+
+    # aoi_id = await dataapi.aoi_from_url(action_config.gfw_share_link_url)
+    # aoi_data = await dataapi.get_aoi(aoi_id=aoi_id)
+
+    geostore_ids = await state_manager.get_geostore_ids(aoi_data.id)
+
+    # Date ranges are in whole days, so we round to next midnight.
+    end_date = (datetime.now(tz=timezone.utc) + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    start_date = end_date - timedelta(days=action_config.integrated_alerts_lookback_days)
+
+    # Generate tasks for each geostore_id and 48 hour partition.
+    tasks = [dataapi.get_nasa_viirs_fire_alerts(geostore_id=geostore_id.decode('utf8'), date_range=(lower, upper), semaphore=sema)
+              for geostore_id in geostore_ids 
+              for lower, upper in generate_date_pairs(start_date, end_date)]
+    for t in asyncio.as_completed(tasks):
+        fire_alerts = await t
+        if fire_alerts:
+            logger.info(f"Fire alerts pulled with success.")
+            transformed_data = [transform_fire_alert(alert) for alert in fire_alerts]
+            await handle_transformed_data(
+                transformed_data,
+                str(integration.id),
+                "pull_events"
+            )
+
+    dataset_status = DatasetStatus(
+        dataset=dataset_metadata.dataset,
+        version=dataset_metadata.version,
+        latest_updated_on=dataset_metadata.updated_on
+    )
+
+    await state_manager.set_state(
+        str(integration.id),
+        "pull_events",
+        dataset_status.json(),
+        source_id=DATASET_NASA_VIIRS_FIRE_ALERTS
+    )
+
+    return {"dataset": DATASET_NASA_VIIRS_FIRE_ALERTS, "response": dataset_status.dict()}
 
 
