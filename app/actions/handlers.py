@@ -165,10 +165,16 @@ async def action_pull_events(integration:Integration, action_config: PullEventsC
 
         await state_manager.set_geostores_id_ttl(aoi_data.id, 86400*7)
 
-    # Create a list of tasks.
+    # This semaphore is meant to limit the concurrent requests to GFW's dataset API query endpoints.
+    # When configuring a cloud run service, include this in a calculation so that 
+    # GFW_DATASET_QUERY_CONCURRENCY * maximum-number-of-instances * maximum-concurrent-requests-per-instance <= N
+    # where N is the maximum concurrent requests allowed by GFW's API. 
+    # (ex. in practice, N is around 50)
     sema = asyncio.Semaphore(app.settings.GFW_DATASET_QUERY_CONCURRENCY)
-    tasklist = [asyncio.create_task(get_nasa_viirs_fire_alerts(integration, action_config, auth_config, aoi_data, sema)),
-                 asyncio.create_task(get_integrated_alerts(integration, action_config, auth_config, aoi_data, sema))
+
+    # Create a list of tasks.
+    tasklist = [get_nasa_viirs_fire_alerts(integration, action_config, auth_config, aoi_data, sema),
+                 get_integrated_alerts(integration, action_config, auth_config, aoi_data, sema)
                  ]
     
     # Wait until they're all finished.
