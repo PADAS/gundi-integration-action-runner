@@ -11,7 +11,7 @@ def generate_rectangle_cells(xmin, ymin, xmax, ymax, interval=0.3):
         xmin += interval
 
 
-def generate_geometry_fragments(geometry_collection, interval=1):
+def generate_geometry_fragments(geometry_collection, interval=0.5):
 
     geometry_collection = geometry_collection.simplify(tolerance=0.0005, preserve_topology=True)
 

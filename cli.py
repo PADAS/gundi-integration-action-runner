@@ -1,12 +1,17 @@
 import click
-
+from click_datetime import Datetime
 from datetime import datetime, timedelta, timezone
 import asyncio
-from app.actions.gfwclient import DataAPI, Geostore, GeostoreView,CreatedGeostore
+from app.actions.gfwclient import DataAPI, Geostore, GeostoreView,CreatedGeostore, \
+    IntegratedAlertsConfidenceEnum, NasaViirsFireAlertConfidenceEnum, \
+        NasaViirsFireAlertConfidenceEnumOrder, IntegratedAlertsConfidenceEnumOrder
 from app.actions import utils
 from shapely.geometry import GeometryCollection, shape, mapping
 from app.services.state import IntegrationStateManager
 
+import logging
+
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 @click.group(help="A group of commands for getting data from Global Forest Watch API.")
 def cli():
@@ -57,10 +62,52 @@ def geostore_info(url, username, password):
 @cli.command(help="Get NASA Viirs Fire Alerts for the provided URL")
 @click.argument('url', type=str)
 @click.option('--days', type=int, required=False, default=2, help="Number of days to look back for fire alerts")
+@click.option('--end_date', type=Datetime(format="%Y-%m-%d"), help='End date in YYYY-MM-DD format')
+@click.option('--lowest_confidence', '-lc', type=click.Choice(NasaViirsFireAlertConfidenceEnumOrder), default=NasaViirsFireAlertConfidenceEnum.high)
 @add_options(common_options)
-def nasa_viirs_fire_alerts(url, username, password, days):
+def nasa_viirs_fire_alerts(url, username, password, days, lowest_confidence, end_date=None):
     client = DataAPI(username=username, password=password)
 
+    end_date = end_date or datetime.now(tz=timezone.utc)
+    chosen_date_range = (end_date - timedelta(days=days), end_date)
+
+    async def fn():
+        aoi_id = await client.aoi_from_url(url)
+        print(f'AOI ID: {aoi_id}')
+        aoi_data = await client.get_aoi(aoi_id=aoi_id)
+        print(f'GEOSTORE ID: {aoi_data.attributes.geostore}')
+        geostore_data = await client.get_geostore(geostore_id=aoi_data.attributes.geostore)
+
+        geometry_collection = GeometryCollection(
+            [
+                shape(feature["geometry"]).buffer(0)
+                for feature in geostore_data.attributes.geojson["features"]
+            ]
+        )
+        for partition in utils.generate_geometry_fragments(geometry_collection=geometry_collection):
+
+            geostore:CreatedGeostore = await client.create_geostore(geometry=mapping(partition))
+
+            fire_alerts = await client.get_nasa_viirs_fire_alerts(
+                geostore_id=geostore.gfw_geostore_id,
+                date_range=chosen_date_range,
+                lowest_confidence=lowest_confidence,
+                semaphore=asyncio.Semaphore(5)    
+            )
+            print(fire_alerts)
+    asyncio.run(fn())
+
+@cli.command(help="Get NASA Viirs Fire Alerts for the provided URL")
+@click.argument('url', type=str)
+@click.option('--days', type=int, required=False, default=2, help="Number of days to look back for fire alerts")
+@click.option('--end_date', type=Datetime(format="%Y-%m-%d"), help='End date in YYYY-MM-DD format')
+@click.option('--lowest_confidence', '-lc', type=click.Choice(IntegratedAlertsConfidenceEnum), default=IntegratedAlertsConfidenceEnum.high)
+@add_options(common_options)
+def gfw_integrated_alerts(url, username, password, days, lowest_confidence, end_date=None):
+    client = DataAPI(username=username, password=password)
+
+    end_date = end_date or datetime.now(tz=timezone.utc)
+    chosen_date_range = (end_date - timedelta(days=days), end_date)
     async def fn():
         aoi_id = await client.aoi_from_url(url)
         print(f'AOI ID: {aoi_id}')
@@ -79,12 +126,15 @@ def nasa_viirs_fire_alerts(url, username, password, days):
 
             geostore:CreatedGeostore = await client.create_geostore(geometry=mapping(partition))
 
-            fire_alerts = await client.get_nasa_viirs_fire_alerts(
+            integrated_alerts = await client.get_gfw_integrated_alerts(
                 geostore_id=geostore.gfw_geostore_id,
-                date_range=(datetime.now(tz=timezone.utc) - timedelta(days=days), datetime.now(tz=timezone.utc)),
+                date_range=chosen_date_range,
+                lowest_confidence=lowest_confidence,
                 semaphore=asyncio.Semaphore(5)    
             )
-            print(fire_alerts)
+            for item in integrated_alerts:
+                print(item.json(indent=2))
+            
     asyncio.run(fn())
 
 @cli.command(help="List Datasets")

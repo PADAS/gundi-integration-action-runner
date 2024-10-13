@@ -241,7 +241,8 @@ async def get_integrated_alerts(integration:Integration, action_config: PullEven
     geostore_ids = await state_manager.get_geostore_ids(aoi_data.id)
 
     # Generate tasks for each geostore_id and 48 hour partition.
-    tasks = [dataapi.get_gfw_integrated_alerts(geostore_id=geostore_id.decode('utf8'), date_range=(lower, upper), semaphore=sema)
+    tasks = [dataapi.get_gfw_integrated_alerts(geostore_id=geostore_id.decode('utf8'), date_range=(lower, upper),
+                                               lowest_confidence=action_config.integrated_alerts_lowest_confidence, semaphore=sema)
               for geostore_id in geostore_ids 
               for lower, upper in generate_date_pairs(start_date, end_date)]
     
@@ -318,7 +319,8 @@ async def get_nasa_viirs_fire_alerts(integration:Integration, action_config: Pul
     start_date = end_date - timedelta(days=action_config.integrated_alerts_lookback_days)
 
     # Generate tasks for each geostore_id and 48 hour partition.
-    tasks = [dataapi.get_nasa_viirs_fire_alerts(geostore_id=geostore_id.decode('utf8'), date_range=(lower, upper), semaphore=sema)
+    tasks = [dataapi.get_nasa_viirs_fire_alerts(geostore_id=geostore_id.decode('utf8'), date_range=(lower, upper),
+                                                lowest_confidence=action_config.fire_alerts_lowest_confidence, semaphore=sema)
               for geostore_id in geostore_ids 
               for lower, upper in generate_date_pairs(start_date, end_date)]
     for t in asyncio.as_completed(tasks):

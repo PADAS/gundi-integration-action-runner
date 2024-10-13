@@ -1,6 +1,6 @@
 import pydantic
 from .core import PullActionConfiguration, AuthActionConfiguration
-
+from .gfwclient import IntegratedAlertsConfidenceEnum, NasaViirsFireAlertConfidenceEnum
 
 class AuthenticateConfig(AuthActionConfiguration):
     email: str
@@ -19,11 +19,25 @@ class PullEventsConfig(PullActionConfiguration):
         title="Include fire alerts",
         description="Fetch fire alerts from Global Forest Watch and include them in this connection."
     )
+
+    fire_alerts_lowest_confidence: NasaViirsFireAlertConfidenceEnum = pydantic.Field(
+        NasaViirsFireAlertConfidenceEnum.high,
+        title="Fire alerts lowest confidence",
+        description="Lowest confidence level to include in the connection."
+    )
+
     include_integrated_alerts: bool = pydantic.Field(
         True,
         title="Include integrated deforestation alerts",
         description="Fetch integrated deforestation alerts from Global Forest Watch and include them in the connection."
     )
+
+    integrated_alerts_lowest_confidence: IntegratedAlertsConfidenceEnum = pydantic.Field(
+        IntegratedAlertsConfidenceEnum.highest,
+        title="Integrated deforestation alerts lowest confidence",
+        description="Lowest confidence level to include in the connection."
+    )
+
     fire_lookback_days: int = pydantic.Field(
         10,
         le=10,
