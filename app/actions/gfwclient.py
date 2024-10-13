@@ -497,7 +497,7 @@ class DataAPI:
                 return val.data
 
     @backoff.on_exception(custom_backoff, (httpx.TimeoutException, httpx.HTTPStatusError),
-                          max_tries=5, 
+                          max_tries=3, 
                           on_giveup=giveup_handler, raise_on_giveup=False,
                           on_backoff=backoff_hdlr)
     async def get_alerts(
