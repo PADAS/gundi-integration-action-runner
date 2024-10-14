@@ -1,18 +1,19 @@
 import pydantic
-from .core import PullActionConfiguration, AuthActionConfiguration
+from .core import PullActionConfiguration, AuthActionConfiguration, ExecutableActionMixin
 from .gfwclient import IntegratedAlertsConfidenceEnum, NasaViirsFireAlertConfidenceEnum
 
-class AuthenticateConfig(AuthActionConfiguration):
+class AuthenticateConfig(AuthActionConfiguration, ExecutableActionMixin):
     email: str
-    password: str
-
+    password: pydantic.SecretStr = pydantic.Field(..., format="password", 
+                                                  title="Password",
+                                                  description="Password for the Global Forest Watch account.")
 
 class PullEventsConfig(PullActionConfiguration):
 
     gfw_share_link_url: pydantic.HttpUrl = pydantic.Field(
         ...,
-        title="GFW share link URL",
-        description="AOI URL link, extracted from GFW dashboard site."
+        title="Global Forest Watch AOI Share Link",
+        description="AOI share link from your MyGFW dashboard."
     )
     include_fire_alerts: bool = pydantic.Field(
         True,

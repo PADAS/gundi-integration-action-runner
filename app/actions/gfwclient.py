@@ -280,9 +280,9 @@ class IntegratedAlertsConfidenceEnum(str, Enum):
 IntegratedAlertsConfidenceEnumOrder = [IntegratedAlertsConfidenceEnum.high, IntegratedAlertsConfidenceEnum.highest]
 
 class NasaViirsFireAlertConfidenceEnum(str, Enum):
-    nominal = 'n'
-    low = 'l'
-    high = 'h'
+    nominal = 'nominal'
+    low = 'low'
+    high = 'high'
 
 NasaViirsFireAlertConfidenceEnumOrder = [NasaViirsFireAlertConfidenceEnum.low, NasaViirsFireAlertConfidenceEnum.nominal, NasaViirsFireAlertConfidenceEnum.high]
 
@@ -589,6 +589,7 @@ class DataAPI:
         try:
             index = NasaViirsFireAlertConfidenceEnumOrder.index(lowest_confidence)
             confidence_values = NasaViirsFireAlertConfidenceEnumOrder[index:] 
+            confidence_values = [str(value).lower()[:1] for value in confidence_values]
             confidence_values = ' OR '.join(f'confidence__cat = \'{value}\'' for value in confidence_values)
             extra_where = f"({confidence_values})"
         except ValueError:
