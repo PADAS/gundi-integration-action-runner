@@ -6,7 +6,7 @@ import app.settings
 
 from app.actions import utils
 from app.actions.gfwclient import DataAPI, Geostore, DatasetStatus, \
-    AOIData, DATASET_GFW_INTEGRATED_ALERTS, DATASET_NASA_VIIRS_FIRE_ALERTS
+    AOIData, DATASET_GFW_INTEGRATED_ALERTS, DATASET_NASA_VIIRS_FIRE_ALERTS, DataAPIAuthException
 from shapely.geometry import GeometryCollection, shape, mapping
 from datetime import timezone, timedelta, datetime
 
@@ -84,13 +84,8 @@ async def action_auth(integration, action_config: AuthenticateConfig):
     try:
         dataapi = DataAPI(username=action_config.email, password=action_config.password.get_secret_value())
         token = await dataapi.get_access_token()
-    except Exception as e:
-        message = f"auth action returned error."
-        logger.exception(message, extra={
-            "integration_id": str(integration.id),
-            "attention_needed": True
-        })
-        raise e
+    except DataAPIAuthException as e:
+        return {"valid_credentials": False, "message": f"Failed to authenticate with Global Forest Watch Data API: {e}"}
     else:
         logger.info(f"Authenticated with success. token: {token}")
     
