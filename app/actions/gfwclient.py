@@ -335,7 +335,7 @@ class DataAPI:
                     dapitoken = DataAPIToken.parse_obj(response.json()["data"])
                     return dapitoken
 
-            raise DataAPIAuthException("Failed to get an access token for username {self._username}.")
+            raise DataAPIAuthException(f"Failed to get an access token for username {self._username}.")
 
     async def auth_generator(self):
         """
