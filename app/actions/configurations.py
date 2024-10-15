@@ -1,29 +1,44 @@
 import pydantic
-from .core import PullActionConfiguration, AuthActionConfiguration
+from .core import PullActionConfiguration, AuthActionConfiguration, ExecutableActionMixin
+from .gfwclient import IntegratedAlertsConfidenceEnum, NasaViirsFireAlertConfidenceEnum
 
-
-class AuthenticateConfig(AuthActionConfiguration):
+class AuthenticateConfig(AuthActionConfiguration, ExecutableActionMixin):
     email: str
-    password: str
-
+    password: pydantic.SecretStr = pydantic.Field(..., format="password", 
+                                                  title="Password",
+                                                  description="Password for the Global Forest Watch account.")
 
 class PullEventsConfig(PullActionConfiguration):
 
     gfw_share_link_url: pydantic.HttpUrl = pydantic.Field(
         ...,
-        title="GFW share link URL",
-        description="AOI URL link, extracted from GFW dashboard site."
+        title="Global Forest Watch AOI Share Link",
+        description="AOI share link from your MyGFW dashboard."
     )
     include_fire_alerts: bool = pydantic.Field(
         True,
         title="Include fire alerts",
         description="Fetch fire alerts from Global Forest Watch and include them in this connection."
     )
+
+    fire_alerts_lowest_confidence: NasaViirsFireAlertConfidenceEnum = pydantic.Field(
+        NasaViirsFireAlertConfidenceEnum.high,
+        title="Fire alerts lowest confidence",
+        description="Lowest confidence level to include in the connection."
+    )
+
     include_integrated_alerts: bool = pydantic.Field(
         True,
         title="Include integrated deforestation alerts",
         description="Fetch integrated deforestation alerts from Global Forest Watch and include them in the connection."
     )
+
+    integrated_alerts_lowest_confidence: IntegratedAlertsConfidenceEnum = pydantic.Field(
+        IntegratedAlertsConfidenceEnum.highest,
+        title="Integrated deforestation alerts lowest confidence",
+        description="Lowest confidence level to include in the connection."
+    )
+
     fire_lookback_days: int = pydantic.Field(
         10,
         le=10,

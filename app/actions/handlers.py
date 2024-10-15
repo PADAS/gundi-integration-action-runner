@@ -6,7 +6,7 @@ import app.settings
 
 from app.actions import utils
 from app.actions.gfwclient import DataAPI, Geostore, DatasetStatus, \
-    AOIData, DATASET_GFW_INTEGRATED_ALERTS, DATASET_NASA_VIIRS_FIRE_ALERTS
+    AOIData, DATASET_GFW_INTEGRATED_ALERTS, DATASET_NASA_VIIRS_FIRE_ALERTS, DataAPIAuthException
 from shapely.geometry import GeometryCollection, shape, mapping
 from datetime import timezone, timedelta, datetime
 
@@ -82,15 +82,10 @@ def transform_integrated_alert(alert):
 async def action_auth(integration, action_config: AuthenticateConfig):
     logger.info(f"Executing auth action with integration {integration} and action_config {action_config}...")
     try:
-        dataapi = DataAPI(username=action_config.email, password=action_config.password)
+        dataapi = DataAPI(username=action_config.email, password=action_config.password.get_secret_value())
         token = await dataapi.get_access_token()
-    except Exception as e:
-        message = f"auth action returned error."
-        logger.exception(message, extra={
-            "integration_id": str(integration.id),
-            "attention_needed": True
-        })
-        raise e
+    except DataAPIAuthException as e:
+        return {"valid_credentials": False, "message": f"Failed to authenticate with Global Forest Watch Data API: {e}"}
     else:
         logger.info(f"Authenticated with success. token: {token}")
     
@@ -123,7 +118,7 @@ async def action_pull_events(integration:Integration, action_config: PullEventsC
     auth_config = get_auth_config(integration)
 
     # Get AOI data first.
-    dataapi = DataAPI(username=auth_config.email, password=auth_config.password)
+    dataapi = DataAPI(username=auth_config.email, password=auth_config.password.get_secret_value())
 
     aoi_id = await dataapi.aoi_from_url(action_config.gfw_share_link_url)
     aoi_data = await dataapi.get_aoi(aoi_id=aoi_id)
@@ -199,7 +194,7 @@ async def get_integrated_alerts(integration:Integration, action_config: PullEven
     if not action_config.include_integrated_alerts:
         return {'dataset': DATASET_GFW_INTEGRATED_ALERTS, "message": 'Not included in action config.'}
 
-    dataapi = DataAPI(username=auth_config.email, password=auth_config.password)
+    dataapi = DataAPI(username=auth_config.email, password=auth_config.password.get_secret_value())
 
     dataset_metadata = await dataapi.get_dataset_metadata(DATASET_GFW_INTEGRATED_ALERTS)
     dataset_status = await state_manager.get_state(
@@ -241,7 +236,8 @@ async def get_integrated_alerts(integration:Integration, action_config: PullEven
     geostore_ids = await state_manager.get_geostore_ids(aoi_data.id)
 
     # Generate tasks for each geostore_id and 48 hour partition.
-    tasks = [dataapi.get_gfw_integrated_alerts(geostore_id=geostore_id.decode('utf8'), date_range=(lower, upper), semaphore=sema)
+    tasks = [dataapi.get_gfw_integrated_alerts(geostore_id=geostore_id.decode('utf8'), date_range=(lower, upper),
+                                               lowest_confidence=action_config.integrated_alerts_lowest_confidence, semaphore=sema)
               for geostore_id in geostore_ids 
               for lower, upper in generate_date_pairs(start_date, end_date)]
     
@@ -278,7 +274,7 @@ async def get_nasa_viirs_fire_alerts(integration:Integration, action_config: Pul
     if not action_config.include_fire_alerts:
         return {'dataset': DATASET_NASA_VIIRS_FIRE_ALERTS, "message": 'Not included in action config.'}
 
-    dataapi = DataAPI(username=auth_config.email, password=auth_config.password)
+    dataapi = DataAPI(username=auth_config.email, password=auth_config.password.get_secret_value())
 
     dataset_metadata = await dataapi.get_dataset_metadata(DATASET_NASA_VIIRS_FIRE_ALERTS)
     dataset_status = await state_manager.get_state(
@@ -318,7 +314,8 @@ async def get_nasa_viirs_fire_alerts(integration:Integration, action_config: Pul
     start_date = end_date - timedelta(days=action_config.integrated_alerts_lookback_days)
 
     # Generate tasks for each geostore_id and 48 hour partition.
-    tasks = [dataapi.get_nasa_viirs_fire_alerts(geostore_id=geostore_id.decode('utf8'), date_range=(lower, upper), semaphore=sema)
+    tasks = [dataapi.get_nasa_viirs_fire_alerts(geostore_id=geostore_id.decode('utf8'), date_range=(lower, upper),
+                                                lowest_confidence=action_config.fire_alerts_lowest_confidence, semaphore=sema)
               for geostore_id in geostore_ids 
               for lower, upper in generate_date_pairs(start_date, end_date)]
     for t in asyncio.as_completed(tasks):

@@ -6,7 +6,7 @@ import pydantic
 import random
 import re
 import backoff
-import uuid
+from enum import Enum
 
 import httpx
 from datetime import datetime, timedelta, timezone
@@ -178,6 +178,9 @@ class NasaViirsFireAlert(pydantic.BaseModel):
     confidence: str = pydantic.Field(..., alias="confidence__cat")
 
     alert_date: datetime = pydantic.Field(..., alias="alert__date")
+    frp: float = pydantic.Field(0.0, alias="frp__MW")
+    bright_ti4: float = pydantic.Field(0.0, alias="bright_ti4__K")
+    bright_ti5: float = pydantic.Field(0.0, alias="bright_ti5__K")
 
     @pydantic.validator("alert_date", pre=True)
     def sanitized_date(cls, val) -> datetime:
@@ -273,6 +276,18 @@ class DatasetFields(pydantic.BaseModel):
     data: Optional[List[DatasetField]] = None
     status: Optional[str] = None
 
+class IntegratedAlertsConfidenceEnum(str, Enum):
+    high = 'high'
+    highest = 'highest'
+
+IntegratedAlertsConfidenceEnumOrder = [IntegratedAlertsConfidenceEnum.high, IntegratedAlertsConfidenceEnum.highest]
+
+class NasaViirsFireAlertConfidenceEnum(str, Enum):
+    nominal = 'nominal'
+    low = 'low'
+    high = 'high'
+
+NasaViirsFireAlertConfidenceEnumOrder = [NasaViirsFireAlertConfidenceEnum.low, NasaViirsFireAlertConfidenceEnum.nominal, NasaViirsFireAlertConfidenceEnum.high]
 
 def giveup_handler(details):
     d1, d2 = details['kwargs']['daterange']
@@ -285,6 +300,13 @@ def backoff_hdlr(details):
            "calling function {target} with args {args} and kwargs "
            "{kwargs}".format(**details))
     
+
+# Custom backoff strategy starting at 5, incrementing by 10, and capping at 45
+def custom_backoff():
+    delay = 5
+    while delay <= 45:
+        yield delay
+        delay += 10
 
 DEFAULT_REQUEST_TIMEOUT = httpx.Timeout(60.0, connect=3.1)
 class DataAPI:
@@ -316,7 +338,7 @@ class DataAPI:
                     dapitoken = DataAPIToken.parse_obj(response.json()["data"])
                     return dapitoken
 
-            raise DataAPIAuthException("Failed to get an access token for username {self._username}.")
+            raise DataAPIAuthException(f"Failed to get an access token for username {self._username}.")
 
     async def auth_generator(self):
         """
@@ -477,8 +499,8 @@ class DataAPI:
             if val.status == 'success':
                 return val.data
 
-    @backoff.on_exception(backoff.constant, (httpx.TimeoutException, httpx.HTTPStatusError),
-                          interval=5, max_tries=3, 
+    @backoff.on_exception(custom_backoff, (httpx.TimeoutException, httpx.HTTPStatusError),
+                          max_tries=3, 
                           on_giveup=giveup_handler, raise_on_giveup=False,
                           on_backoff=backoff_hdlr)
     async def get_alerts(
@@ -524,7 +546,7 @@ class DataAPI:
                 if httpx.codes.is_success(response.status_code):
                     data = response.json()
                     data_len = len(data.get("data"))
-                    logger.info(f"Extracted {data_len} alerts from dataset {dataset} for period {lower_date} - {upper_date}.")
+                    logger.info(f"Extracted {data_len} alerts from dataset {dataset}, geostore_id: {geostore_id} for period {lower_date} - {upper_date}.")
                     return data.get("data", [])
                 else:
                     logger.error(
@@ -536,7 +558,18 @@ class DataAPI:
         return await fn()
 
     @backoff.on_exception(backoff.expo, (httpx.TimeoutException, httpx.HTTPStatusError), max_tries=3, on_backoff=backoff_hdlr)
-    async def get_gfw_integrated_alerts(self, *, geostore_id: str,date_range: Tuple[datetime, datetime], semaphore: asyncio.Semaphore = None):
+    async def get_gfw_integrated_alerts(self, *, geostore_id: str,date_range: Tuple[datetime, datetime],
+                                        lowest_confidence: IntegratedAlertsConfidenceEnum = IntegratedAlertsConfidenceEnum.highest,
+                                          semaphore: asyncio.Semaphore = None):
+
+        try:
+            index = IntegratedAlertsConfidenceEnumOrder.index(lowest_confidence)
+            confidence_values = IntegratedAlertsConfidenceEnumOrder[index:] 
+            confidence_values = ' OR '.join(f'gfw_integrated_alerts__confidence = \'{value}\'' for value in confidence_values)
+            extra_where = f"({confidence_values})"
+        except ValueError:
+            extra_where = ''
+            logger.warning(f"Invalid confidence value: {lowest_confidence}. Using all confidence values.")
 
         async with semaphore:
             fields = {"gfw_integrated_alerts__date", "gfw_integrated_alerts__confidence"}
@@ -545,23 +578,35 @@ class DataAPI:
                 date_field="gfw_integrated_alerts__date",
                 daterange=date_range,
                 fields=fields,
-                extra_where="(gfw_integrated_alerts__confidence = 'highest')",
+                extra_where=extra_where,
                 geostore_id=geostore_id
             )
         
         return [IntegratedAlert.parse_obj(alert) for alert in alerts] if alerts else []
         
     @backoff.on_exception(backoff.expo, (httpx.TimeoutException, httpx.HTTPStatusError), max_tries=3, on_backoff=backoff_hdlr)
-    async def get_nasa_viirs_fire_alerts(self, *, geostore_id: str,date_range: Tuple[datetime, datetime], semaphore: asyncio.Semaphore = None):
+    async def get_nasa_viirs_fire_alerts(self, *, geostore_id: str,date_range: Tuple[datetime, datetime],
+                                         lowest_confidence: NasaViirsFireAlertConfidenceEnum = NasaViirsFireAlertConfidenceEnum.high,
+                                         semaphore: asyncio.Semaphore = None):
+
+        try:
+            index = NasaViirsFireAlertConfidenceEnumOrder.index(lowest_confidence)
+            confidence_values = NasaViirsFireAlertConfidenceEnumOrder[index:] 
+            confidence_values = [str(value).lower()[:1] for value in confidence_values]
+            confidence_values = ' OR '.join(f'confidence__cat = \'{value}\'' for value in confidence_values)
+            extra_where = f"({confidence_values})"
+        except ValueError:
+            extra_where = ''
+            logger.warning(f"Invalid confidence value: {lowest_confidence}. Using all confidence values.")
 
         async with semaphore:
-            fields = {"confidence__cat", "alert__date"}
+            fields = {"confidence__cat", "alert__date", "frp__MW", "bright_ti4__K", "bright_ti5__K"}
             alerts = await self.get_alerts(
                 dataset="nasa_viirs_fire_alerts",
                 date_field="alert__date",
                 daterange=date_range,
                 fields=fields,
-                extra_where="(confidence__cat = 'h')",
+                extra_where=extra_where,
                 geostore_id=geostore_id
             )
         
