@@ -178,6 +178,9 @@ class NasaViirsFireAlert(pydantic.BaseModel):
     confidence: str = pydantic.Field(..., alias="confidence__cat")
 
     alert_date: datetime = pydantic.Field(..., alias="alert__date")
+    frp: float = pydantic.Field(0.0, alias="frp__MW")
+    bright_ti4: float = pydantic.Field(0.0, alias="bright_ti4__K")
+    bright_ti5: float = pydantic.Field(0.0, alias="bright_ti5__K")
 
     @pydantic.validator("alert_date", pre=True)
     def sanitized_date(cls, val) -> datetime:
@@ -597,7 +600,7 @@ class DataAPI:
             logger.warning(f"Invalid confidence value: {lowest_confidence}. Using all confidence values.")
 
         async with semaphore:
-            fields = {"confidence__cat", "alert__date"}
+            fields = {"confidence__cat", "alert__date", "frp__MW", "bright_ti4__K", "bright_ti5__K"}
             alerts = await self.get_alerts(
                 dataset="nasa_viirs_fire_alerts",
                 date_field="alert__date",
