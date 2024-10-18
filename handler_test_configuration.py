@@ -67,7 +67,7 @@ if __name__ == "__main__":
             ],
             webhook=None,
         ),
-        base_url="https://ebird.tempuri.org",
+        base_url="https://api.ebird.org/v2",
         enabled=True,
         owner=Organization(
             id=UUID("b56b585d-7f94-4a45-b8af-bb7dc6a9c731"),
@@ -85,7 +85,9 @@ if __name__ == "__main__":
                     value="pull_events",
                 ),
                 data={
-                    "some_important_value": 7.0,
+                    "latitude": 47.5218082,
+                    "longitude": -122.3864506,
+                    "distance": 30
                 },
             ),
             IntegrationActionConfiguration(
@@ -98,8 +100,7 @@ if __name__ == "__main__":
                     value="auth",
                 ),
                 data={
-                    "username": "integrations@earthranger.com",
-                    "password": "something-fancy"
+                    "api_key": "cvgvv4eimjck",
                 },
             ),
         ],
