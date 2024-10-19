@@ -15,8 +15,6 @@ from app.actions.handlers import action_pull_events
 from app.actions.configurations import PullEventsConfig
 
 if __name__ == "__main__":
-    action_config = PullEventsConfig(some_important_value=42.0)
-
     integration = Integration(
         id=UUID("e9c1eef0-7c28-46bb-8155-fe9b31dedce7"),
         name="Test eBird Connection",
@@ -26,44 +24,6 @@ if __name__ == "__main__":
             value="ebird",
             description="A type for eBird connections",
             actions=[
-                IntegrationAction(
-                    id=UUID("e0d2b2de-a277-4f67-89ef-13ef0e07623d"),
-                    type="auth",
-                    name="Auth",
-                    value="auth",
-                    description="Chrisdo Gfw Auth action",
-                    action_schema={
-                        "type": "object",
-                        "title": "AuthenticateConfig",
-                        "required": ["username", "password"],
-                        "properties": {
-                            "email": {"type": "string", "title": "Email"},
-                            "password": {"type": "string", "title": "Password", "format": "password"},
-                        },
-                    },
-                ),
-                IntegrationAction(
-                    id=UUID("1306da74-7e87-45a0-a5de-c11974e4e63e"),
-                    type="pull",
-                    name="Pull Events",
-                    value="pull_events",
-                    description="eBird pull events action",
-                    action_schema={
-                        "type": "object",
-                        "title": "PullEventsConfig",
-                        "required": ["some_important_value"],
-                        "properties": {
-                            "some_important_value": {
-                                "type": "number",
-                                "title": "Some important value",
-                                "default": 0.0,
-                                "maximum": 50.0,
-                                "minimum": 0.0,
-                                "description": "Some value of great importance.",
-                            },
-                        },
-                    },
-                ),
             ],
             webhook=None,
         ),
@@ -87,7 +47,8 @@ if __name__ == "__main__":
                 data={
                     "latitude": 47.5218082,
                     "longitude": -122.3864506,
-                    "distance": 30
+                    "distance": 30,
+                    "num_days": 1
                 },
             ),
             IntegrationActionConfiguration(
@@ -118,4 +79,4 @@ if __name__ == "__main__":
             "last_observation_delivered_at": "2023-03-31T11:20:00+0200",
         },
     )
-    asyncio.run(action_pull_events(integration, action_config))
+    asyncio.run(action_pull_events(integration, integration.configurations[0]))
