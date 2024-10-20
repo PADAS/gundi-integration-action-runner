@@ -84,7 +84,7 @@ async def action_pull_events(integration:Integration, action_config: PullEventsC
            (action_config.longitude and action_config.longitude != 0)):
             raise ConfigurationValidationError("If region code is included, latitude and longitude should be blank.")
         
-        obs = _get_recent_observations_by_region(base_url, auth_config.api_key, action_config.num_days, 
+        obs = _get_recent_observations_by_region(base_url, auth_config.api_key.get_secret_value(), action_config.num_days, 
                                                  action_config.region_code, action_config.species_code,
                                                  action_config.include_provisional)
 
@@ -94,12 +94,12 @@ async def action_pull_events(integration:Integration, action_config: PullEventsC
            (not action_config.distance or action_config.distance == 0)):
             raise ConfigurationValidationError("Either a region code or a latitude and longitude should be included.")
 
-        obs = _get_recent_observations_by_location(base_url, auth_config.api_key, action_config.num_days,
+        obs = _get_recent_observations_by_location(base_url, auth_config.api_key.get_secret_value(), action_config.num_days,
                                                    action_config.latitude, action_config.longitude, action_config.distance,
                                                    action_config.include_provisional)
 
     to_send = []
-    for ob in obs:
+    async for ob in obs:
         to_send.append(_transform_ebird_to_gundi_event(ob))
     
     logger.info(f"Submitting {len(to_send)} eBird observations to Gundi")
@@ -109,16 +109,17 @@ async def action_pull_events(integration:Integration, action_config: PullEventsC
 
     return {'result': {'events_extracted': 0}}
 
-def _get_from_ebird(url: str, api_key: str, params: dict):
+async def _get_from_ebird(url: str, api_key: str, params: dict):
     headers = {
         "X-eBirdApiToken": api_key
     }
 
-    r = httpx.get(url, params=params, headers = headers)
-    r.raise_for_status()
-    return r.json()
+    async with httpx.AsyncClient() as client:
+        r = await client.get(url, params=params, headers = headers)
+        r.raise_for_status()
+        return r.json()
 
-def _get_recent_observations_by_region(base_url: str, api_key: str, num_days: int, region_code: str, 
+async def _get_recent_observations_by_region(base_url: str, api_key: str, num_days: int, region_code: str, 
                                              species_code: str = None, include_provisional: bool = False):
 
         params = {
@@ -127,9 +128,10 @@ def _get_recent_observations_by_region(base_url: str, api_key: str, num_days: in
         }
         url = f"{base_url}/data/obs/{region_code}/recent"
         logger.info(f"Loading eBird observations for last {num_days} days near region code {region_code}.")
-        return _get_recent_observations(url, api_key, params, species_code)
+        
+        return await _get_recent_observations(url, api_key, params, species_code)
 
-def _get_recent_observations_by_location(base_url: str, api_key: str, num_days: int, lat: float, 
+async def _get_recent_observations_by_location(base_url: str, api_key: str, num_days: int, lat: float, 
                                                lng: float, dist: float, species_code: str = None,
                                                include_provisional: bool = False):
 
@@ -141,9 +143,11 @@ def _get_recent_observations_by_location(base_url: str, api_key: str, num_days: 
         url = f"{base_url}/data/obs/geo/recent?lat={lat}&lng={lng}"
 
         logger.info(f"Loading eBird observations for last {num_days} days near ({lat}, {lng}).")
-        return _get_recent_observations(url, api_key, params, species_code)
+        async for item in _get_recent_observations(url, api_key, params, species_code):
+            yield item
 
-def _get_recent_observations(url, api_key, params, species_code: str = None):
+
+async def _get_recent_observations(url, api_key, params, species_code: str = None):
 
         if(species_code):
             species = species_code.split(",")
@@ -155,7 +159,7 @@ def _get_recent_observations(url, api_key, params, species_code: str = None):
                     yield parse_obj_as(eBirdObservation, ob)
         
         else:
-            obs = _get_from_ebird(url, api_key, params=params)
+            obs = await _get_from_ebird(url, api_key, params=params)
             for ob in obs:
                 yield parse_obj_as(eBirdObservation, ob)
 

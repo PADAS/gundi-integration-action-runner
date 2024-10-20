@@ -79,4 +79,4 @@ if __name__ == "__main__":
             "last_observation_delivered_at": "2023-03-31T11:20:00+0200",
         },
     )
-    asyncio.run(action_pull_events(integration, integration.configurations[0]))
+    asyncio.run(action_pull_events(integration=integration, action_config=integration.configurations[0]))
