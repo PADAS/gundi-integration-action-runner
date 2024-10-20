@@ -53,7 +53,11 @@ async def handle_transformed_data(transformed_data, integration_id, action_id):
 
 async def action_auth(integration, action_config: AuthenticateConfig):
     logger.info(f"Executing auth action with integration {integration} and action_config {action_config}...")
-    return {"valid_credentials": action_config.api_key is not None}
+
+    # Use a request for region info as a proxy for verifying credentials.
+    us_region_info = await get_region_info(integration.base_url, action_config.api_key.get_secret_value(), "US")
+
+    return {"valid_credentials": httpx.codes.is_success(us_region_info.status_code), 'status_code': us_region_info.status_code}
 
 
 def get_auth_config(integration):
@@ -161,6 +165,12 @@ async def _get_recent_observations(url, api_key, params, species_code: str = Non
             obs = await _get_from_ebird(url, api_key, params=params)
             for ob in obs:
                 yield parse_obj_as(eBirdObservation, ob)
+
+
+async def get_region_info(base_url: str, api_key: str, region_code: str):
+    url = f"{base_url}/ref/region/info/{region_code}"
+    return await _get_from_ebird(url, api_key)
+
 
 def _transform_ebird_to_gundi_event(obs: eBirdObservation):
     
