@@ -78,7 +78,6 @@ async def action_pull_events(integration:Integration, action_config: PullEventsC
 
     base_url = integration.base_url or "https://api.ebird.org/v2"
 
-    action_config = PullEventsConfig.parse_obj(action_config.data)
     if(action_config.region_code):
         if((action_config.latitude and action_config.latitude != 0) or
            (action_config.longitude and action_config.longitude != 0)):
