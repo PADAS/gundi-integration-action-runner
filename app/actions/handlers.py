@@ -198,6 +198,7 @@ def _transform_ebird_to_gundi_event(obs: eBirdObservation):
             "quantity": obs.howMany,
             "valid": obs.obsValid,
             "reviewed": obs.obsReviewed,
-            "submission_id": obs.subId
+            "submission_id": obs.subId,
+            "attribution": "Data from https://eBird.org, Cornell Lab of Ornithology."
         }
     }
