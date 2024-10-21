@@ -169,7 +169,7 @@ async def _get_recent_observations(url, api_key, params, species_code: str = Non
 
 async def get_region_info(base_url: str, api_key: str, region_code: str):
     url = f"{base_url}/ref/region/info/{region_code}"
-    return await _get_from_ebird(url, api_key)
+    return await _get_from_ebird(url, api_key, params=None)
 
 
 def _transform_ebird_to_gundi_event(obs: eBirdObservation):
