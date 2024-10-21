@@ -57,10 +57,13 @@ async def action_auth(integration:Integration, action_config: AuthenticateConfig
 
     base_url = integration.base_url or EBIRD_API
 
-    # Use a request for region info as a proxy for verifying credentials.
-    us_region_info = await get_region_info(base_url, action_config.api_key.get_secret_value(), "US")
+    try:
+        # Use a request for region info as a proxy for verifying credentials.
+        us_region_info = await get_region_info(base_url, action_config.api_key.get_secret_value(), "US")
+        return {"valid_credentials": True}
+    except httpx.HTTPStatusError as e:
+        return {"valid_credentials": False, "status_code": e.response.status_code}
 
-    return {"valid_credentials": httpx.codes.is_success(us_region_info.status_code), 'status_code': us_region_info.status_code}
 
 
 def get_auth_config(integration):
