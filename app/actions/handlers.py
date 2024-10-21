@@ -14,6 +14,7 @@ from typing import List, Optional
 logger = logging.getLogger(__name__)
 state_manager = IntegrationStateManager()
 
+EBIRD_API = "https://api.ebird.org/v2"
 class eBirdObservation(BaseModel):
     speciesCode: str
     comName: str
@@ -51,11 +52,13 @@ async def handle_transformed_data(transformed_data, integration_id, action_id):
 
 
 
-async def action_auth(integration, action_config: AuthenticateConfig):
+async def action_auth(integration:Integration, action_config: AuthenticateConfig):
     logger.info(f"Executing auth action with integration {integration} and action_config {action_config}...")
 
+    base_url = integration.base_url or EBIRD_API
+
     # Use a request for region info as a proxy for verifying credentials.
-    us_region_info = await get_region_info(integration.base_url, action_config.api_key.get_secret_value(), "US")
+    us_region_info = await get_region_info(base_url, action_config.api_key.get_secret_value(), "US")
 
     return {"valid_credentials": httpx.codes.is_success(us_region_info.status_code), 'status_code': us_region_info.status_code}
 
@@ -80,7 +83,7 @@ async def action_pull_events(integration:Integration, action_config: PullEventsC
 
     auth_config = get_auth_config(integration)
 
-    base_url = integration.base_url or "https://api.ebird.org/v2"
+    base_url = integration.base_url or EBIRD_API
 
     if(action_config.region_code):
         if((action_config.latitude and action_config.latitude != 0) or
