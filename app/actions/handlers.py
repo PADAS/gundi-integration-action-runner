@@ -14,6 +14,7 @@ from typing import List, Optional
 logger = logging.getLogger(__name__)
 state_manager = IntegrationStateManager()
 
+EBIRD_API = "https://api.ebird.org/v2"
 class eBirdObservation(BaseModel):
     speciesCode: str
     comName: str
@@ -51,9 +52,18 @@ async def handle_transformed_data(transformed_data, integration_id, action_id):
 
 
 
-async def action_auth(integration, action_config: AuthenticateConfig):
+async def action_auth(integration:Integration, action_config: AuthenticateConfig):
     logger.info(f"Executing auth action with integration {integration} and action_config {action_config}...")
-    return {"valid_credentials": action_config.api_key is not None}
+
+    base_url = integration.base_url or EBIRD_API
+
+    try:
+        # Use a request for region info as a proxy for verifying credentials.
+        us_region_info = await get_region_info(base_url, action_config.api_key.get_secret_value(), "US")
+        return {"valid_credentials": True}
+    except httpx.HTTPStatusError as e:
+        return {"valid_credentials": False, "status_code": e.response.status_code}
+
 
 
 def get_auth_config(integration):
@@ -76,9 +86,8 @@ async def action_pull_events(integration:Integration, action_config: PullEventsC
 
     auth_config = get_auth_config(integration)
 
-    base_url = integration.base_url or "https://api.ebird.org/v2"
+    base_url = integration.base_url or EBIRD_API
 
-    action_config = PullEventsConfig.parse_obj(action_config.data)
     if(action_config.region_code):
         if((action_config.latitude and action_config.latitude != 0) or
            (action_config.longitude and action_config.longitude != 0)):
@@ -162,6 +171,12 @@ async def _get_recent_observations(url, api_key, params, species_code: str = Non
             obs = await _get_from_ebird(url, api_key, params=params)
             for ob in obs:
                 yield parse_obj_as(eBirdObservation, ob)
+
+
+async def get_region_info(base_url: str, api_key: str, region_code: str):
+    url = f"{base_url}/ref/region/info/{region_code}"
+    return await _get_from_ebird(url, api_key, params=None)
+
 
 def _transform_ebird_to_gundi_event(obs: eBirdObservation):
     
