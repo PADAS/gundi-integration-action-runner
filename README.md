@@ -403,3 +403,57 @@ Sample configuration in Gundi:
 """
 ```
 Notice: This can also be combined with Dynamic Schema and JSON Transformations. In that case the hex string will be parsed first, adn then the JQ filter can be applied to the extracted data.
+
+### Custom UI for configurations (ui schema)
+It's possible to customize how the forms for configurations are displayed in the Gundi portal. 
+To do that, use `FieldWithUIOptions` in your models. The `UIOptions` and `GlobalUISchemaOptions` will allow you to customize the appearance of the fields in the portal by setting any of the ["ui schema"](https://rjsf-team.github.io/react-jsonschema-form/docs/api-reference/uiSchema) supported options.
+
+```python
+# Example
+import pydantic
+from app.services.utils import FieldWithUIOptions, GlobalUISchemaOptions, UIOptions
+from .core import AuthActionConfiguration, PullActionConfiguration
+
+
+class AuthenticateConfig(AuthActionConfiguration):
+    email: str  # This will be rendered with default widget and settings
+    password: pydantic.SecretStr = FieldWithUIOptions(
+        ...,
+        format="password",
+        title="Password",
+        description="Password for the Global Forest Watch account.",
+        ui_options=UIOptions(
+            widget="password",  # This will be rendered as a password input hiding the input
+        )
+    )
+    ui_global_options = GlobalUISchemaOptions(
+        order=["email", "password"],  # This will set the order of the fields in the form
+    )
+
+
+class MyPullActionConfiguration(PullActionConfiguration):
+    lookback_days: int = FieldWithUIOptions(
+        10,
+        le=30,
+        ge=1,
+        title="Data lookback days",
+        description="Number of days to look back for data.",
+        ui_options=UIOptions(
+            widget="range",  # This will be rendered ad a range slider
+        )
+    )
+    force_fetch: bool = FieldWithUIOptions(
+        False,
+        title="Force fetch",
+        description="Force fetch even if in a quiet period.",
+        ui_options=UIOptions(
+            widget="radio", # This will be rendered as a radio button
+        )
+    )
+    ui_global_options = GlobalUISchemaOptions(
+        order=[
+            "lookback_days",
+            "force_fetch",
+        ],
+    )
+```
