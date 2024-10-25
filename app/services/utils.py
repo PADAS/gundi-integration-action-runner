@@ -170,12 +170,12 @@ class DyntamicFactory:
 
 class GlobalUISchemaOptions(BaseModel):
     order: Optional[List[str]]
-    addable: Optional[bool] = Field(default=True)
-    copyable: Optional[bool] = Field(default=False)
-    orderable: Optional[bool] = Field(default=True)
-    removable: Optional[bool] = Field(default=True)
-    label: Optional[bool] = Field(default=True)
-    duplicateKeySuffixSeparator: Optional[str] = Field(default='-')
+    addable: Optional[bool]
+    copyable: Optional[bool]
+    orderable: Optional[bool]
+    removable: Optional[bool]
+    label: Optional[bool]
+    duplicateKeySuffixSeparator: Optional[str]
 
 
 class UIOptions(GlobalUISchemaOptions):

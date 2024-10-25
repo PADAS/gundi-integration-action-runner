@@ -48,27 +48,12 @@ async def test_register_integration_with_slug_setting(
                     },
                     "ui_schema": {
                         "lookback_days": {
-                            "ui:addable": True,
-                            "ui:orderable": True,
-                            "ui:removable": True,
-                            "ui:label": True,
-                            "ui:duplicateKeySuffixSeparator": "-",
                             "ui:widget": "range"
                         },
                         "force_fetch": {
-                            "ui:addable": True,
-                            "ui:orderable": True,
-                            "ui:removable": True,
-                            "ui:label": True,
-                            "ui:duplicateKeySuffixSeparator": "-",
                             "ui:widget": "select"
                         },
                         "ui:order": ["lookback_days", "force_fetch"],
-                        "ui:addable": True,
-                        "ui:orderable": True,
-                        "ui:removable": True,
-                        "ui:label": True,
-                        "ui:duplicateKeySuffixSeparator": "-"
                     },
                     "is_periodic_action": True
                 }
@@ -143,27 +128,13 @@ async def test_register_integration_with_slug_arg(
                     },
                     "ui_schema": {
                         "lookback_days": {
-                            "ui:addable": True,
-                            "ui:orderable": True,
-                            "ui:removable": True,
-                            "ui:label": True,
-                            "ui:duplicateKeySuffixSeparator": "-",
                             "ui:widget": "range"
                         },
                         "force_fetch": {
-                            "ui:addable": True,
-                            "ui:orderable": True,
-                            "ui:removable": True,
-                            "ui:label": True,
-                            "ui:duplicateKeySuffixSeparator": "-",
+
                             "ui:widget": "select"
                         },
                         "ui:order": ["lookback_days", "force_fetch"],
-                        "ui:addable": True,
-                        "ui:orderable": True,
-                        "ui:removable": True,
-                        "ui:label": True,
-                        "ui:duplicateKeySuffixSeparator": "-"
                     },
                     "is_periodic_action": True
                 }
@@ -243,27 +214,12 @@ async def test_register_integration_with_service_url_arg(
                     },
                     "ui_schema": {
                         "lookback_days": {
-                            "ui:addable": True,
-                            "ui:orderable": True,
-                            "ui:removable": True,
-                            "ui:label": True,
-                            "ui:duplicateKeySuffixSeparator": "-",
                             "ui:widget": "range"
                         },
                         "force_fetch": {
-                            "ui:addable": True,
-                            "ui:orderable": True,
-                            "ui:removable": True,
-                            "ui:label": True,
-                            "ui:duplicateKeySuffixSeparator": "-",
                             "ui:widget": "select"
                         },
                         "ui:order": ["lookback_days", "force_fetch"],
-                        "ui:addable": True,
-                        "ui:orderable": True,
-                        "ui:removable": True,
-                        "ui:label": True,
-                        "ui:duplicateKeySuffixSeparator": "-"
                     },
                     "is_periodic_action": True
                 }
@@ -343,27 +299,12 @@ async def test_register_integration_with_service_url_setting(
                     },
                     "ui_schema": {
                         "lookback_days": {
-                            "ui:addable": True,
-                            "ui:orderable": True,
-                            "ui:removable": True,
-                            "ui:label": True,
-                            "ui:duplicateKeySuffixSeparator": "-",
                             "ui:widget": "range"
                         },
                         "force_fetch": {
-                            "ui:addable": True,
-                            "ui:orderable": True,
-                            "ui:removable": True,
-                            "ui:label": True,
-                            "ui:duplicateKeySuffixSeparator": "-",
                             "ui:widget": "select"
                         },
                         "ui:order": ["lookback_days", "force_fetch"],
-                        "ui:addable": True,
-                        "ui:orderable": True,
-                        "ui:removable": True,
-                        "ui:label": True,
-                        "ui:duplicateKeySuffixSeparator": "-"
                     },
                     "is_periodic_action": True
                 }
