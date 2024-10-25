@@ -1,15 +1,13 @@
 import asyncio
 import datetime
 import json
-
 import pydantic
 import pytest
 from unittest.mock import MagicMock
 from app import settings
 from gcloud.aio import pubsub
-from gundi_core.schemas.v2 import Integration, IntegrationActionConfiguration, IntegrationActionSummary
+from gundi_core.schemas.v2 import Integration
 from gundi_core.events import (
-    SystemEventBaseModel,
     IntegrationActionCustomLog,
     CustomActivityLog,
     IntegrationActionStarted,
@@ -28,8 +26,8 @@ from gundi_core.events import (
     CustomWebhookLog,
     LogLevel
 )
-
 from app.actions import PullActionConfiguration
+from app.services.utils import GlobalUISchemaOptions, FieldWithUIOptions, UIOptions
 from app.webhooks import GenericJsonTransformConfig, GenericJsonPayload, WebhookPayload
 
 
@@ -898,7 +896,30 @@ def mock_publish_event(gcp_pubsub_publish_response):
 
 
 class MockPullActionConfiguration(PullActionConfiguration):
-    lookback_days: int = 10
+    lookback_days: int = FieldWithUIOptions(
+        30,
+        le=30,
+        ge=1,
+        title="Data lookback days",
+        description="Number of days to look back for data.",
+        ui_options=UIOptions(
+            widget="range",
+        )
+    )
+    force_fetch: bool = FieldWithUIOptions(
+        False,
+        title="Force fetch",
+        description="Force fetch even if in a quiet period.",
+        ui_options=UIOptions(
+            widget="select",
+        )
+    )
+    ui_global_options = GlobalUISchemaOptions(
+        order=[
+            "lookback_days",
+            "force_fetch",
+        ],
+    )
 
 
 @pytest.fixture
