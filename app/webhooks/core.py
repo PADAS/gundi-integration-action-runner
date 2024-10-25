@@ -43,11 +43,7 @@ class GenericJsonTransformConfig(JQTransformConfig, DynamicSchemaConfig):
         ...,
         description="Output type for the transformed data: 'obv' or 'event'",
         ui_options=UIOptions(
-            widget="select",
-            options=[
-                {"label": "Observations", "value": "obv"},
-                {"label": "Events", "value": "event"},
-            ]
+            widget="text",  # ToDo: Use a select or a better widget to render the output type
         )
     )
 
