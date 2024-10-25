@@ -14,8 +14,6 @@ logger = logging.getLogger(__name__)
 
 
 async def register_integration_in_gundi(gundi_client, type_slug=None, service_url=None):
-    #from ..webhooks.configurations import LiquidTechPayload
-    #print(GenericJsonTransformConfig.schema_json())
     # Prepare the integration name and value
     integration_type_slug = type_slug or INTEGRATION_TYPE_SLUG
     if not integration_type_slug:
@@ -38,6 +36,7 @@ async def register_integration_in_gundi(gundi_client, type_slug=None, service_ur
         _, config_model = handler
         action_name = action_id.replace("_", " ").title()
         action_schema = json.loads(config_model.schema_json())
+        action_ui_schema = config_model.ui_schema()
         if issubclass(config_model, AuthActionConfiguration):
             action_type = ActionTypeEnum.AUTHENTICATION.value
         elif issubclass(config_model, PullActionConfiguration):
@@ -53,6 +52,7 @@ async def register_integration_in_gundi(gundi_client, type_slug=None, service_ur
                 "value": action_id,
                 "description": f"{integration_type_name} {action_name} action",
                 "schema": action_schema,
+                "ui_schema": action_ui_schema,
                 "is_periodic_action": True if issubclass(config_model, PullActionConfiguration) else False,
             }
         )
