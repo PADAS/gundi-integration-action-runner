@@ -1,5 +1,7 @@
 import asyncio
+import os
 
+from app.actions.core import discover_actions
 # ---------- remove this ------------
 from gundi_core.schemas.v2 import (
     Integration,
@@ -45,9 +47,9 @@ if __name__ == "__main__":
                     value="pull_events",
                 ),
                 data={
-                    "latitude": 47.5218082,
-                    "longitude": -122.3864506,
-                    "distance": 30,
+                    "latitude": -18.775,
+                    "longitude": 34.482,
+                    "distance": 25,
                     "num_days": 1
                 },
             ),
@@ -61,7 +63,7 @@ if __name__ == "__main__":
                     value="auth",
                 ),
                 data={
-                    "api_key": "cvgvv4eimjck",
+                    "api_key": os.environ.get('MY_TEST_EBIRD_API_KEY', ''),
                 },
             ),
         ],
@@ -79,4 +81,7 @@ if __name__ == "__main__":
             "last_observation_delivered_at": "2023-03-31T11:20:00+0200",
         },
     )
-    asyncio.run(action_pull_events(integration=integration, action_config=integration.configurations[0]))
+
+    pull_action_config = integration.configurations[0]
+    pull_action_config = PullEventsConfig(**pull_action_config.data)
+    asyncio.run(action_pull_events(integration=integration, action_config=pull_action_config))
