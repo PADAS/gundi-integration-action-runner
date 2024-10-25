@@ -33,9 +33,11 @@ async def test_register_integration_with_slug_setting(
                                 'type': 'integer'
                             }
                         },
+                        'definitions': {},
                         'title': 'MockPullActionConfiguration',
                         'type': 'object'
                     },
+                    "ui_schema": {},
                     'type': 'pull',
                     'value': 'pull_observations'
                 }
@@ -95,9 +97,11 @@ async def test_register_integration_with_slug_arg(
                                 'type': 'integer'
                             }
                         },
+                        'definitions': {},
                         'title': 'MockPullActionConfiguration',
                         'type': 'object'
                     },
+                    "ui_schema": {},
                     'type': 'pull',
                     'value': 'pull_observations'
                 }
@@ -162,9 +166,11 @@ async def test_register_integration_with_service_url_arg(
                                 'type': 'integer'
                             }
                         },
+                        'definitions': {},
                         'title': 'MockPullActionConfiguration',
                         'type': 'object'
                     },
+                    "ui_schema": {},
                     'type': 'pull',
                     'value': 'pull_observations'
                 }
@@ -229,9 +235,11 @@ async def test_register_integration_with_service_url_setting(
                                 'type': 'integer'
                             }
                         },
+                        'definitions': {},
                         'title': 'MockPullActionConfiguration',
                         'type': 'object'
                     },
+                    "ui_schema": {},
                     'type': 'pull',
                     'value': 'pull_observations'
                 }
