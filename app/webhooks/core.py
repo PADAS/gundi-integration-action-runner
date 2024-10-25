@@ -52,7 +52,7 @@ class GenericJsonTransformWithHexStrConfig(HexStringConfig, GenericJsonTransform
     pass
 
 
-class WebhookPayload(UISchemaModelMixin, BaseModel):
+class WebhookPayload(BaseModel):
     class Config:
         extra = "allow"
 

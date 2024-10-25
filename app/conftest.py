@@ -28,7 +28,7 @@ from gundi_core.events import (
 )
 from app.actions import PullActionConfiguration
 from app.services.utils import GlobalUISchemaOptions, FieldWithUIOptions, UIOptions
-from app.webhooks import GenericJsonTransformConfig, GenericJsonPayload, WebhookPayload
+from app.webhooks import GenericJsonTransformConfig, GenericJsonPayload, WebhookPayload, WebhookConfiguration
 
 
 class AsyncMock(MagicMock):
@@ -137,6 +137,14 @@ def integration_v2_with_webhook():
                             "allowed_devices_list": {"title": "Allowed Devices List", "type": "array", "items": {}},
                             "deduplication_enabled": {"title": "Deduplication Enabled", "type": "boolean"}},
                         "required": ["allowed_devices_list", "deduplication_enabled"]
+                    },
+                    "ui_schema": {
+                        "allowed_devices_list": {
+                            "ui:widget": "select"
+                        },
+                        "deduplication_enabled": {
+                            "ui:widget": "radio"
+                        }
                     }
                 }
             },
@@ -215,6 +223,17 @@ def integration_v2_with_webhook_generic():
                                 "title": "Output Type",
                                 "description": "Output type for the transformed data: 'obv' or 'event'"
                             }
+                        }
+                    },
+                    "ui_schema": {
+                        "jq_filter": {
+                            "ui:widget": "textarea"
+                        },
+                        "json_schema": {
+                            "ui:widget": "textarea"
+                        },
+                        "output_type": {
+                            "ui:widget": "text"
                         }
                     }
                 }
@@ -1193,9 +1212,21 @@ class MockWebhookPayloadModel(WebhookPayload):
     lon: float
 
 
-class MockWebhookConfigModel(pydantic.BaseModel):
-    allowed_devices_list: list
-    deduplication_enabled: bool
+class MockWebhookConfigModel(WebhookConfiguration):
+    allowed_devices_list: list = FieldWithUIOptions(
+        ...,
+        title="Allowed Devices List",
+        ui_options=UIOptions(
+            widget="list",
+        )
+    )
+    deduplication_enabled: bool = FieldWithUIOptions(
+        ...,
+        title="Deduplication Enabled",
+        ui_options=UIOptions(
+            widget="radio",
+        )
+    )
 
 
 @pytest.fixture

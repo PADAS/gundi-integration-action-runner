@@ -76,11 +76,16 @@ async def test_register_integration_with_slug_setting(
                             "type": "boolean"
                         }
                     },
+                    "definitions": {},
                     "required": [
                         "allowed_devices_list",
                         "deduplication_enabled"
                     ]
-                }
+                },
+                "ui_schema": {
+                    "allowed_devices_list": {"ui:widget": "list"},
+                    "deduplication_enabled": {"ui:widget": "radio"}
+                },
             }
         }
     )
@@ -157,11 +162,16 @@ async def test_register_integration_with_slug_arg(
                             "type": "boolean"
                         }
                     },
+                    "definitions": {},
                     "required": [
                         "allowed_devices_list",
                         "deduplication_enabled"
                     ]
-                }
+                },
+                "ui_schema": {
+                    "allowed_devices_list": {"ui:widget": "list"},
+                    "deduplication_enabled": {"ui:widget": "radio"}
+                },
             }
         }
     )
@@ -242,11 +252,16 @@ async def test_register_integration_with_service_url_arg(
                             "type": "boolean"
                         }
                     },
+                    "definitions": {},
                     "required": [
                         "allowed_devices_list",
                         "deduplication_enabled"
                     ]
-                }
+                },
+                "ui_schema": {
+                    "allowed_devices_list": {"ui:widget": "list"},
+                    "deduplication_enabled": {"ui:widget": "radio"}
+                },
             }
         }
     )
@@ -327,11 +342,16 @@ async def test_register_integration_with_service_url_setting(
                             "type": "boolean"
                         }
                     },
+                    "definitions": {},
                     "required": [
                         "allowed_devices_list",
                         "deduplication_enabled"
                     ]
-                }
+                },
+                "ui_schema": {
+                    "allowed_devices_list": {"ui:widget": "list"},
+                    "deduplication_enabled": {"ui:widget": "radio"}
+                },
             }
         }
     )
