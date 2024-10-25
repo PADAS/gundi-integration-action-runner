@@ -1,8 +1,8 @@
-# gundi-integration-action-runner
-Template repo for integration in Gundi v2.
+# gundi-integration-inaturalist
+Gundi integration for iNaturalist.
 
 ## Usage
-- Fork this repo
+- ✅ Fork [https://github.com/PADAS/gundi-integration-action-runner](https://github.com/PADAS/gundi-integration-action-runner)
 - Implement your own actions in `actions/handlers.py`
 - Define configurations needed for your actions in `action/configurations.py`
 - Or implement a webhooks handler in `webhooks/handlers.py`
