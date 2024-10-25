@@ -212,7 +212,7 @@ class FieldInfoWithUIOptions(FieldInfo):
         super().__init__(*args, **kwargs)
 
     def ui_schema(self, *args, **kwargs):
-        """Generates a UI schema from model field ui_schema"""
+        """Generates a UI schema from model field ui_options"""
         if not self.ui_options:
             return {}
         ui_schema = {}

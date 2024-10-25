@@ -10,10 +10,6 @@ class ActionConfiguration(UISchemaModelMixin, BaseModel):
     pass
 
 
-class ExecutableActionMixin:
-    pass
-
-
 class PullActionConfiguration(ActionConfiguration):
     pass
 
