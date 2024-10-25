@@ -70,6 +70,7 @@ async def register_integration_in_gundi(gundi_client, type_slug=None, service_ur
             "value": f"{integration_type_slug}_webhook",
             "description": f"Webhook Integration with {integration_type_name}",
             "schema": json.loads(config_model.schema_json()),
+            "ui_schema": config_model.ui_schema(),
         }
 
     logger.info(f"Registering '{integration_type_slug}' with actions: '{actions}'")
