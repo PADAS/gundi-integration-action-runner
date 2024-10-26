@@ -16,8 +16,8 @@ class PullEventsConfig(PullActionConfiguration):
     distance: float = pydantic.Field(25, title="Distance",
         description="Distance in kilometers to search around.  Max: 50km.  Default: 25km.", ge=1, le=50)
     
-    num_days: int = pydantic.Field(2, title="Number of Days",
-        description = "Number of days of data to pull from eBird.  Default: 2")
+    num_days_default: int = pydantic.Field(2, title="Number of Days",
+        description = "Number of days of data to pull from eBird. If the integration state has a last_run parameter, this will be overriden by the number of days since the last run, rounded up to a whole day. Default: 2")
 
     region_code: Optional[str] = pydantic.Field('', title="Region Code",
         description="An eBird region code that should be used in the query.  Either a region code or a combination of latitude, longitude and distance should be included.")
@@ -42,7 +42,7 @@ class PullEventsConfig(PullActionConfiguration):
                     "latitude": 47.5218082,
                     "longitude": -122.3864506,
                     "distance": 30,
-                    "num_days": 1
+                    "num_days_default": 1
                 }
             ],
             "required": ["latitude", "longitude", "distance", "num_days"]

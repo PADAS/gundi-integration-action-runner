@@ -1,6 +1,7 @@
 import httpx
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
+from math import ceil
 from app.actions.configurations import AuthenticateConfig, PullEventsConfig
 from app.services.activity_logger import activity_logger
 from app.services.gundi import send_events_to_gundi
@@ -85,15 +86,24 @@ async def action_pull_events(integration:Integration, action_config: PullEventsC
     logger.info(f"Executing 'pull_events' action with integration {integration} and action_config {action_config}...")
 
     auth_config = get_auth_config(integration)
+    state = await state_manager.get_state(integration.id, "pull_events")
+    last_run = state.get('last_run')
+    num_days = None
+    now = datetime.now(tz=timezone.utc)
+    if(last_run):
+        last_run = datetime.datetime.strptime(last_run, '%Y-%m-%d %H:%M:%S%z')
+        num_days = ceil((now - last_run).total_seconds()/(60*60*24))
+        logging.info(f"Using state with last_run of {last_run.isoformat()} to load data for last {num_days} days.")
+    else:
+        num_days = action_config.num_days_default
 
     base_url = integration.base_url or EBIRD_API
 
     if(action_config.region_code):
         if((action_config.latitude and action_config.latitude != 0) or
            (action_config.longitude and action_config.longitude != 0)):
-            raise ConfigurationValidationError("If region code is included, latitude and longitude should be blank.")
-        
-        obs = _get_recent_observations_by_region(base_url, auth_config.api_key.get_secret_value(), action_config.num_days, 
+            raise ConfigurationValidationError("If region code is included, latitude and longitude should be blank.")        
+        obs = _get_recent_observations_by_region(base_url, auth_config.api_key.get_secret_value(), num_days, 
                                                  action_config.region_code, action_config.species_code,
                                                  action_config.include_provisional)
 
@@ -115,6 +125,9 @@ async def action_pull_events(integration:Integration, action_config: PullEventsC
     response = await send_events_to_gundi(
             events=to_send,
             integration_id=str(integration.id))
+
+    state = {"last_run": now.strftime('%Y-%m-%d %H:%M:%S%z')}
+    await state_manager.set_state(str(integration.id), "pull_events", state)
 
     return {'result': {'events_extracted': 0}}
 
