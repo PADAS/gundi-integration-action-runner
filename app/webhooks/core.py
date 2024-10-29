@@ -3,12 +3,11 @@ import inspect
 import json
 from typing import Optional, Union
 from pydantic import BaseModel
-from pydantic.fields import Field
 from fastapi.encoders import jsonable_encoder
-from app.services.utils import StructHexString
+from app.services.utils import StructHexString, UISchemaModelMixin, FieldWithUIOptions, UIOptions
 
 
-class WebhookConfiguration(BaseModel):
+class WebhookConfiguration(UISchemaModelMixin, BaseModel):
     class Config:
         extra = "allow"
 
@@ -19,19 +18,34 @@ class HexStringConfig(WebhookConfiguration):
 
 
 class DynamicSchemaConfig(WebhookConfiguration):
-    json_schema: dict
+    json_schema: dict = FieldWithUIOptions(
+        default={},
+        description="JSON Schema to validate the data.",
+        ui_options=UIOptions(
+            widget="textarea",  # ToDo: Use a better (custom) widget to render the JSON schema
+        )
+    )
 
 
-class JQTransformConfig(BaseModel):
-    jq_filter: str = Field(
+class JQTransformConfig(UISchemaModelMixin, BaseModel):
+    jq_filter: str = FieldWithUIOptions(
         default=".",
         description="JQ filter to transform JSON data.",
-        example=". | map(select(.isActive))"
+        example=". | map(select(.isActive))",
+        ui_options=UIOptions(
+            widget="textarea",  # ToDo: Use a better (custom) widget to render the JQ filter
+        )
     )
 
 
 class GenericJsonTransformConfig(JQTransformConfig, DynamicSchemaConfig):
-    output_type: str = Field(..., description="Output type for the transformed data: 'obv' or 'event'")
+    output_type: str = FieldWithUIOptions(
+        ...,
+        description="Output type for the transformed data: 'obv' or 'event'",
+        ui_options=UIOptions(
+            widget="text",  # ToDo: Use a select or a better widget to render the output type
+        )
+    )
 
 
 class GenericJsonTransformWithHexStrConfig(HexStringConfig, GenericJsonTransformConfig):
