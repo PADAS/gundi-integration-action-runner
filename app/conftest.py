@@ -169,13 +169,8 @@ def integration_v2_with_webhook():
             },
             "additional": {},
             "default_route": None,
-            "status": {
-                "id": "mockid-b16a-4dbd-ad32-197c58aeef59",
-                "is_healthy": True,
-                "details": "Last observation has been delivered with success.",
-                "observation_delivered_24hrs": 50231,
-                "last_observation_delivered_at": "2023-03-31T11:20:00+0200"
-            }
+            "status": "healthy",
+            "status_details": "",
         }
     )
 
@@ -472,13 +467,8 @@ def integration_v2_with_webhook_generic():
             },
             "additional": {},
             "default_route": None,
-            "status": {
-                "id": "mockid-b16a-4dbd-ad32-197c58aeef59",
-                "is_healthy": True,
-                "details": "Last observation has been delivered with success.",
-                "observation_delivered_24hrs": 50231,
-                "last_observation_delivered_at": "2023-03-31T11:20:00+0200"
-            }
+            "status": "healthy",
+            "status_details": "",
         }
     )
 
