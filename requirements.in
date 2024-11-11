@@ -1,1 +1,2 @@
 # Add your integration-specific dependencies here
+pyinaturalist==0.19

@@ -14,6 +14,7 @@ async def _get_gundi_api_key(integration_id):
 
 
 async def _get_sensors_api_client(integration_id):
+    assert integration_id, "integration_id is required"
     gundi_api_key = await _get_gundi_api_key(integration_id=integration_id)
     assert gundi_api_key, f"Cannot get a valid API Key for integration {integration_id}"
     sensors_api_client = GundiDataSenderClient(
@@ -45,11 +46,13 @@ async def send_events_to_gundi(events: List[dict], **kwargs) -> dict:
     :param kwargs: integration_id: The UUID of the related integration
     :return: A dict with the response from the API
     """
-    integration_id = kwargs.get("integration_id")
-    assert integration_id, "integration_id is required"
-    sensors_api_client = await _get_sensors_api_client(integration_id=str(integration_id))
+    sensors_api_client = await _get_sensors_api_client(kwargs.get("integration_id"))
     return await sensors_api_client.post_events(data=events)
 
+@stamina.retry(on=httpx.HTTPError, wait_initial=1.0, wait_jitter=5.0, wait_max=32.0)
+async def update_event_in_gundi(event_id:str, event: dict, **kwargs) -> dict:
+    sensors_api_client = await _get_sensors_api_client(kwargs.get("integration_id"))
+    return await sensors_api_client.update_event(event_id = event_id, data=event)
 
 @stamina.retry(on=httpx.HTTPError, wait_initial=1.0, wait_jitter=5.0, wait_max=32.0)
 async def send_event_attachments_to_gundi(event_id: str, attachments: List[tuple], **kwargs) -> dict:
@@ -63,9 +66,7 @@ async def send_event_attachments_to_gundi(event_id: str, attachments: List[tuple
     :param kwargs: integration_id: The UUID of the related integration
     :return: A dict with the response from the API
     """
-    integration_id = kwargs.get("integration_id")
-    assert integration_id, "integration_id is required"
-    sensors_api_client = await _get_sensors_api_client(integration_id=str(integration_id))
+    sensors_api_client = await _get_sensors_api_client(kwargs.get("integration_id"))
     return await sensors_api_client.post_event_attachments(event_id=event_id, attachments=attachments)
 
 
@@ -93,7 +94,5 @@ async def send_observations_to_gundi(observations: List[dict], **kwargs) -> dict
     :param kwargs: integration_id: The UUID of the related integration
     :return: A dict with the response from the API
     """
-    integration_id = kwargs.get("integration_id")
-    assert integration_id, "integration_id is required"
-    sensors_api_client = await _get_sensors_api_client(integration_id=str(integration_id))
+    sensors_api_client = await _get_sensors_api_client(kwargs.get("integration_id"))
     return await sensors_api_client.post_observations(data=observations)
