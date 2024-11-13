@@ -12,7 +12,9 @@ from gundi_core.schemas.v2 import Integration
 from pyinaturalist import get_observations, Observation, Annotation
 from pydantic import BaseModel, parse_obj_as
 from typing import Dict, List, Optional
-from urllib.parse import urlparse, urlretrieve
+from urllib.parse import urlparse
+from urllib.request import urlretrieve
+
 import re
 
 logger = logging.getLogger(__name__)
