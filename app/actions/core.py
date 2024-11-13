@@ -26,6 +26,10 @@ class GenericActionConfiguration(ActionConfiguration):
     pass
 
 
+class ExecutableActionMixin:
+    pass
+
+
 def discover_actions(module_name, prefix):
     action_handlers = {}
 
