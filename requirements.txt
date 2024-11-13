@@ -69,7 +69,7 @@ gcloud-aio-pubsub==6.0.1
     # via -r requirements-base.in
 gundi-client-v2==2.3.8
     # via -r requirements-base.in
-gundi-core==1.5.9
+gundi-core==1.7.1
     # via
     #   -r requirements-base.in
     #   gundi-client-v2
@@ -164,6 +164,8 @@ python-dotenv==1.0.1
     # via environs
 python-forge==18.6.0
     # via pyinaturalist
+python-json-logger==2.0.7
+    # via -r requirements-base.in
 redis==5.0.8
     # via -r requirements-base.in
 requests==2.32.3
