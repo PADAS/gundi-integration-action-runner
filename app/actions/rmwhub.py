@@ -1,7 +1,9 @@
+from typing import List, Set, Tuple
 from datetime import datetime, timedelta
 import pydantic
 import requests
 import os
+from .configurations import PullRmwHubObservationsConfiguration
 from dotenv import load_dotenv
 
 
@@ -9,16 +11,16 @@ class RmwUpdates(pydantic.BaseModel):
     sets: List[Set]
 
 
-class Set(pydantic.BaseModel):
-    set_id: string
-    deployment_type: string
-    traps: List[Trap]
-
-
 class Trap(pydantic.BaseModel):
     sequence: int
     latitude: float
     longitude: float
+
+
+class Set(pydantic.BaseModel):
+    set_id: str
+    deployment_type: str
+    traps: List[Trap]
 
 
 HEADERS = {"accept": "application/json", "Content-Type": "application/json"}
@@ -33,7 +35,7 @@ class RmwHubAdapter:
     def download_data(
         self,
         action_config: PullRmwHubObservationsConfiguration,
-        start_datetime_str: string,
+        start_datetime_str: str,
     ) -> Tuple[RmwUpdates, List]:
         """
         Downloads data from the RMW Hub API using the search_others endpoint.

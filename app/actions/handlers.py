@@ -4,9 +4,8 @@ from app.services.gundi import send_observations_to_gundi
 from gundi_core.events import LogLevel
 from .configurations import PullRmwHubObservationsConfiguration
 
-from rmwhub import RmwHubAdapter
+from .rmwhub import RmwHubAdapter
 
-import requests
 from datetime import datetime, timedelta
 
 

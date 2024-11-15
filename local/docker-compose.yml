@@ -1,0 +1,43 @@
+version: '3.9'
+
+services:
+  redis:
+    image: redis:latest
+    container_name: redis_server
+    ports:
+      - "6379:6379"
+
+  pubsub_emulator:
+    image: google/cloud-sdk:latest
+    container_name: pubsub_emulator
+    entrypoint: ["gcloud", "beta", "emulators", "pubsub", "start", "--project=local-project", "--host-port=0.0.0.0:8085"]
+    environment:
+      PUBSUB_PROJECT_ID: local-project
+      PUBSUB_EMULATOR_HOST: pubsub_emulator:8085
+    ports:
+      - "8085:8085"
+
+  pubsub_topic_initializer:
+      image: curlimages/curl:latest
+      container_name: pubsub_topic_initializer
+      depends_on:
+        - pubsub_emulator
+      entrypoint: ["sh", "-c"]
+      command: ["until curl -X PUT http://pubsub_emulator:8085/v1/projects/local-project/topics/integration-events; do sleep 2; done"]
+
+  fastapi:
+    build:
+      context: ..
+      dockerfile: local/Dockerfile
+    container_name: fastapi_server
+    ports:
+      - "8080:8080"
+      - "5678:5678"
+    volumes:
+      - ../app:/code/app
+    env_file:
+      - path: "../.env.local"
+        required: true
+    depends_on:
+      - redis
+      - pubsub_emulator
