@@ -13,15 +13,20 @@ from .rmwhub import RmwHubAdapter
 
 logger = logging.getLogger(__name__)
 
-async def action_auth(integration:Integration, action_config: AuthenticateConfig):
-    logger.info(f"Executing auth action with integration {integration} and action_config {action_config}...")
+
+async def action_auth(integration: Integration, action_config: AuthenticateConfig):
+    logger.info(
+        f"Executing auth action with integration {integration} and action_config {action_config}..."
+    )
 
     # TODO: Do something to validate the API Key against rmwHUB APIs.
 
     api_key_is_valid = action_config.api_key is not None
 
-    return {"valid_credentials": api_key_is_valid, "some_message": "something informative."}
-        
+    return {
+        "valid_credentials": api_key_is_valid,
+        "some_message": "something informative.",
+    }
 
 
 @activity_logger()
@@ -54,7 +59,8 @@ async def action_pull_observations(
     )
 
     observations = rmw_adapter.process_updates(updates)
-    rmw_adapter.process_deletes(deletes)  # TODO: Is it ok to process deletes here?
+    # TODO: Implement process_deletes
+    # rmw_adapter.process_deletes(deletes)
 
     # Send the extracted data to Gundi
     await send_observations_to_gundi(
@@ -62,4 +68,4 @@ async def action_pull_observations(
     )
 
     # The result will be recorded in the portal if using the activity_logger decorator
-    return {"observations_extracted": 10}
+    return {"observations_extracted": len(observations)}
