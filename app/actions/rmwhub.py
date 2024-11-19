@@ -84,7 +84,7 @@ class RmwHubAdapter:
                     {
                         "last_updated": "",
                         "device_id": subject_name + "_" + str(trap.get("sequence")),
-                        "label": "a",
+                        "label": "a" if trap.get("sequence") == 0 else "b",
                         "location": {
                             "latitude": trap.get("latitude"),
                             "longitude": trap.get("longitude"),
