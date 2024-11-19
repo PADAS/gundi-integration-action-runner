@@ -14,6 +14,10 @@ class PullActionConfiguration(ActionConfiguration):
     pass
 
 
+class ExecutableActionMixin:
+    pass
+
+
 class PushActionConfiguration(ActionConfiguration):
     pass
 
