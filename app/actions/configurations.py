@@ -27,6 +27,9 @@ class PullEventsConfig(PullActionConfiguration):
     taxa: Optional[List[str]] = pydantic.Field(title = "Taxa IDs", 
         description="List of iNaturalist taxa IDs for which to load observations.")
     
+    quality_grade: Optional[List[str]] = pydantic.Field(title = "Quality Grade",
+        description = "If present, only observations that have one of the entered quality grades will be included.  As of November, 2024, valid iNaturalist values are casual, needs_id and/or research.")
+
     annotations: Optional[str] = pydantic.Field(title = "Annotations",
         description='Map of annotation terms and the values which to include.  For example, {"22": ["24", "25"], "1": ["2"]} would only include observations of Adults (annotation 1 == 2) that had the Evidence of Presence annotation (22) set to Organism (24) or Scat (25).  Entries in the Dict are treated as ORs, whereas values in the Lists are treated as ANDs.')
 
