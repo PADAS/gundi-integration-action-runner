@@ -1,7 +1,6 @@
-import asyncio
 import json
 from typing import List
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from gql import gql, Client
 from gql.transport.httpx import HTTPXAsyncTransport
 import httpx
@@ -125,13 +124,3 @@ async def get_asset_history(unit_id: str, start_time: datetime, end_time: dateti
             return HistoryResult(**r.json())
         else:
             return None
-
-if __name__ == "__main__":
-    auth_result = asyncio.run(authenticate("***REMOVED***", "***REMOVED***"))
-    # print(val)
-
-    assets = asyncio.run(get_assets(auth_result.users[0].user_id))
-    end_date = datetime.now(tz=timezone.utc)
-    val = asyncio.run(get_asset_history(int(assets.userAssets[0].unit_id), end_date - timedelta(minutes=20), end_date))
-    
-    print(val.json(indent=2))
