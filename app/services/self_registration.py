@@ -5,7 +5,7 @@ import logging
 import stamina
 import httpx
 
-from app.actions import action_handlers, AuthActionConfiguration, PullActionConfiguration, PushActionConfiguration
+from app.actions import action_handlers, AuthActionConfiguration, PullActionConfiguration, PushActionConfiguration, ExecutableActionMixin
 from app.settings import INTEGRATION_TYPE_SLUG, INTEGRATION_SERVICE_URL
 from .core import ActionTypeEnum
 from app.webhooks.core import get_webhook_handler, GenericJsonTransformConfig
@@ -45,6 +45,10 @@ async def register_integration_in_gundi(gundi_client, type_slug=None, service_ur
             action_type = ActionTypeEnum.PUSH_DATA.value
         else:
             action_type = ActionTypeEnum.GENERIC.value
+
+        if issubclass(config_model, ExecutableActionMixin):
+            action_schema["is_executable"] = True
+            
         actions.append(
             {
                 "type": action_type,

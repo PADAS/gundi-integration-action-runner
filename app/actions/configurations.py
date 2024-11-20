@@ -10,5 +10,5 @@ class AuthenticateConfig(AuthActionConfiguration, ExecutableActionMixin):
                                 format="password")
 
 
-class PullEventsConfig(PullActionConfiguration, ExecutableActionMixin):
+class PullEventsConfig(PullActionConfiguration):
     pass
