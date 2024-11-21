@@ -54,17 +54,12 @@ def get_inaturalist_observations(integration: Integration, config: PullEventsCon
         target_taxa.append(str(taxa))
     target_taxa = ",".join(target_taxa)
 
-    quality_grade = []
-    for qg in config.quality_grade:
-        quality_grade.append(str(qg))
-    quality_grade = ",".join(quality_grade)
-
     fields = ",".join(["observed_on", "created_at", "id", "captive", "obscured", "place_guess", "quality_grade", "species_guess", "updated_at", 
                        "uri", "photos", "user", "location", "place_ids", "taxon", "photos.large_url", "photos.url", "taxon.id", "taxon.rank", "taxon.name",
                        "taxon.preferred_common_name", "taxon.wikipedia_url", "taxon.conservation_status", "user.id", "user.name", "user.login",
                        "annotations.controlled_attribute_id", "annotations.controlled_value_id"])
 
-    inat_count_req = get_observations_v2(page = 1, per_page = 0, updated_since = since, project_id = config.projects, quality_grade = quality_grade,
+    inat_count_req = get_observations_v2(page = 1, per_page = 0, updated_since = since, project_id = config.projects, quality_grade = config.quality_grade,
                                       taxon_id=target_taxa, nelat = float(nelat), nelng = float(nelng), swlat = float(swlat), swlng = float(swlng),
                                       order_by = "updated_at", order="asc")
 
@@ -76,7 +71,7 @@ def get_inaturalist_observations(integration: Integration, config: PullEventsCon
         logger.debug(f"Loading page {page} of {pages} from iNaturalist")
 
         response = get_observations_v2(page = page, per_page = 200, updated_since = since, project_id = config.projects,
-                                       quality_grade = quality_grade, taxon_id = target_taxa,
+                                       quality_grade = config.quality_grade, taxon_id = target_taxa,
                                        nelat = nelat, nelng = nelng, swlat = swlat, swlng = swlng,
                                        order_by = 'updated_at', order="asc", fields=fields)
 
