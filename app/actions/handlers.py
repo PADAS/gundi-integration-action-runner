@@ -6,10 +6,9 @@ from app.services.activity_logger import activity_logger, log_activity
 from app.services.gundi import send_observations_to_gundi
 from gundi_core.events import LogLevel
 from gundi_core.schemas.v2 import Integration
+
 from .configurations import PullRmwHubObservationsConfiguration, AuthenticateConfig
-
 from .rmwhub import RmwHubAdapter
-
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +44,9 @@ async def action_pull_observations(
     )
     end_datetime_str = end_datetime.strftime("%Y-%m-%d %H:%M:%S")
 
-    rmw_adapter = RmwHubAdapter()
+    rmw_adapter = RmwHubAdapter(
+        action_config.api_key.get_secret_value(), action_config.rmw_url
+    )
     updates, deletes = rmw_adapter.download_data(action_config, start_datetime_str)
 
     # Optionally, log a custom messages to be shown in the portal
@@ -66,6 +67,9 @@ async def action_pull_observations(
     await send_observations_to_gundi(
         observations=observations, integration_id=integration.id
     )
+
+    # Patch subject status
+    # TODO: Get ER_subjects by name and patch statuses for existing subjects
 
     # The result will be recorded in the portal if using the activity_logger decorator
     return {"observations_extracted": len(observations)}

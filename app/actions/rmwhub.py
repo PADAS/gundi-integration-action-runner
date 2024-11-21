@@ -1,6 +1,7 @@
 from typing import List, Set, Tuple
 from datetime import datetime, timedelta
 import hashlib
+import json
 import pydantic
 import requests
 import os
@@ -28,10 +29,9 @@ HEADERS = {"accept": "application/json", "Content-Type": "application/json"}
 
 
 class RmwHubAdapter:
-    def __init__(self):
-        load_dotenv()
-        self.RMW_URL = os.getenv("RMW_URL")
-        self.API_KEY = os.getenv("RMW_API_KEY")
+    def __init__(self, api_key: str, rmw_url: str):
+        self.api_key = api_key
+        self.rmw_url = rmw_url
 
     def download_data(
         self,
@@ -45,7 +45,7 @@ class RmwHubAdapter:
 
         data = {
             "format_version": 0.1,
-            "api_key": self.API_KEY,
+            "api_key": self.api_key,
             "start_datetime_utc": start_datetime_str,
             "from_latitude": -90,
             "to_latitude": 90,
@@ -54,35 +54,45 @@ class RmwHubAdapter:
             "include_own": False,
         }
 
-        response = requests.post(self.RMW_URL, headers=HEADERS, json=data)
+        response = requests.post(self.rmw_url, headers=HEADERS, json=data)
 
-        updates = RmwUpdates(response.json()["updates"]["sets"])
-        deletes = response.json()["deletes"]["sets"]
+        if response.status_code != 200:
+            logger.error(
+                f"Failed to download data from RMW Hub API. Error: {response.status_code} - {response.text}"
+            )
+
+        response_json = json.loads(response.text)
+        updates = response_json["updates"]["sets"]
+        deletes = response_json["deletes"]["sets"]
 
         return updates, deletes
 
-    def process_updates(updates: RmwUpdates) -> List:
+    def process_updates(self, updates: RmwUpdates) -> List:
         """
         Process the updates from the RMW Hub API.
         """
 
         # Normalize the extracted data into a list of observations following to the Gundi schema:
+        # TODO: Determine if gearset is already in DB (implement sync function)
         observations = []
         source_type = "ropeless_buoy"
         subject_subtype = "ropeless_buoy_device"
         event_type = "gear_deployed"
+        last_updated = datetime.now().isoformat()
 
         # Create observations
         for update in updates:
-            display_id_hash = hashlib.sha256(str(device_uuid).encode()).hexdigest()[:12]
-            subject_name = "device_" + update.get("set_id")
+            display_id_hash = hashlib.sha256(
+                str(update.get("set_id")).encode()
+            ).hexdigest()[:12]
+            subject_name = "rmwhub_" + update.get("set_id")
 
             # Create devices string
             devices = []
             for trap in update.get("traps"):
                 devices.append(
                     {
-                        "last_updated": "",
+                        "last_updated": last_updated,
                         "device_id": subject_name + "_" + str(trap.get("sequence")),
                         "label": "a" if trap.get("sequence") == 0 else "b",
                         "location": {
@@ -97,11 +107,11 @@ class RmwHubAdapter:
             longitude = update.get("traps")[0].get("longitude")
             observations.append(
                 {
-                    "manufacurer_id": "rmwhub_" + update.get("set_id") + "_0",
+                    "manufacturer_id": "rmwhub_" + update.get("set_id") + "_0",
                     "source_type": source_type,
                     "subject_name": subject_name,
                     "subject_sub_type": subject_subtype,
-                    "recorded_at": "",
+                    "recorded_at": last_updated,
                     "location": {"lat": latitude, "lon": longitude},
                     "additional": {
                         "radio_state": "online-gps",
@@ -113,20 +123,17 @@ class RmwHubAdapter:
                 }
             )
 
-            # Patch subject status
-            # TODO: Get ER_subject by name and patch status
-
             if update.get("deployment_type") == "trawl":
                 subject_name = subject_name + "_1"
                 latitude = update.get("traps")[1].get("latitude")
                 longitude = update.get("traps")[1].get("longitude")
                 observations.append(
                     {
-                        "manufacurer_id": "rmwhub_" + update.get("set_id") + "_1",
+                        "manufacturer_id": "rmwhub_" + update.get("set_id") + "_1",
                         "source_type": source_type,
                         "subject_name": subject_name,
                         "subject_sub_type": subject_subtype,
-                        "recorded_at": "",
+                        "recorded_at": last_updated,
                         "location": {"lat": latitude, "lon": longitude},
                         "additional": {
                             "radio_state": "online-gps",
@@ -138,12 +145,11 @@ class RmwHubAdapter:
                     }
                 )
 
-                # Patch subject status
-                # TODO: Get ER_subject by name and patch status
+                # TODO; Write trawl line event to ER, not required for beta
 
         return observations
 
-    def process_deletes(deletes):
+    def process_deletes(self, deletes):
         """
         Process the deletes from the RMW Hub API.
         """
