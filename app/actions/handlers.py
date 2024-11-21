@@ -47,7 +47,7 @@ def get_inaturalist_observations(integration: Integration, config: PullEventsCon
 
     nelat = nelng = swlat = swlng = None
     if(config.bounding_box):
-        nelat, nelng, swlat, swlng = json.loads(config.bounding_box)
+        nelat, nelng, swlat, swlng = config.bounding_box
 
     target_taxa = []
     for taxa in config.taxa:
