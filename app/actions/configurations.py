@@ -58,14 +58,33 @@ class PullEventsConfig(PullActionConfiguration):
     def validate_bounding_box(cls, v):
         if(not v):
             raise ValueError("Did not receive a bounding box configuration.")
-        coords = json.loads(v)
-        if(len(coords) != 4):
+        v = json.loads(v)
+        if(len(v) != 4):
             raise ValueError("Did not receive four values in bounding box configuration.")
-        for coord in coords:
+        for i in range(0,4):
             try:
-                float(coord)
+                v[i] = float(v[i])
             except:
                 raise ValueError(f"Could not parse bounding box values {v}.")
+
+        if(v[0] < -90 or v[0] > 90):
+            raise ValueError(f"NE Latitude {v[0]} must be between -90 and 90")
+
+        if(v[1] < -180 or v[1] > 180):
+            raise ValueError(f"NE Longitude {v[1]} must be between -180 and 180")
+        
+        if(v[2] < -90 or v[2] > 90):
+            raise ValueError(f"SW Latitude {v[2]} must be between -90 and 90")
+
+        if(v[3] < -180 or v[3] > 180):
+            raise ValueError(f"SW Longitude {v[2]} must be between -180 and 180")
+        
+        if(v[0] <= v[2]):
+            raise ValueError(f"NE Latitude {v[0]} must be greater than SW Latitude {v[2]}")
+        
+        if(v[1] <= v[3]):
+            raise ValueError(f"NE Longitude {v[1]} must be greater than SW Longitude {v[2]}")
+        
         return v
 
     class Config:
