@@ -47,7 +47,11 @@ async def action_pull_observations(
     rmw_adapter = RmwHubAdapter(
         action_config.api_key.get_secret_value(), action_config.rmw_url
     )
-    updates, deletes = rmw_adapter.download_data(action_config, start_datetime_str)
+
+    logger.info(
+        f"Downloading data from RMW Hub API...For the dates: {start_datetime_str} - {end_datetime_str}"
+    )
+    updates, deletes = rmw_adapter.download_data(start_datetime_str)
 
     # Optionally, log a custom messages to be shown in the portal
     await log_activity(
@@ -59,13 +63,17 @@ async def action_pull_observations(
         config_data=action_config.dict(),
     )
 
+    logger.info(
+        f"Processing updates from RMW Hub API...Number of updates: {len(updates)}, Number of deletes: {len(deletes)}"
+    )
     observations = rmw_adapter.process_updates(updates)
     # TODO: Implement process_deletes
     # rmw_adapter.process_deletes(deletes)
 
     # Send the extracted data to Gundi
+    logger.info(f"Sending {len(observations)} observations to Gundi...")
     await send_observations_to_gundi(
-        observations=observations, integration_id=integration.id
+        observations=observations, integration_id=str(integration.id)
     )
 
     # Patch subject status

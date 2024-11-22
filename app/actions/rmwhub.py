@@ -25,17 +25,12 @@ class Set(pydantic.BaseModel):
     traps: List[Trap]
 
 
-HEADERS = {"accept": "application/json", "Content-Type": "application/json"}
-
-
 class RmwHubAdapter:
     def __init__(self, api_key: str, rmw_url: str):
-        self.api_key = api_key
-        self.rmw_url = rmw_url
+        self.rmw_client = RmwHubClient(api_key, rmw_url)
 
     def download_data(
         self,
-        action_config: PullRmwHubObservationsConfiguration,
         start_datetime_str: str,
     ) -> Tuple[RmwUpdates, List]:
         """
@@ -43,25 +38,9 @@ class RmwHubAdapter:
         ref: https://ropeless.network/api/docs#/Download
         """
 
-        data = {
-            "format_version": 0.1,
-            "api_key": self.api_key,
-            "start_datetime_utc": start_datetime_str,
-            "from_latitude": -90,
-            "to_latitude": 90,
-            "from_longitude": -180,
-            "to_longitude": 180,
-            "include_own": False,
-        }
+        response = self.rmw_client.search_others(start_datetime_str)
+        response_json = json.loads(response)
 
-        response = requests.post(self.rmw_url, headers=HEADERS, json=data)
-
-        if response.status_code != 200:
-            logger.error(
-                f"Failed to download data from RMW Hub API. Error: {response.status_code} - {response.text}"
-            )
-
-        response_json = json.loads(response.text)
         updates = response_json["updates"]["sets"]
         deletes = response_json["deletes"]["sets"]
 
@@ -107,14 +86,14 @@ class RmwHubAdapter:
             longitude = update.get("traps")[0].get("longitude")
             observations.append(
                 {
-                    "manufacturer_id": "rmwhub_" + update.get("set_id") + "_0",
-                    "source_type": source_type,
-                    "subject_name": subject_name,
-                    "subject_sub_type": subject_subtype,
+                    "name": update.get("set_id"),
+                    "source": "rmwhub_" + update.get("set_id") + "_0",
+                    "type": source_type,
+                    "subject_type": subject_subtype,
                     "recorded_at": last_updated,
                     "location": {"lat": latitude, "lon": longitude},
                     "additional": {
-                        "radio_state": "online-gps",
+                        "subject_name": subject_name,
                         "rmwHub_id": update.get("set_id"),
                         "display_id": display_id_hash,
                         "event_type": event_type,
@@ -129,14 +108,14 @@ class RmwHubAdapter:
                 longitude = update.get("traps")[1].get("longitude")
                 observations.append(
                     {
-                        "manufacturer_id": "rmwhub_" + update.get("set_id") + "_1",
-                        "source_type": source_type,
-                        "subject_name": subject_name,
-                        "subject_sub_type": subject_subtype,
+                        "name": update.get("set_id"),
+                        "source": "rmwhub_" + update.get("set_id") + "_1",
+                        "type": source_type,
+                        "subject_type": subject_subtype,
                         "recorded_at": last_updated,
                         "location": {"lat": latitude, "lon": longitude},
                         "additional": {
-                            "radio_state": "online-gps",
+                            "subject_name": subject_name,
                             "rmwHub_id": update.get("set_id"),
                             "display_id": display_id_hash,
                             "event_type": event_type,
@@ -163,3 +142,37 @@ class RmwHubAdapter:
 
     def sync_data():
         pass
+
+
+class RmwHubClient:
+    HEADERS = {"accept": "application/json", "Content-Type": "application/json"}
+
+    def __init__(self, api_key: str, rmw_url: str):
+        self.api_key = api_key
+        self.rmw_url = rmw_url
+
+    def search_others(self, start_datetime_str: str) -> dict:
+        """
+        Downloads data from the RMW Hub API using the search_others endpoint.
+        ref: https://ropeless.network/api/docs#/Download
+        """
+
+        data = {
+            "format_version": 0.1,
+            "api_key": self.api_key,
+            "start_datetime_utc": start_datetime_str,
+            "from_latitude": -90,
+            "to_latitude": 90,
+            "from_longitude": -180,
+            "to_longitude": 180,
+            "include_own": False,
+        }
+
+        response = requests.post(self.rmw_url, headers=RmwHubClient.HEADERS, json=data)
+
+        if response.status_code != 200:
+            logger.error(
+                f"Failed to download data from RMW Hub API. Error: {response.status_code} - {response.text}"
+            )
+
+        return response.text
