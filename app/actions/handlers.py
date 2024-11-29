@@ -26,30 +26,38 @@ async def action_fetch_samples(integration, action_config: PullObservationsConfi
             [
             {
                 "object_id": "75848f54-312d-4e4b-a931-546880931f68",
-                "created_at": "2024-11-28T12:52:12.825176Z",
-                "updated_at": None
+                "location":{
+                    "lat":27.192358,
+                    "lon":13.273482
+                }
             },
             {
                 "object_id": "34236d0f-b02d-4bef-bb89-a7bb3bfafa97",
-                "created_at": "2024-11-28T12:52:12.825252Z",
-                "updated_at": None
+                "location":{
+                    "lat":55.847321,
+                    "lon":72.120293
+                }
             },
             {
                 "object_id": "41c7d231-7cf9-428f-8699-000723361e85",
-                "created_at": "2024-11-28T12:52:12.825284Z",
-                "updated_at": None
+                "location":{
+                    "lat":31.847263,
+                    "lon":44.758383
+                }
             },
             {
                 "object_id": "fe01afd6-3c18-487b-8359-6ad109ca4043",
-                "created_at": "2024-11-28T12:52:12.825316Z",
-                "updated_at": None
+                "location":{
+                    "lat":29.925873,
+                    "lon":75.473293
+                }
             }]
         ]
     }
     if action_config.password == "valid_password" and action_config.username == "valid_username":
         return {
             "observations_extracted": len(vehicles),
-            "observations": [json.loads(vehicle.json()) for vehicle in vehicles]
+            "observations": [vehicle for vehicle in vehicles]
         }
     else:
         return {"valid_credentials": False}
