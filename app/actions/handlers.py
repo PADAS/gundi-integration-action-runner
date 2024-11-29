@@ -27,22 +27,22 @@ async def action_fetch_samples(integration, action_config: PullObservationsConfi
             {
                 "object_id": "75848f54-312d-4e4b-a931-546880931f68",
                 "created_at": "2024-11-28T12:52:12.825176Z",
-                "updated_at": null
+                "updated_at": None
             },
             {
                 "object_id": "34236d0f-b02d-4bef-bb89-a7bb3bfafa97",
                 "created_at": "2024-11-28T12:52:12.825252Z",
-                "updated_at": null
+                "updated_at": None
             },
             {
                 "object_id": "41c7d231-7cf9-428f-8699-000723361e85",
                 "created_at": "2024-11-28T12:52:12.825284Z",
-                "updated_at": null
+                "updated_at": None
             },
             {
                 "object_id": "fe01afd6-3c18-487b-8359-6ad109ca4043",
                 "created_at": "2024-11-28T12:52:12.825316Z",
-                "updated_at": null
+                "updated_at": None
             }]
         ]
     }
