@@ -1,29 +1,46 @@
-from typing import List, Set, Tuple
-from datetime import datetime, timedelta
+import logging
+from typing import List, Tuple
+from datetime import datetime
 import hashlib
 import json
 import pydantic
 import requests
-import os
-from .configurations import PullRmwHubObservationsConfiguration
-from dotenv import load_dotenv
 
-
-class RmwUpdates(pydantic.BaseModel):
-    sets: List[Set]
-
+logger = logging.getLogger(__name__)
 
 class Trap(pydantic.BaseModel):
     sequence: int
     latitude: float
     longitude: float
+    
+    def __getitem__(self, key):
+        return getattr(self, key)
+    
+    def get(self, key):
+        return self.__getitem__(key)
+    
+    def __hash__(self):
+        return hash((self.sequence, self.latitude, self.longitude))
 
 
-class Set(pydantic.BaseModel):
+class GearSet(pydantic.BaseModel):
     set_id: str
     deployment_type: str
     traps: List[Trap]
+    
+    def __getitem__(self, key):
+        return getattr(self, key)
+    
+    def get(self, key):
+        return self.__getitem__(key)
+    
+    def __hash__(self):
+        return hash((self.set_id, self.deployment_type, tuple(self.traps)))
 
+
+class RmwUpdates(pydantic.BaseModel):
+    sets: List[GearSet]
+    
 
 class RmwHubAdapter:
     def __init__(self, api_key: str, rmw_url: str):
@@ -37,7 +54,7 @@ class RmwHubAdapter:
         Downloads data from the RMW Hub API using the search_others endpoint.
         ref: https://ropeless.network/api/docs#/Download
         """
-
+        
         response = self.rmw_client.search_others(start_datetime_str)
         response_json = json.loads(response)
 
@@ -156,7 +173,7 @@ class RmwHubClient:
         Downloads data from the RMW Hub API using the search_others endpoint.
         ref: https://ropeless.network/api/docs#/Download
         """
-
+        
         data = {
             "format_version": 0.1,
             "api_key": self.api_key,

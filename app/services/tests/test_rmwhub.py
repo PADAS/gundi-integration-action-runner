@@ -1,5 +1,6 @@
+from datetime import datetime
+import json
 import pytest
-from unittest.mock import patch
 
 
 @pytest.mark.asyncio
@@ -9,10 +10,9 @@ async def test_rmwhub_download_data(mocker, mock_rmwhub_response, a_good_configu
     """
 
     # Setup mock_rmwhub_client
-    mock_rmwclient_search_others = mocker.patch("rmwhub.RmwHubClient.search_others")
-    mock_rmwclient_search_others.return_value = mock_rmwhub_response
+    mocker.patch("app.actions.rmwhub.RmwHubClient.search_others", return_value=json.dumps(mock_rmwhub_response))
 
-    from rmwhub import RmwHubAdapter
+    from app.actions.rmwhub import RmwHubAdapter
 
     rmwadapter = RmwHubAdapter(
         a_good_configuration.api_key, a_good_configuration.rmw_url
@@ -22,18 +22,18 @@ async def test_rmwhub_download_data(mocker, mock_rmwhub_response, a_good_configu
     assert len(updates) == 5
     assert len(deletes) == 5
 
-
-async def test_rmwhub_process_updates(mocker, mock_rmw_items, mock_rmw_observations):
+@pytest.mark.asyncio
+async def test_rmwhub_process_updates(mock_rmwhub_items, a_good_configuration):
     """
     Test rmwhub.process_updates
     """
 
-    from rmwhub import RmwHubAdapter
+    from app.actions.rmwhub import RmwHubAdapter
 
     rmwadapter = RmwHubAdapter(
         a_good_configuration.api_key, a_good_configuration.rmw_url
     )
-    updates, deletes = mock_rmw_items
+    updates, _ = mock_rmwhub_items
     observations = rmwadapter.process_updates(updates)
 
-    assert len(observation) == 7
+    assert len(observations) == 7

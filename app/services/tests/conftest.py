@@ -1,10 +1,9 @@
 import pytest
 
-from datetime import datetime, timedelta, timezone
-import json
-
+from app.actions.configurations import PullRmwHubObservationsConfiguration
+from app.actions.rmwhub import GearSet, Trap
 from ropeless_utils import State
-from cdip_connector.core.schemas import GeoEvent, Location, IntegrationInformation
+from gundi_core.schemas import IntegrationInformation
 
 # TODO: Add a fixture for testing the RmwHubAdapter
 
@@ -66,10 +65,10 @@ def an_integration_without_er_buoy_config(a_state_without_er_buoy_config):
 
 @pytest.fixture
 def a_good_configuration():
-    return {
-        "api_key": "anApiKey",
-        "rmw_url": "https://somermwhub.url",
-    }
+    return PullRmwHubObservationsConfiguration(
+        api_key="anApiKey",
+        rmw_url="https://somermwhub.url"
+    )
 
 
 @pytest.fixture
@@ -78,14 +77,14 @@ def mock_rmwhub_response():
         "format_version": 0.1,
         "as_of_utc": "2024-11-06T20:53:21Z",
         "updates": {
-            "description": 'New or changed locations of "others" gear',
+            "description": "New or changed locations of \"others\" gear",
             "sets": [
                 {
                     "set_id": "test_set_id_0",
                     "deployment_type": "single",
                     "traps": [
                         {"sequence": 0, "latitude": -5.19816, "longitude": 122.8113}
-                    ],
+                    ]
                 },
                 {
                     "set_id": "test_set_id_1",
@@ -94,14 +93,14 @@ def mock_rmwhub_response():
                         {
                             "sequence": 0,
                             "latitude": 41.2576527,
-                            "longitude": -71.2768455,
+                            "longitude": -71.2768455
                         },
                         {
                             "sequence": 1,
                             "latitude": 41.2544098,
-                            "longitude": -71.2793166,
-                        },
-                    ],
+                            "longitude": -71.2793166
+                        }
+                    ]
                 },
                 {
                     "set_id": "test_set_id_2",
@@ -110,9 +109,9 @@ def mock_rmwhub_response():
                         {
                             "sequence": 0,
                             "latitude": 41.3830183,
-                            "longitude": -71.5085983,
+                            "longitude": -71.5085983
                         }
-                    ],
+                    ]
                 },
                 {
                     "set_id": "test_set_id_3",
@@ -121,9 +120,9 @@ def mock_rmwhub_response():
                         {
                             "sequence": 0,
                             "latitude": 41.3830183,
-                            "longitude": -71.5085983,
+                            "longitude": -71.5085983
                         }
-                    ],
+                    ]
                 },
                 {
                     "set_id": "test_set_id_4",
@@ -132,16 +131,16 @@ def mock_rmwhub_response():
                         {
                             "sequence": 0,
                             "latitude": 41.1966817,
-                            "longitude": -71.3199314,
+                            "longitude": -71.3199314
                         },
                         {
                             "sequence": 1,
                             "latitude": 41.193145,
-                            "longitude": -71.3223467,
-                        },
-                    ],
-                },
-            ],
+                            "longitude": -71.3223467
+                        }
+                    ]
+                }
+            ]
         },
         "deletes": {
             "sets": [
@@ -149,50 +148,48 @@ def mock_rmwhub_response():
                 {"set_id": "test_delete_set_id_2"},
                 {"set_id": "test_delete_set_id_3"},
                 {"set_id": "test_delete_set_id_4"},
-                {"set_id": "test_delete_set_id_5"},
+                {"set_id": "test_delete_set_id_5"}
             ]
-        },
+        }
     }
 
 
 @pytest.fixture
 def mock_rmwhub_items():
     return [
-        {
-            "set_id": "test_set_id_0",
-            "deployment_type": "single",
-            "traps": [{"sequence": 0, "latitude": -5.19816, "longitude": 122.8113}],
-        },
-        {
-            "set_id": "test_set_id_1",
-            "deployment_type": "trawl",
-            "traps": [
-                {"sequence": 0, "latitude": 41.2576527, "longitude": -71.2768455},
-                {"sequence": 1, "latitude": 41.2544098, "longitude": -71.2793166},
-            ],
-        },
-        {
-            "set_id": "test_set_id_2",
-            "deployment_type": "single",
-            "traps": [
-                {"sequence": 0, "latitude": 41.3830183, "longitude": -71.5085983}
-            ],
-        },
-        {
-            "set_id": "test_set_id_3",
-            "deployment_type": "single",
-            "traps": [
-                {"sequence": 0, "latitude": 41.3830183, "longitude": -71.5085983}
-            ],
-        },
-        {
-            "set_id": "test_set_id_4",
-            "deployment_type": "trawl",
-            "traps": [
-                {"sequence": 0, "latitude": 41.1966817, "longitude": -71.3199314},
-                {"sequence": 1, "latitude": 41.193145, "longitude": -71.3223467},
-            ],
-        },
+            GearSet(
+                set_id="test_set_id_0",
+                deployment_type="single",
+                traps= [Trap(sequence= 0, latitude= -5.19816, longitude= 122.8113)],
+            ),
+            GearSet(
+                set_id="test_set_id_1",
+                deployment_type="trawl",
+                traps= [
+                    Trap(sequence= 0, latitude= 41.2576527, longitude= -71.2768455),
+                    Trap(sequence= 1, latitude= 41.2544098, longitude= -71.2793166),
+                ],
+            ),
+            GearSet(
+                set_id="test_set_id_2",
+                deployment_type="single",
+                traps= [
+                    Trap(sequence= 0, latitude= 41.3830183, longitude= -71.508598)
+                ],
+            ),
+            GearSet(
+                set_id="test_set_id_3",
+                deployment_type="single",
+                traps= [Trap(sequence= 0, latitude= 41.3830183, longitude= -71.508598)],
+            ),
+            GearSet(
+                set_id="test_set_id_4",
+                deployment_type="trawl",
+                traps= [
+                    Trap(sequence= 0, latitude= 41.1966817, longitude= -71.3199314),
+                    Trap(sequence= 1, latitude= 41.193145, longitude= -71.3223467),
+                ],
+            ),
     ], [
         {"set_id": "test_delete_set_id_1"},
         {"set_id": "test_delete_set_id_2"},
