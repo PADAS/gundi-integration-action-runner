@@ -21,9 +21,7 @@ async def action_auth(integration, action_config: AuthenticateConfig):
 
 async def action_fetch_samples(integration, action_config: PullObservationsConfig):
     logger.info(f"Executing fetch_samples action with integration {integration} and action_config {action_config}...")
-    observations = {
-        "observations_extracted": 
-            [
+    observations = [
             {
                 "object_id": "75848f54-312d-4e4b-a931-546880931f68",
                 "location":{
@@ -52,11 +50,11 @@ async def action_fetch_samples(integration, action_config: PullObservationsConfi
                     "lon":75.473293
                 }
             }]
-    }
+
     if action_config.password == "valid_password" and action_config.username == "valid_username":
         return {
             "observations_extracted": len(observations),
-            "observations": [observation for observation in observations]
+            "observations": observations
         }
     else:
         return {"valid_credentials": False}
