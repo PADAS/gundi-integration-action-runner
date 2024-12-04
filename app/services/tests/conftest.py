@@ -5,9 +5,6 @@ from app.actions.rmwhub import GearSet, Trap
 from ropeless_utils import State
 from gundi_core.schemas import IntegrationInformation
 
-# TODO: Add a fixture for testing the RmwHubAdapter
-
-
 @pytest.fixture
 def a_good_state():
     return State(
