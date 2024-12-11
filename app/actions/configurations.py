@@ -57,7 +57,7 @@ class PullEventsConfig(PullActionConfiguration):
     @pydantic.validator("bounding_box", always=True)
     def validate_bounding_box(cls, v):
         if(not v):
-            raise ValueError("Did not receive a bounding box configuration.")
+            return None
         v = json.loads(v)
         if(len(v) != 4):
             raise ValueError("Did not receive four values in bounding box configuration.")
