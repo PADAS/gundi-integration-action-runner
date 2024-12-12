@@ -122,6 +122,7 @@ async def test_action_pull_observations_success(mocker, lotek_integration, pull_
     mocker.patch("app.actions.client.get_devices", new=AsyncMock(return_value=[LotekDevice(nDeviceID="1", strSpecialID="special", dtCreated=datetime.now(), strSatellite="satellite")]))
     mocker.patch("app.actions.client.get_positions", new=AsyncMock(return_value=[]))
     mocker.patch("app.services.state.IntegrationStateManager.get_state", new=AsyncMock(return_value=None))
+    mocker.patch("app.services.state.IntegrationStateManager.set_state", new=AsyncMock(return_value=None))
     result = await action_pull_observations(lotek_integration, pull_config)
     assert result == {'observations_extracted': 0}
 
