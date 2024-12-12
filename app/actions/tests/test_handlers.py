@@ -122,3 +122,16 @@ async def test_action_pull_observations_success(mocker, integration, pull_config
     mocker.patch("app.actions.client.get_positions", new=AsyncMock(return_value=[]))
     result = await action_pull_observations(integration, pull_config)
     assert result == {'observations_extracted': 0}
+
+@pytest.mark.asyncio
+async def test_action_pull_observations_error(mocker, integration, pull_config):
+    mock_log_action_activity = mocker.patch("app.actions.handlers.log_action_activity", new=AsyncMock())
+    mocker.patch("app.services.activity_logger.publish_event", new=AsyncMock())
+    mocker.patch("app.actions.client.get_token", new=AsyncMock(return_value="token"))
+    mocker.patch("app.actions.client.get_devices", new=AsyncMock(side_effect=httpx.HTTPError("Error")))
+    mocker.patch("app.services.state.IntegrationStateManager.get_state", new=AsyncMock(return_value=None))
+
+    with pytest.raises(LotekException):
+        await action_pull_observations(integration, pull_config)
+
+    mock_log_action_activity.assert_called_once()
