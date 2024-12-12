@@ -9,18 +9,18 @@ from app.actions.configurations import AuthenticateConfig, PullObservationsConfi
 from app.actions.client import LotekPosition, LotekDevice, LotekException, LotekConnectionException
 
 @pytest.fixture
-def integration():
+def lotek_integration():
     return Integration.parse_obj(
         {
             "id": "779ff3ab-5589-4f4c-9e0a-ae8d6c9edff0",
-            "name": "Gundi TEST",
-            "base_url": "https://gundi-er.pamdas.org",
+            "name": "Lotek TEST",
+            "base_url": "https://lotek-test.com",
             "enabled": True,
             "type": {
                 "id": "50229e21-a9fe-4caa-862c-8592dfb2479b",
-                "name": "EarthRanger",
-                "value": "earth_ranger",
-                "description": "Integration type for Integration X Sites",
+                "name": "Lotek",
+                "value": "lotek",
+                "description": "Integration type for Lotek",
             },
             "owner": {
                 "id": "a91b400b-482a-4546-8fcb-ee42b01deeb6",
@@ -115,7 +115,8 @@ async def test_transform_invalid_position(mocker, lotek_position, integration):
     mock_log_action_activity.assert_called_once()
 
 @pytest.mark.asyncio
-async def test_action_pull_observations_success(mocker, integration, pull_config):
+async def test_action_pull_observations_success(mocker, integration, pull_config, mock_redis):
+    mocker.patch("app.services.state.redis", mock_redis)
     mocker.patch("app.services.activity_logger.publish_event", new=AsyncMock())
     mocker.patch("app.actions.client.get_token", new=AsyncMock(return_value="token"))
     mocker.patch("app.actions.client.get_devices", new=AsyncMock(return_value=[LotekDevice(nDeviceID="1", strSpecialID="special", dtCreated=datetime.now(), strSatellite="satellite")]))
@@ -125,8 +126,9 @@ async def test_action_pull_observations_success(mocker, integration, pull_config
     assert result == {'observations_extracted': 0}
 
 @pytest.mark.asyncio
-async def test_action_pull_observations_error(mocker, integration, pull_config):
+async def test_action_pull_observations_error(mocker, integration, pull_config, mock_redis):
     mock_log_action_activity = mocker.patch("app.actions.handlers.log_action_activity", new=AsyncMock())
+    mocker.patch("app.services.state.redis", mock_redis)
     mocker.patch("app.services.activity_logger.publish_event", new=AsyncMock())
     mocker.patch("app.actions.client.get_token", new=AsyncMock(return_value="token"))
     mocker.patch("app.actions.client.get_devices", new=AsyncMock(side_effect=httpx.HTTPError("Error")))
