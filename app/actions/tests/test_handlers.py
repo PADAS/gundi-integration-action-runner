@@ -132,7 +132,7 @@ async def test_action_pull_observations_error(mocker, lotek_integration, pull_co
     mocker.patch("app.services.state.redis", mock_redis)
     mocker.patch("app.services.activity_logger.publish_event", new=AsyncMock())
     mocker.patch("app.actions.client.get_token", new=AsyncMock(return_value="token"))
-    mocker.patch("app.actions.client.get_devices", new=AsyncMock(side_effect=httpx.HTTPError("Error")))
+    mocker.patch("app.actions.client.get_devices", new=AsyncMock(side_effect=LotekException(Exception(), "Lotek get_devices failed for user test_user.")))
     mocker.patch("app.services.state.IntegrationStateManager.get_state", new=AsyncMock(return_value=None))
 
     with pytest.raises(LotekException):
