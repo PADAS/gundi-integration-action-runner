@@ -82,51 +82,51 @@ def lotek_position():
     )
 
 @pytest.mark.asyncio
-async def test_action_auth_success(mocker, integration, auth_config):
+async def test_action_auth_success(mocker, lotek_integration, auth_config):
     mocker.patch("app.actions.client.get_token", new=AsyncMock(return_value="token"))
-    result = await action_auth(integration, auth_config)
+    result = await action_auth(lotek_integration, auth_config)
     assert result == {"valid_credentials": True}
 
 @pytest.mark.asyncio
-async def test_action_auth_invalid_credentials(mocker, integration, auth_config):
+async def test_action_auth_invalid_credentials(mocker, lotek_integration, auth_config):
     mocker.patch("app.actions.client.get_token", new=AsyncMock(side_effect=LotekConnectionException(Exception(), "Invalid credentials")))
-    result = await action_auth(integration, auth_config)
+    result = await action_auth(lotek_integration, auth_config)
     assert result == {"valid_credentials": False, "message": "Invalid credentials"}
 
 @pytest.mark.asyncio
-async def test_action_auth_http_error(mocker, integration, auth_config):
+async def test_action_auth_http_error(mocker, lotek_integration, auth_config):
     mocker.patch("app.actions.client.get_token", new=AsyncMock(side_effect=httpx.HTTPError("HTTP Error")))
-    result = await action_auth(integration, auth_config)
+    result = await action_auth(lotek_integration, auth_config)
     assert result == {"error": "An internal error occurred while trying to test credentials. Please try again later."}
 
 @pytest.mark.asyncio
-async def test_transform_success(mocker, lotek_position, integration):
-    result = await transform(lotek_position, integration)
+async def test_transform_success(mocker, lotek_position, lotek_integration):
+    result = await transform(lotek_position, lotek_integration)
     assert result["source"] == lotek_position.DeviceID
     assert result["location"]["lat"] == lotek_position.Latitude
     assert result["location"]["lon"] == lotek_position.Longitude
 
 @pytest.mark.asyncio
-async def test_transform_invalid_position(mocker, lotek_position, integration):
+async def test_transform_invalid_position(mocker, lotek_position, lotek_integration):
     lotek_position.Latitude = None
     mock_log_action_activity = mocker.patch("app.actions.handlers.log_action_activity", new=AsyncMock())
-    result = await transform(lotek_position, integration)
+    result = await transform(lotek_position, lotek_integration)
     assert result is None
     mock_log_action_activity.assert_called_once()
 
 @pytest.mark.asyncio
-async def test_action_pull_observations_success(mocker, integration, pull_config, mock_redis):
+async def test_action_pull_observations_success(mocker, lotek_integration, pull_config, mock_redis):
     mocker.patch("app.services.state.redis", mock_redis)
     mocker.patch("app.services.activity_logger.publish_event", new=AsyncMock())
     mocker.patch("app.actions.client.get_token", new=AsyncMock(return_value="token"))
     mocker.patch("app.actions.client.get_devices", new=AsyncMock(return_value=[LotekDevice(nDeviceID="1", strSpecialID="special", dtCreated=datetime.now(), strSatellite="satellite")]))
     mocker.patch("app.actions.client.get_positions", new=AsyncMock(return_value=[]))
     mocker.patch("app.services.state.IntegrationStateManager.get_state", new=AsyncMock(return_value=None))
-    result = await action_pull_observations(integration, pull_config)
+    result = await action_pull_observations(lotek_integration, pull_config)
     assert result == {'observations_extracted': 0}
 
 @pytest.mark.asyncio
-async def test_action_pull_observations_error(mocker, integration, pull_config, mock_redis):
+async def test_action_pull_observations_error(mocker, lotek_integration, pull_config, mock_redis):
     mock_log_action_activity = mocker.patch("app.actions.handlers.log_action_activity", new=AsyncMock())
     mocker.patch("app.services.state.redis", mock_redis)
     mocker.patch("app.services.activity_logger.publish_event", new=AsyncMock())
@@ -135,6 +135,6 @@ async def test_action_pull_observations_error(mocker, integration, pull_config, 
     mocker.patch("app.services.state.IntegrationStateManager.get_state", new=AsyncMock(return_value=None))
 
     with pytest.raises(LotekException):
-        await action_pull_observations(integration, pull_config)
+        await action_pull_observations(lotek_integration, pull_config)
 
     mock_log_action_activity.assert_called_once()
