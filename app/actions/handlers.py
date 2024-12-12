@@ -95,7 +95,7 @@ async def action_pull_observations(integration, action_config: PullObservationsC
                     integration_id=str(integration.id),
                     action_id="pull_observations",
                     title=message,
-                    level=LogLevel.ERROR
+                    level=LogLevel.WARNING
                 )
                 raise e
 
@@ -106,7 +106,7 @@ async def action_pull_observations(integration, action_config: PullObservationsC
         lower_date = max(present_time - timedelta(days=7), state.last_run)
         while lower_date < present_time:
             upper_date = min(present_time, lower_date + timedelta(days=7))
-            async for attempt in stamina.retry_context(on=(httpx.HTTPError, LotekConnectionException), attempts=3, wait_initial=timedelta(seconds=10), wait_max=timedelta(seconds=10)):
+            async for attempt in stamina.retry_context(on=(LotekException, LotekConnectionException), attempts=3, wait_initial=timedelta(seconds=10), wait_max=timedelta(seconds=10)):
                 with attempt:
                     try:
                         positions = await client.get_positions(device.nDeviceID, auth, integration, lower_date, upper_date, True)
@@ -117,7 +117,7 @@ async def action_pull_observations(integration, action_config: PullObservationsC
                             integration_id=str(integration.id),
                             action_id="pull_observations",
                             title=message,
-                            level=LogLevel.ERROR
+                            level=LogLevel.WARNING
                         )
                         raise LotekException(message=message, error=e)
             logger.info(f"Extracted {len(positions)} obs from Lotek for device: {device.nDeviceID} between {lower_date} and {upper_date}.")

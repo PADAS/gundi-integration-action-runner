@@ -3,7 +3,7 @@ import httpx
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 
-from gundi_core.schemas.v2 import Integration
+from gundi_core.schemas.v2 import Integration, LogLevel
 from app.actions.handlers import action_auth, transform, action_pull_observations
 from app.actions.configurations import AuthenticateConfig, PullObservationsConfig
 from app.actions.client import LotekPosition, LotekDevice, LotekException, LotekConnectionException
@@ -138,4 +138,9 @@ async def test_action_pull_observations_error(mocker, lotek_integration, pull_co
     with pytest.raises(LotekException):
         await action_pull_observations(lotek_integration, pull_config)
 
-    mock_log_action_activity.assert_called_once()
+    mock_log_action_activity.assert_called_with(
+        integration_id=str(lotek_integration.id),
+        action_id="pull_observations",
+        level=LogLevel.WARNING,
+        title=f"Error fetching devices from Lotek. Integration ID: {str(lotek_integration.id)} Exception: '500: Lotek get_devices failed for user test_user., Error: '"
+    )
