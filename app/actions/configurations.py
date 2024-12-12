@@ -8,11 +8,10 @@ from ..services.utils import find_config_for_action
 class AuthenticateConfig(AuthActionConfiguration, ExecutableActionMixin):
     username: str
     password: pydantic.SecretStr = pydantic.Field(..., format="password")
-    grant_type: str = "password"
 
 
 class PullObservationsConfig(PullActionConfiguration):
-    observations_per_request: int = 200
+    pass
 
 
 def get_auth_config(integration):

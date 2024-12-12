@@ -74,7 +74,7 @@ class IntegrationState(pydantic.BaseModel):
 
 async def get_token(integration, auth):
     params = {
-        "grant_type": auth.grant_type,
+        "grant_type": "password",
         "username": auth.username,
         "password": auth.password.get_secret_value()
     }
