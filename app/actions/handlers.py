@@ -83,7 +83,7 @@ async def action_pull_observations(integration, action_config: PullObservationsC
 
     logger.info(f"Running Lotek integration for integration '{integration.name}({integration.id})'. State: {state}")
 
-    async for attempt in stamina.retry_context(on=httpx.HTTPError, attempts=3, wait_initial=timedelta(seconds=10), wait_max=timedelta(seconds=10)):
+    async for attempt in stamina.retry_context(on=(LotekException, LotekConnectionException), attempts=3, wait_initial=timedelta(seconds=10), wait_max=timedelta(seconds=10)):
         with attempt:
             auth = get_auth_config(integration)
             try:
@@ -106,7 +106,7 @@ async def action_pull_observations(integration, action_config: PullObservationsC
         lower_date = max(present_time - timedelta(days=7), state.last_run)
         while lower_date < present_time:
             upper_date = min(present_time, lower_date + timedelta(days=7))
-            async for attempt in stamina.retry_context(on=httpx.HTTPError, attempts=3, wait_initial=timedelta(seconds=10), wait_max=timedelta(seconds=10)):
+            async for attempt in stamina.retry_context(on=(httpx.HTTPError, LotekConnectionException), attempts=3, wait_initial=timedelta(seconds=10), wait_max=timedelta(seconds=10)):
                 with attempt:
                     try:
                         positions = await client.get_positions(device.nDeviceID, auth, integration, lower_date, upper_date, True)
