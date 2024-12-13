@@ -115,6 +115,7 @@ async def test_invalid_position_sends_log_activity(mocker, lotek_position, lotek
     lotek_position.Latitude = None
     mocker.patch("app.actions.client.get_positions", new=AsyncMock(return_value=[lotek_position]))
     mocker.patch("app.services.state.IntegrationStateManager.get_state", new=AsyncMock(return_value=None))
+    mocker.patch("app.services.state.IntegrationStateManager.set_state", new=AsyncMock(return_value=None))
     mock_log_action_activity = mocker.patch("app.actions.handlers.log_action_activity", new=AsyncMock())
     result = await action_pull_observations(lotek_integration, pull_config)
     assert result == {'observations_extracted': 0}
