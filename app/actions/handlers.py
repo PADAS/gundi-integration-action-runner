@@ -36,30 +36,34 @@ async def action_auth(integration, action_config: AuthenticateConfig):
             logger.error(f"Auth unsuccessful for integration {integration}.")
             return {"valid_credentials": False}
 
-async def transform(p: client.LotekPosition, integration):
-    try:
-        if p.Longitude and p.Latitude:
-            data = {
-                "source": p.DeviceID,
-                "source_name": p.DeviceID,
-                'type': 'tracking-device',
-                "recorded_at": ensure_timezone_aware(p.RecDateTime).isoformat(),
-                "location": {
-                    "lat": p.Latitude,
-                    "lon": p.Longitude
-                },
-                "additional": p.dict(exclude={'DeviceID', 'Latitude', 'Longitude', 'RecDateTime'})
-            }
-            return data
+def filter_and_transform_positions(positions, integration):
+    bad_points = 0
+    valid_positions = []
+
+    for position in positions:
+        if not position.Longitude or not position.Latitude:
+            bad_points += 1
         else:
-            msg = f'Ignoring bad Lotek point: {p}'
-            logger.warning(msg)
-            await log_action_activity(
-                integration_id=str(integration.id),
-                action_id="pull_observations",
-                title=msg,
-                level=LogLevel.WARNING
-            )
+            cdip_pos = transform(position, integration)
+            if cdip_pos:
+                valid_positions.append(cdip_pos)
+
+    return valid_positions, bad_points
+
+def transform(p: client.LotekPosition, integration):
+    try:
+        data = {
+            "source": p.DeviceID,
+            "source_name": p.DeviceID,
+            'type': 'tracking-device',
+            "recorded_at": ensure_timezone_aware(p.RecDateTime).isoformat(),
+            "location": {
+                "lat": p.Latitude,
+                "lon": p.Longitude
+            },
+            "additional": p.dict(exclude={'DeviceID', 'Latitude', 'Longitude', 'RecDateTime'})
+        }
+        return data
     except Exception as ex:
         logger.error(f"Failed to parse Lotek point: {p} for Integration ID {str(integration.id)}. Exception: {ex}")
         raise ex
@@ -121,11 +125,17 @@ async def action_pull_observations(integration, action_config: PullObservationsC
                         )
                         raise LotekException(message=message, error=e)
             logger.info(f"Extracted {len(positions)} obs from Lotek for device: {device.nDeviceID} between {lower_date} and {upper_date}.")
-            for position in positions:
-                cdip_pos = transform(position, integration)
-                if cdip_pos:
-                    cdip_positions.append(cdip_pos)
+            cdip_positions, bad_lotek_points = filter_and_transform_positions(positions, integration)
             logger.debug(f"Extracted {len(cdip_positions)} of {len(positions)} points between {lower_date} and {upper_date}.")
+            if bad_lotek_points > 0:
+                msg = f"Found {bad_lotek_points} bad points in Lotek data for device {device.nDeviceID}."
+                logger.warning(msg)
+                await log_action_activity(
+                    integration_id=str(integration.id),
+                    action_id="pull_observations",
+                    title=msg,
+                    level=LogLevel.WARNING
+                )
             lower_date = upper_date
 
         if cdip_positions:
