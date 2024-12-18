@@ -1,3 +1,3 @@
 # gundi-integration-edgetech
 
-Gundi integration runner for Edgetech on-demand fishing gear.
+Gundi Action Runner for Edgetech on-demand fishing gear.
