@@ -377,12 +377,30 @@ class UISchemaModelMixin:
 
 
 class CrontabSchedule(BaseModel):
-    minute: str = Field("0", regex=r"^(\*|([0-5]?\d)(,([0-5]?\d)|-([0-5]?\d)|/([1-5]?\d))*)$")
-    hour: str = Field("6", regex=r"^(\*|([01]?\d|2[0-3])(,([01]?\d|2[0-3])|-(\d+)|/([1-9]\d?))*)$")
-    day_of_week: str = Field("*", regex=r"^(\*|[0-6](,[0-6]|-[0-6]|/[0-6])*)$")
-    day_of_month: str = Field("*", regex=r"^(\*|([1-9]|[12]\d|3[01])(,([1-9]|[12]\d|3[01])|-(\d+)|/(\d+))*)$")
-    month_of_year: str = Field("*", regex=r"^(\*|([1-9]|1[0-2])(,([1-9]|1[0-2])|-(\d+)|/(\d+))*)$")
-    tz_offset: int = Field(0, description="Timezone offset from UTC, e.g., 0 for UTC, -5 for UTC-5, +2 for UTC+2")
+    minute: str = Field(
+        "*",
+        regex=r"^(\*|([0-5]?\d)(,([0-5]?\d))*|([0-5]?\d-[0-5]?\d)(/\d+)?|\*(/\d+)?)$"
+    )
+    hour: str = Field(
+        "*",
+        regex=r"^(\*|([01]?\d|2[0-3])(,([01]?\d|2[0-3]))*|([01]?\d|2[0-3]-[01]?\d|2[0-3])(/\d+)?|\*(/\d+)?)$"
+    )
+    day_of_week: str = Field(
+        "*",
+        regex=r"^(\*|[0-6](,[0-6])*|([0-6]-[0-6])(/\d+)?|\*(/\d+)?)$"
+    )
+    day_of_month: str = Field(
+        "*",
+        regex=r"^(\*|([1-9]|[12]\d|3[01])(,([1-9]|[12]\d|3[01]))*|([1-9]|[12]\d|3[01]-[1-9]|[12]\d|3[01])(/\d+)?|\*(/\d+)?)$"
+    )
+    month_of_year: str = Field(
+        "*",
+        regex=r"^(\*|([1-9]|1[0-2])(,([1-9]|1[0-2]))*|([1-9]|1[0-2]-[1-9]|1[0-2])(/\d+)?|\*(/\d+)?)$"
+    )
+    tz_offset: int = Field(
+        0,
+        description="Timezone offset from UTC, e.g., 0 for UTC, -5 for UTC-5, +2 for UTC+2"
+    )
 
     @validator("tz_offset")
     def validate_timezone(cls, value):
