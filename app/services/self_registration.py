@@ -73,7 +73,8 @@ async def register_integration_in_gundi(gundi_client, type_slug=None, service_ur
             # Schedules can be specified by argument or using a decorator
             if action_schedules and action_id in action_schedules:
                 action["crontab_schedule"] = action_schedules[action_id].dict()
-            elif crontab_schedule := getattr(func, "crontab_schedule"):
+            elif hasattr(func, "crontab_schedule"):
+                crontab_schedule = getattr(func, "crontab_schedule")
                 action["crontab_schedule"] = crontab_schedule.dict()
         else:
             action["is_periodic_action"] = False

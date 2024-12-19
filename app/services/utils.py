@@ -400,7 +400,15 @@ class CrontabSchedule(BaseModel):
     # build from crontab string
     @classmethod
     def parse_obj_from_crontab(cls, crontab: str):
-        minute, hour, day_of_month, month_of_year, day_of_week, tz_offset = crontab.split()
+        parts = crontab.split()
+        if len(parts) == 6:
+            minute, hour, day_of_month, month_of_year, day_of_week, tz_offset = parts
+        elif len(parts) == 5:
+            minute, hour, day_of_month, month_of_year, day_of_week = parts
+            tz_offset = 0
+        else:
+            raise ValueError("Invalid crontab format. Must have 5 or 6 fields.")
+
         return cls(
             minute=minute,
             hour=hour,

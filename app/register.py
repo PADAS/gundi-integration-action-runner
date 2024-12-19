@@ -1,5 +1,7 @@
 import asyncio
 import click
+import pydantic
+
 from app.services.action_runner import _portal
 from app.services.self_registration import register_integration_in_gundi
 from app.services.utils import CrontabSchedule
@@ -19,9 +21,9 @@ def register_integration(slug, service_url, schedule):
         try:
             action_id, cron_schedule = item.split(":", 1)
             schedules[action_id.strip()] = CrontabSchedule.parse_obj_from_crontab(cron_schedule.strip())
-        except ValueError:
+        except (pydantic.ValidationError, ValueError) as e:
             raise click.BadParameter(
-                f"Invalid schedule format: {item}. Expected format is 'action_id:schedule'."
+                f"Invalid schedule format: {item}.\n Expected format is 'action_id:MIN HOUR DOM MON DOW [TZ]'. e.g., 'pull_events:0 */4 * * * -5'. \n {e}"
             )
     asyncio.run(
         register_integration_in_gundi(
