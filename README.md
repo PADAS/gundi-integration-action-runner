@@ -16,6 +16,7 @@ Template repo for integration in Gundi v2.
     - Webhook execution complete
     - Error occurred during webhook execution
 - Optionally, use  `log_action_activity()` or `log_webhook_activity()` to log custom messages which you can later see in the portal
+- Optionally, use  `@crontab_schedule()` or `register.py --schedule` to make an action to run on a custom schedule
 
 
 ## Action Examples: 
@@ -35,10 +36,12 @@ class PullObservationsConfiguration(PullActionConfiguration):
 # actions/handlers.py
 from app.services.activity_logger import activity_logger, log_activity
 from app.services.gundi import send_observations_to_gundi
+from app.services.utils import crontab_schedule
 from gundi_core.events import LogLevel
 from .configurations import PullObservationsConfiguration
 
 
+@crontab_schedule("0 */4 * * *")  # Run every 4 hours
 @activity_logger()
 async def action_pull_observations(integration, action_config: PullObservationsConfiguration):
     

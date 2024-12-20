@@ -31,7 +31,7 @@ from app.actions import (
     AuthActionConfiguration,
     ExecutableActionMixin,
 )
-from app.services.utils import GlobalUISchemaOptions, FieldWithUIOptions, UIOptions
+from app.services.utils import GlobalUISchemaOptions, FieldWithUIOptions, UIOptions, CrontabSchedule
 from app.webhooks import (
     GenericJsonTransformConfig,
     GenericJsonPayload,
@@ -869,6 +869,7 @@ class MockAuthenticateActionConfiguration(
 def mock_action_handlers(mocker):
     mock_action_handler = AsyncMock()
     mock_action_handler.return_value = {"observations_extracted": 10}
+    mock_action_handler.crontab_schedule = CrontabSchedule.parse_obj_from_crontab("*/10 * * * * -5")
     mock_action_handlers = {
         "pull_observations": (mock_action_handler, MockPullActionConfiguration)
     }
