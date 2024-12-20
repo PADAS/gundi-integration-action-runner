@@ -80,7 +80,8 @@ async def get_token(integration, auth):
     }
     async with httpx.AsyncClient(timeout=120) as session:
         try:
-            response = await session.post(integration.base_url + "/user/login", data=params)
+            base_url = integration.base_url or 'https://webservice.lotek.com/API'
+            response = await session.post(base_url + "/user/login", data=params)
             response.raise_for_status()
         except httpx.HTTPError as ex:
             msg = f'Lotek login failed for user {auth.username}. Caught exception: {ex}'
@@ -115,7 +116,8 @@ async def get_devices(integration, auth):
             'Content-Type': 'application/json'
         }
         async with httpx.AsyncClient(timeout=120) as session:
-            response = await session.get(integration.base_url + "/devices", headers=headers)
+            base_url = integration.base_url or 'https://webservice.lotek.com/API'
+            response = await session.get(base_url + "/devices", headers=headers)
             response.raise_for_status()
     except httpx.HTTPError as ex:
         msg = f'Lotek get_devices failed for user {auth.username}. Caught exception: {ex}'
@@ -161,7 +163,8 @@ async def get_positions(device_id, auth, integration, start_datetime=None, end_d
     async with httpx.AsyncClient(timeout=120) as session:
         try:
             logger.debug('Getting positions for user: %s, params: %s', auth.username, params)
-            response = await session.get(integration.base_url + "/positions/findByDate", params=params, headers=headers)
+            base_url = integration.base_url or 'https://webservice.lotek.com/API'
+            response = await session.get(base_url + "/positions/findByDate", params=params, headers=headers)
             response.raise_for_status()
         except httpx.HTTPError as e:
             if response.status_code == 400:
