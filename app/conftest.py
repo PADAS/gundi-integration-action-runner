@@ -717,20 +717,14 @@ def mock_gundi_sensors_client_class(
 def events_created_response():
     return [
         {
-            "id": "e1e1e1e1-e1e1-e1e1-e1e1-e1e1e1e1e1e1",
-            "title": "Animal Sighting",
-            "event_type": "wildlife_sighting_rep",
-            "recorded_at": "2024-01-29 20:51:10-03:00",
-            "location": {"lat": -51.688645, "lon": -72.704421},
-            "event_details": {"site_name": "MM Spot", "species": "lion"},
+            "object_id": "af8e2946-bad6-4d02-8a26-99dde34bd9fa",
+            "created_at": "2024-07-04T13:15:26.559894Z",
+            "updated_at": None,
         },
         {
-            "id": "e1e1e1e1-e1e1-e1e1-e1e1-e1e1e1e1e1e2",
-            "title": "Animal Sighting",
-            "event_type": "wildlife_sighting_rep",
-            "recorded_at": "2024-01-29 20:51:25-03:00",
-            "location": {"lat": -51.688646, "lon": -72.704421},
-            "event_details": {"site_name": "MM Spot", "species": "lion"},
+            "object_id": "gat51h73-dd71-dj88-91uh-jah7162hy6fa",
+            "created_at": "2024-07-03T13:15:26.559894Z",
+            "updated_at": None,
         },
     ]
 
@@ -739,12 +733,12 @@ def events_created_response():
 def event_attachment_created_response():
     return [
         {
-            "object_id": "af8e2946-bad6-4d02-8a26-99dde34bd9fa",
+            "object_id": "af8e2946-bad6-4d02-8a26-99dde34bd9fb",
             "created_at": "2024-07-04T13:15:26.559894Z",
             "updated_at": None,
         },
         {
-            "object_id": "gat51h73-dd71-dj88-91uh-jah7162hy6fs",
+            "object_id": "gat51h73-dd71-dj88-91uh-jah7162hy6fb",
             "created_at": "2024-07-03T13:15:26.559894Z",
             "updated_at": None,
         },
@@ -755,22 +749,14 @@ def event_attachment_created_response():
 def observations_created_response():
     return [
         {
-            "id": "e1e1e1e1-e1e1-e1e1-e1e1-e1e1e1e1e1e1",
-            "source": "device-xy123",
-            "type": "tracking-device",
-            "subject_type": "puma",
-            "recorded_at": "2024-01-24 09:03:00-0300",
-            "location": {"lat": -51.748, "lon": -72.720},
-            "additional": {"speed_kmph": 5},
+            "object_id": "af8e2946-bad6-4d02-8a26-99dde34bd9fc",
+            "created_at": "2024-07-04T13:15:26.559894Z",
+            "updated_at": None,
         },
         {
-            "id": "e1e1e1e1-e1e1-e1e1-e1e1-e1e1e1e1e1e2",
-            "source": "test-device-mariano",
-            "type": "tracking-device",
-            "subject_type": "puma",
-            "recorded_at": "2024-01-24 09:05:00-0300",
-            "location": {"lat": -51.755, "lon": -72.755},
-            "additional": {"speed_kmph": 5},
+            "object_id": "gat51h73-dd71-dj88-91uh-jah7162hy6fc",
+            "created_at": "2024-07-03T13:15:26.559894Z",
+            "updated_at": None,
         },
     ]
 
