@@ -22,10 +22,18 @@ async def trigger_action(integration_id: str, action_id: str, config=None):
         action_id=action_id,
         config_overrides=config.dict() if config else None
     )
-    if not settings.INTEGRATION_COMMANDS_TOPIC:
-        error_msg = "Please set INTEGRATION_COMMANDS_TOPIC in the environment to trigger actions from the integration."
-        raise ValueError(error_msg)
-    return await publish_event(run_action_command, settings.INTEGRATION_COMMANDS_TOPIC)
+    if settings.TRIGGER_ACTIONS_ALWAYS_SYNC:  # For testing or local development
+        from .action_runner import execute_action
+        return await execute_action(
+            integration_id=integration_id,
+            action_id=action_id,
+            config_overrides=config.dict() if config else None
+        )
+    else:
+        if not settings.INTEGRATION_COMMANDS_TOPIC:
+            error_msg = "Please set INTEGRATION_COMMANDS_TOPIC in the environment to trigger actions from the integration."
+            raise ValueError(error_msg)
+        return await publish_event(run_action_command, settings.INTEGRATION_COMMANDS_TOPIC)
 
 
 class CrontabSchedule(BaseModel):
