@@ -56,9 +56,9 @@ async def execute_action(integration_id: str, action_id: str, config_overrides: 
         configurations=integration.configurations,
         action_id=action_id
     )
-    if not action_config:
+    if not action_config and not config_overrides:
         message = f"Configuration for action '{action_id}' for integration {str(integration.id)} " \
-                  f"is missing. Please fix the integration setup in the portal."
+                  f"is missing. Please fix the integration setup in the portal or provide a config in the request."
         logger.error(message)
         await publish_event(
             event=IntegrationActionFailed(
@@ -77,7 +77,7 @@ async def execute_action(integration_id: str, action_id: str, config_overrides: 
         )
     try:  # Execute the action
         handler, config_model = action_handlers[action_id]
-        config_data = action_config.data
+        config_data = action_config.data if action_config else {}
         if config_overrides:
             config_data.update(config_overrides)
         parsed_config = config_model.parse_obj(config_data)
