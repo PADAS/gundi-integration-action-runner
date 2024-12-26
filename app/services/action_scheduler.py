@@ -3,6 +3,29 @@ from pydantic import BaseModel
 from pydantic.fields import Field
 from pydantic.class_validators import validator
 from typing import Any, Dict, Optional, Union, List, Annotated
+from gundi_core.commands import RunIntegrationAction
+from app import settings
+from .activity_logger import publish_event
+
+
+async def trigger_action(integration_id: str, action_id: str, config=None):
+    """
+    Publishes a command message in the actions topic to trigger an action.
+    Use this function to trigger other actions from the integration.
+    :param integration_id:
+    :param action_id:
+    :param config:
+    :return:
+    """
+    run_action_command = RunIntegrationAction(
+        integration_id=integration_id,
+        action_id=action_id,
+        config_overrides=config.dict() if config else None
+    )
+    if not settings.INTEGRATION_COMMANDS_TOPIC:
+        error_msg = "Please set INTEGRATION_COMMANDS_TOPIC in the environment to trigger actions from the integration."
+        raise ValueError(error_msg)
+    return await publish_event(run_action_command, settings.INTEGRATION_COMMANDS_TOPIC)
 
 
 class CrontabSchedule(BaseModel):
