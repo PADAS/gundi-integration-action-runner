@@ -31,7 +31,8 @@ from app.actions import (
     AuthActionConfiguration,
     ExecutableActionMixin,
 )
-from app.services.utils import GlobalUISchemaOptions, FieldWithUIOptions, UIOptions, CrontabSchedule
+from app.services.utils import GlobalUISchemaOptions, FieldWithUIOptions, UIOptions
+from app.services.action_scheduler import CrontabSchedule
 from app.webhooks import (
     GenericJsonTransformConfig,
     GenericJsonPayload,
