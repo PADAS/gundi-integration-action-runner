@@ -1,4 +1,6 @@
+import asyncio
 import logging
+import time
 
 import httpx
 import pydantic
@@ -81,7 +83,11 @@ async def execute_action(integration_id: str, action_id: str, config_overrides: 
         if config_overrides:
             config_data.update(config_overrides)
         parsed_config = config_model.parse_obj(config_data)
-        result = await handler(integration=integration, action_config=parsed_config)
+        start_time = time.monotonic()
+        result = await asyncio.wait_for(
+            handler(integration=integration, action_config=parsed_config),
+            timeout=settings.MAX_ACTION_EXECUTION_TIME
+        )
     except pydantic.ValidationError as e:
         message = f"Invalid configuration for action '{action_id}' and integration '{integration_id}': {e.errors()}"
         logger.error(message)
@@ -118,6 +124,24 @@ async def execute_action(integration_id: str, action_id: str, config_overrides: 
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             content=jsonable_encoder({"detail": message}),
         )
+    except asyncio.TimeoutError:
+        message = f"Action '{action_id}' timed out after {settings.MAX_ACTION_EXECUTION_TIME} seconds. Please consider splitting the workload in sub-actions."
+        logger.exception(message)
+        await publish_event(
+            event=IntegrationActionFailed(
+                payload=ActionExecutionFailed(
+                    integration_id=integration_id,
+                    action_id=action_id,
+                    config_data={"configurations": [c.dict() for c in integration.configurations]},
+                    error=message
+                )
+            ),
+            topic_name=settings.INTEGRATION_EVENTS_TOPIC,
+        )
+        return JSONResponse(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            content=jsonable_encoder({"detail": message}),
+        )
     except Exception as e:
         message = f"Internal error executing action '{action_id}': {e}"
         logger.exception(message)
@@ -137,6 +161,9 @@ async def execute_action(integration_id: str, action_id: str, config_overrides: 
             content=jsonable_encoder({"detail": message}),
         )
     else:
+        end_time = time.monotonic()
+        execution_time = end_time - start_time
+        logger.debug(f"Action '{action_id}' executed successfully in {execution_time:.2f} seconds.")
         return result
 
 
