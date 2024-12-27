@@ -144,6 +144,7 @@ async def test_trigger_subaction(
         mock_publish_event, mock_action_handlers,
 ):
     settings.TRIGGER_ACTIONS_ALWAYS_SYNC = False
+    settings.INTEGRATION_COMMANDS_TOPIC = "integration-actions-topic"
     mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
     mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
     mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
