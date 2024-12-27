@@ -29,7 +29,7 @@ from gundi_core.events import (
 from app.actions import (
     PullActionConfiguration,
     AuthActionConfiguration,
-    ExecutableActionMixin,
+    ExecutableActionMixin, InternalActionConfiguration,
 )
 from app.services.utils import GlobalUISchemaOptions, FieldWithUIOptions, UIOptions
 from app.services.action_scheduler import CrontabSchedule
@@ -852,13 +852,24 @@ class MockAuthenticateActionConfiguration(
     )
 
 
+class MockSubActionConfiguration(InternalActionConfiguration):
+    start_datetime: datetime.datetime
+    end_datetime: datetime.datetime
+
+
 @pytest.fixture
 def mock_action_handlers(mocker):
-    mock_action_handler = AsyncMock()
-    mock_action_handler.return_value = {"observations_extracted": 10}
-    mock_action_handler.crontab_schedule = CrontabSchedule.parse_obj_from_crontab("*/10 * * * * -5")
+    mock_pull_observations_action_handler = AsyncMock()
+    mock_pull_observations_action_handler.return_value = {"observations_extracted": 10}
+    mock_pull_observations_action_handler.crontab_schedule = CrontabSchedule.parse_obj_from_crontab("*/10 * * * * -5")
+    mock_pull_events_action_handler = AsyncMock()
+    mock_pull_events_action_handler.return_value = {"subactions_triggered": 5}
+    mock_pull_events_by_date_action_handler = AsyncMock()
+    mock_pull_events_by_date_action_handler.return_value = {"events_extracted": 10}
     mock_action_handlers = {
-        "pull_observations": (mock_action_handler, MockPullActionConfiguration)
+        "pull_observations": (mock_pull_observations_action_handler, MockPullActionConfiguration),
+        "pull_events": (mock_pull_events_action_handler, MockPullActionConfiguration),
+        "pull_events_by_date": (mock_pull_events_by_date_action_handler, MockSubActionConfiguration)
     }
     return mock_action_handlers
 
