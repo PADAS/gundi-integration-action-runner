@@ -163,7 +163,7 @@ async def execute_action(integration_id: str, action_id: str, config_overrides: 
     else:
         end_time = time.monotonic()
         execution_time = end_time - start_time
-        logger.debug(f"Action '{action_id}' executed successfully in {execution_time:.2f} seconds.")
+        logger.debug(f"Action '{action_id}' executed successfully for integration {integration_id} in {execution_time:.2f} seconds.")
         return result
 
 
