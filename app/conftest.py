@@ -862,14 +862,12 @@ def mock_action_handlers(mocker):
     mock_pull_observations_action_handler = AsyncMock()
     mock_pull_observations_action_handler.return_value = {"observations_extracted": 10}
     mock_pull_observations_action_handler.crontab_schedule = CrontabSchedule.parse_obj_from_crontab("*/10 * * * * -5")
-    mock_pull_events_action_handler = AsyncMock()
-    mock_pull_events_action_handler.return_value = {"subactions_triggered": 5}
-    mock_pull_events_by_date_action_handler = AsyncMock()
-    mock_pull_events_by_date_action_handler.return_value = {"events_extracted": 10}
+    mock_pull_observations_by_date_action_handler = AsyncMock()
+    mock_pull_observations_by_date_action_handler.return_value = {"observations_extracted": 10}
+    del mock_pull_observations_by_date_action_handler.crontab_schedule
     mock_action_handlers = {
         "pull_observations": (mock_pull_observations_action_handler, MockPullActionConfiguration),
-        "pull_events": (mock_pull_events_action_handler, MockPullActionConfiguration),
-        "pull_events_by_date": (mock_pull_events_by_date_action_handler, MockSubActionConfiguration)
+        "pull_observations_by_date": (mock_pull_observations_by_date_action_handler, MockSubActionConfiguration)
     }
     return mock_action_handlers
 

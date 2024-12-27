@@ -150,7 +150,7 @@ async def test_trigger_subaction(
     mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
     mocker.patch("app.services.action_scheduler.publish_event", mock_publish_event)
     integration_id = str(integration_v2.id)
-    action_id = "pull_events_by_date"
+    action_id = "pull_observations_by_date"
     config = MockSubActionConfiguration(
         start_datetime="2024-12-01T00:00:00Z",
         end_datetime="2025-01-15T00:00:00Z"
@@ -188,7 +188,7 @@ async def test_trigger_subaction_sync(
     mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
     mocker.patch("app.services.action_scheduler.publish_event", mock_publish_event)
     integration_id = str(integration_v2.id)
-    action_id = "pull_events_by_date"
+    action_id = "pull_observations_by_date"
     config = MockSubActionConfiguration(
         start_datetime="2024-12-01T00:00:00Z",
         end_datetime="2025-01-15T00:00:00Z"
