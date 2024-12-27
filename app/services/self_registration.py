@@ -11,6 +11,7 @@ from app.actions import (
     PullActionConfiguration,
     PushActionConfiguration,
     ExecutableActionMixin,
+    InternalActionConfiguration,
 )
 from app.settings import INTEGRATION_TYPE_SLUG, INTEGRATION_SERVICE_URL
 from .core import ActionTypeEnum
@@ -44,6 +45,9 @@ async def register_integration_in_gundi(gundi_client, type_slug=None, service_ur
     actions = []
     for action_id, handler in action_handlers.items():
         func, config_model = handler
+        if issubclass(config_model, InternalActionConfiguration):
+            logger.info(f"Skipping internal action '{action_id}'.")
+            continue  # Internal actions are not registered in Gundi
         action_name = action_id.replace("_", " ").title()
         action_schema = json.loads(config_model.schema_json())
         action_ui_schema = config_model.ui_schema()
