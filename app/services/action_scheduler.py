@@ -12,9 +12,9 @@ async def trigger_action(integration_id: str, action_id: str, config=None):
     """
     Publishes a command message in the actions topic to trigger an action.
     Use this function to trigger other actions from the integration.
-    :param integration_id:
-    :param action_id:
-    :param config:
+    :param integration_id: uuid of the integration
+    :param action_id: slug id of the action
+    :param config: configuration model
     :return:
     """
     run_action_command = RunIntegrationAction(
