@@ -125,7 +125,7 @@ async def execute_action(integration_id: str, action_id: str, config_overrides: 
             content=jsonable_encoder({"detail": message}),
         )
     except asyncio.TimeoutError:
-        message = f"Action '{action_id}' timed out after {settings.MAX_ACTION_EXECUTION_TIME} seconds. Please consider splitting the workload in sub-actions."
+        message = f"Action '{action_id}' timed out for integration {integration_id} after {settings.MAX_ACTION_EXECUTION_TIME} seconds. Please consider splitting the workload in sub-actions."
         logger.exception(message)
         await publish_event(
             event=IntegrationActionFailed(
@@ -143,7 +143,7 @@ async def execute_action(integration_id: str, action_id: str, config_overrides: 
             content=jsonable_encoder({"detail": message}),
         )
     except Exception as e:
-        message = f"Internal error executing action '{action_id}': {e}"
+        message = f"Internal error executing action '{action_id}' for integration {integration_id}: {e}"
         logger.exception(message)
         await publish_event(
             event=IntegrationActionFailed(
