@@ -13,11 +13,14 @@ from fastapi import status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from gundi_core.events import IntegrationActionFailed, ActionExecutionFailed
+
+from .config_manager import IntegrationConfigurationManager
 from .utils import find_config_for_action
 from .activity_logger import publish_event
 
 
 _portal = GundiClient()
+config_manager = IntegrationConfigurationManager()
 logger = logging.getLogger(__name__)
 
 
@@ -30,11 +33,8 @@ async def execute_action(integration_id: str, action_id: str, config_overrides: 
     :return: action result if any, or raise an exception
     """
     logger.info(f"Executing action '{action_id}' for integration '{integration_id}'...")
-    try:  # Get the integration config from the portal
-        async for attempt in stamina.retry_context(on=httpx.HTTPError, wait_initial=1.0, wait_jitter=5.0, wait_max=32.0):
-            with attempt:
-                # ToDo: Store configs and update it on changes (event-driven architecture)
-                integration = await _portal.get_integration_details(integration_id=integration_id)
+    try:  # Get the integration config
+        integration = await config_manager.get_integration(integration_id)
     except Exception as e:
         message = f"Error retrieving configuration for integration '{integration_id}': {e}"
         logger.exception(message)
@@ -54,10 +54,7 @@ async def execute_action(integration_id: str, action_id: str, config_overrides: 
         )
 
     # Look for the configuration of the action being executed
-    action_config = find_config_for_action(
-        configurations=integration.configurations,
-        action_id=action_id
-    )
+    action_config = await config_manager.get_action_configuration(integration_id, action_id)
     if not action_config and not config_overrides:
         message = f"Configuration for action '{action_id}' for integration {str(integration.id)} " \
                   f"is missing. Please fix the integration setup in the portal or provide a config in the request."
