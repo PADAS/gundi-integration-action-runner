@@ -859,6 +859,16 @@ def mock_state_manager(mocker):
 
 
 @pytest.fixture
+def mock_config_manager(mocker, integration_v2):
+    mock_config_manager = mocker.MagicMock()
+    mock_config_manager.get_integration.return_value = async_return(integration_v2)
+    mock_config_manager.get_action_configuration.return_value = async_return(integration_v2.configurations[0])
+    mock_config_manager.set_integration.return_value = async_return(None)
+    mock_config_manager.set_action_configuration.return_value = async_return(None)
+    return mock_config_manager
+
+
+@pytest.fixture
 def mock_pubsub_client(
     mocker, integration_event_pubsub_message, gcp_pubsub_publish_response
 ):

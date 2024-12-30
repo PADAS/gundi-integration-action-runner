@@ -15,11 +15,12 @@ api_client = TestClient(app)
 
 @pytest.mark.asyncio
 async def test_execute_action_from_pubsub(
-        mocker, mock_gundi_client_v2, mock_publish_event, mock_action_handlers,
+        mocker, mock_gundi_client_v2, mock_publish_event, mock_action_handlers, mock_config_manager,
         event_v2_cloud_event_headers, event_v2_cloud_event_payload
 ):
     mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
     mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
     mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
     mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
 
@@ -30,18 +31,20 @@ async def test_execute_action_from_pubsub(
     )
 
     assert response.status_code == 200
-    assert mock_gundi_client_v2.get_integration_details.called
+    assert mock_config_manager.get_integration.called
+    assert not mock_gundi_client_v2.get_integration_details.called
     mock_action_handler, mock_config = mock_action_handlers["pull_observations"]
     assert mock_action_handler.called
 
 
 @pytest.mark.asyncio
 async def test_execute_action_from_api(
-        mocker, mock_gundi_client_v2, integration_v2,
+        mocker, mock_gundi_client_v2, integration_v2, mock_config_manager,
         mock_publish_event, mock_action_handlers,
 ):
     mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
     mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
     mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
     mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
 
@@ -54,18 +57,19 @@ async def test_execute_action_from_api(
     )
 
     assert response.status_code == 200
-    assert mock_gundi_client_v2.get_integration_details.called
+    assert not mock_gundi_client_v2.get_integration_details.called
     mock_action_handler, mock_config = mock_action_handlers["pull_observations"]
     assert mock_action_handler.called
 
 
 @pytest.mark.asyncio
 async def test_execute_action_from_api_with_config_overrides(
-        mocker, mock_gundi_client_v2, integration_v2,
+        mocker, mock_gundi_client_v2, integration_v2, mock_config_manager,
         mock_publish_event, mock_action_handlers,
 ):
     mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
     mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
     mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
     mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
 
@@ -80,7 +84,8 @@ async def test_execute_action_from_api_with_config_overrides(
     )
 
     assert response.status_code == 200
-    assert mock_gundi_client_v2.get_integration_details.called
+    assert mock_config_manager.get_integration.called
+    assert not mock_gundi_client_v2.get_integration_details.called
     mock_action_handler, mock_config = mock_action_handlers["pull_observations"]
     assert mock_action_handler.called
     for k, v in config_overrides.items():
@@ -90,11 +95,12 @@ async def test_execute_action_from_api_with_config_overrides(
 
 @pytest.mark.asyncio
 async def test_execute_action_from_pubsub_with_config_overrides(
-        mocker, mock_gundi_client_v2, mock_publish_event, mock_action_handlers,
+        mocker, mock_gundi_client_v2, mock_publish_event, mock_action_handlers, mock_config_manager,
         event_v2_cloud_event_headers, event_v2_cloud_event_payload_with_config_overrides
 ):
     mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
     mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
     mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
     mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
 
@@ -105,7 +111,8 @@ async def test_execute_action_from_pubsub_with_config_overrides(
     )
 
     assert response.status_code == 200
-    assert mock_gundi_client_v2.get_integration_details.called
+    assert mock_config_manager.get_integration.called
+    assert not mock_gundi_client_v2.get_integration_details.called
     mock_action_handler, mock_config = mock_action_handlers["pull_observations"]
     assert mock_action_handler.called
     encoded_data = event_v2_cloud_event_payload_with_config_overrides["message"]["data"]
@@ -118,11 +125,12 @@ async def test_execute_action_from_pubsub_with_config_overrides(
 
 @pytest.mark.asyncio
 async def test_execute_action_from_api_with_invalid_config(
-        mocker, mock_gundi_client_v2, integration_v2,
+        mocker, mock_gundi_client_v2, integration_v2, mock_config_manager,
         mock_publish_event, mock_action_handlers,
 ):
     mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
     mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
     mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
     mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
 
@@ -140,13 +148,14 @@ async def test_execute_action_from_api_with_invalid_config(
 
 @pytest.mark.asyncio
 async def test_trigger_subaction(
-        mocker, mock_gundi_client_v2, integration_v2,
+        mocker, mock_gundi_client_v2, integration_v2, mock_config_manager,
         mock_publish_event, mock_action_handlers,
 ):
     settings.TRIGGER_ACTIONS_ALWAYS_SYNC = False
     settings.INTEGRATION_COMMANDS_TOPIC = "integration-actions-topic"
     mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
     mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
     mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
     mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
     mocker.patch("app.services.action_scheduler.publish_event", mock_publish_event)
@@ -179,12 +188,13 @@ async def test_trigger_subaction(
 
 @pytest.mark.asyncio
 async def test_trigger_subaction_sync(
-        mocker, mock_gundi_client_v2, integration_v2,
+        mocker, mock_gundi_client_v2, integration_v2, mock_config_manager,
         mock_publish_event, mock_action_handlers,
 ):
     settings.TRIGGER_ACTIONS_ALWAYS_SYNC = True
     mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
     mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
     mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
     mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
     mocker.patch("app.services.action_scheduler.publish_event", mock_publish_event)
