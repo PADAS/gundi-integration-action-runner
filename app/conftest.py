@@ -79,9 +79,86 @@ def mock_redis(mocker, mock_integration_state):
 
 
 @pytest.fixture
-def integration_v2():
-    return Integration.parse_obj(
+def mock_redis_empty(mocker, mock_integration_state):
+    redis = MagicMock()
+    redis_client = mocker.MagicMock()
+    redis_client.set.return_value = async_return(MagicMock())
+    redis_client.get.return_value = async_return(None)
+    redis_client.delete.return_value = async_return(MagicMock())
+    redis_client.setex.return_value = async_return(None)
+    redis_client.incr.return_value = redis_client
+    redis_client.decr.return_value = async_return(None)
+    redis_client.expire.return_value = redis_client
+    redis_client.execute.return_value = async_return((1, True))
+    redis_client.__aenter__.return_value = redis_client
+    redis_client.__aexit__.return_value = None
+    redis_client.pipeline.return_value = redis_client
+    redis.Redis.return_value = redis_client
+    return redis
+
+
+@pytest.fixture
+def mock_redis_with_integration_config(mocker, integration_v2_as_json):
+    redis = MagicMock()
+    redis_client = mocker.MagicMock()
+    redis_client.set.return_value = async_return(MagicMock())
+    redis_client.get.return_value = async_return(integration_v2_as_json)
+    redis_client.delete.return_value = async_return(MagicMock())
+    redis_client.setex.return_value = async_return(None)
+    redis_client.incr.return_value = redis_client
+    redis_client.decr.return_value = async_return(None)
+    redis_client.expire.return_value = redis_client
+    redis_client.execute.return_value = async_return((1, True))
+    redis_client.__aenter__.return_value = redis_client
+    redis_client.__aexit__.return_value = None
+    redis_client.pipeline.return_value = redis_client
+    redis.Redis.return_value = redis_client
+    return redis
+
+
+@pytest.fixture
+def mock_redis_with_action_config(mocker, pull_observations_config_as_json):
+    redis = MagicMock()
+    redis_client = mocker.MagicMock()
+    redis_client.set.return_value = async_return(MagicMock())
+    redis_client.get.return_value = async_return(pull_observations_config_as_json)
+    redis_client.delete.return_value = async_return(MagicMock())
+    redis_client.setex.return_value = async_return(None)
+    redis_client.incr.return_value = redis_client
+    redis_client.decr.return_value = async_return(None)
+    redis_client.expire.return_value = redis_client
+    redis_client.execute.return_value = async_return((1, True))
+    redis_client.__aenter__.return_value = redis_client
+    redis_client.__aexit__.return_value = None
+    redis_client.pipeline.return_value = redis_client
+    redis.Redis.return_value = redis_client
+    return redis
+
+
+@pytest.fixture
+def pull_observations_config_as_json():
+    return json.dumps(
         {
+            "id": "5577c323-b961-4277-9047-b1f27fd6a1b7",
+            "integration": "779ff3ab-5589-4f4c-9e0a-ae8d6c9edff0",
+            "action": {
+                "id": "75b3040f-ab1f-42e7-b39f-8965c088b154",
+                "type": "pull",
+                "name": "Pull Observations",
+                "value": "pull_observations",
+            },
+            "data": {
+                "end_datetime": "2023-11-10T06:00:00-00:00",
+                "start_datetime": "2023-11-10T05:30:00-00:00",
+                "force_run_since_start": False,
+            },
+        }
+    )
+
+
+@pytest.fixture
+def integration_v2_as_dict():
+    return {
             "id": "779ff3ab-5589-4f4c-9e0a-ae8d6c9edff0",
             "name": "Gundi X",
             "base_url": "https://gundi-er.pamdas.org",
@@ -210,7 +287,16 @@ def integration_v2():
             "status": "healthy",
             "status_details": "",
         }
-    )
+
+
+@pytest.fixture
+def integration_v2_as_json(integration_v2_as_dict):
+    return json.dumps(integration_v2_as_dict, default=str)
+
+
+@pytest.fixture
+def integration_v2(integration_v2_as_dict):
+    return Integration.parse_obj(integration_v2_as_dict)
 
 
 @pytest.fixture
