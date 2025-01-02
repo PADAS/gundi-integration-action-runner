@@ -31,7 +31,7 @@ async def test_execute_action_from_pubsub(
     )
 
     assert response.status_code == 200
-    assert mock_config_manager.get_integration.called
+    assert mock_config_manager.get_integration_details.called
     assert not mock_gundi_client_v2.get_integration_details.called
     mock_action_handler, mock_config = mock_action_handlers["pull_observations"]
     assert mock_action_handler.called
@@ -84,7 +84,7 @@ async def test_execute_action_from_api_with_config_overrides(
     )
 
     assert response.status_code == 200
-    assert mock_config_manager.get_integration.called
+    assert mock_config_manager.get_integration_details.called
     assert not mock_gundi_client_v2.get_integration_details.called
     mock_action_handler, mock_config = mock_action_handlers["pull_observations"]
     assert mock_action_handler.called
@@ -111,7 +111,7 @@ async def test_execute_action_from_pubsub_with_config_overrides(
     )
 
     assert response.status_code == 200
-    assert mock_config_manager.get_integration.called
+    assert mock_config_manager.get_integration_details.called
     assert not mock_gundi_client_v2.get_integration_details.called
     mock_action_handler, mock_config = mock_action_handlers["pull_observations"]
     assert mock_action_handler.called

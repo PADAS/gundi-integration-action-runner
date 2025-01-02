@@ -6,7 +6,7 @@ import pytest
 from unittest.mock import MagicMock
 from app import settings
 from gcloud.aio import pubsub
-from gundi_core.schemas.v2 import Integration
+from gundi_core.schemas.v2 import Integration, IntegrationSummary
 from gundi_core.events import (
     IntegrationActionCustomLog,
     CustomActivityLog,
@@ -861,7 +861,10 @@ def mock_state_manager(mocker):
 @pytest.fixture
 def mock_config_manager(mocker, integration_v2):
     mock_config_manager = mocker.MagicMock()
-    mock_config_manager.get_integration.return_value = async_return(integration_v2)
+    mock_config_manager.get_integration.return_value = async_return(
+        IntegrationSummary.from_integration(integration_v2)
+    )
+    mock_config_manager.get_integration_details.return_value = async_return(integration_v2)
     mock_config_manager.get_action_configuration.return_value = async_return(integration_v2.configurations[0])
     mock_config_manager.set_integration.return_value = async_return(None)
     mock_config_manager.set_action_configuration.return_value = async_return(None)

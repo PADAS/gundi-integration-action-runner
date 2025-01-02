@@ -34,9 +34,9 @@ async def execute_action(integration_id: str, action_id: str, config_overrides: 
     """
     logger.info(f"Executing action '{action_id}' for integration '{integration_id}'...")
     try:  # Get the integration config
-        integration = await config_manager.get_integration(integration_id)
+        integration = await config_manager.get_integration_details(integration_id)
     except Exception as e:
-        message = f"Error retrieving configuration for integration '{integration_id}': {e}"
+        message = f"Error retrieving details for integration '{integration_id}': {e}"
         logger.exception(message)
         await publish_event(
             event=IntegrationActionFailed(

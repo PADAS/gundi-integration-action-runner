@@ -1,8 +1,6 @@
-import datetime
-import json
 import pytest
 
-from gundi_core.schemas.v2 import Integration, IntegrationActionConfiguration
+from gundi_core.schemas.v2 import IntegrationSummary, IntegrationActionConfiguration
 from app.services.config_manager import IntegrationConfigurationManager
 
 
@@ -18,7 +16,7 @@ async def test_get_integration_from_redis(
     integration = await config_manager.get_integration(integration_id)
 
     assert integration
-    assert isinstance(integration, Integration)
+    assert isinstance(integration, IntegrationSummary)
     assert integration.id == integration_v2.id
     mock_redis_with_integration_config.Redis.return_value.get.assert_called_once_with(f"integration.{integration_id}")
     assert not mock_gundi_client_v2_class.return_value.get_integration_details.called
@@ -36,7 +34,7 @@ async def test_get_integration_from_gundi(
     integration = await config_manager.get_integration(integration_id)
 
     assert integration
-    assert isinstance(integration, Integration)
+    assert isinstance(integration, IntegrationSummary)
     assert integration.id == integration_v2.id
     mock_redis_empty.Redis.return_value.get.assert_called_once_with(f"integration.{integration_id}")
     mock_gundi_client_v2_class.return_value.get_integration_details.assert_called_once_with(integration_id)
@@ -71,7 +69,7 @@ async def test_get_action_configuration_from_redis(
 
     assert action_config
     assert isinstance(action_config, IntegrationActionConfiguration)
-    mock_redis_with_action_config.Redis.return_value.get.assert_called_once_with(f"integration.{integration_id}.{action_id}")
+    mock_redis_with_action_config.Redis.return_value.get.assert_called_once_with(f"integrationconfig.{integration_id}.{action_id}")
 
 
 @pytest.mark.asyncio
@@ -89,5 +87,5 @@ async def test_get_action_configuration_from_gundi(
 
     assert action_config
     assert isinstance(action_config, IntegrationActionConfiguration)
-    mock_redis_empty.Redis.return_value.get.assert_called_once_with(f"integration.{integration_id}.{action_id}")
+    mock_redis_empty.Redis.return_value.get.assert_called_once_with(f"integrationconfig.{integration_id}.{action_id}")
     mock_gundi_client_v2_class.return_value.get_integration_details.assert_called_once_with(integration_id)
