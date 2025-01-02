@@ -102,6 +102,9 @@ app.include_router(
 app.include_router(
     webhooks.router, prefix="/webhooks", tags=["webhooks"], responses={}
 )
+app.include_router(
+    webhooks.router, prefix="/config-events", tags=["configurations"], responses={}
+)
 
 
 @app.exception_handler(RequestValidationError)

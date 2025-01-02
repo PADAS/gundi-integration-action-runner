@@ -70,6 +70,12 @@ class IntegrationConfigurationManager:
             with attempt:
                 await self.db_client.set(key, integration.json())
 
+    async def delete_integration(self, integration_id: str):
+        key = self._get_integration_key(integration_id)
+        for attempt in stamina.retry_context(on=redis.RedisError, attempts=5, wait_initial=1.0, wait_max=30, wait_jitter=3.0):
+            with attempt:
+                await self.db_client.delete(key)
+
     async def get_integration_details(self, integration_id: str) -> Integration:
         integration_summary = await self.get_integration(integration_id)
         configurations = []
@@ -85,5 +91,6 @@ class IntegrationConfigurationManager:
             owner=integration_summary.owner,
             default_route=integration_summary.default_route,
             additional=integration_summary.additional,
-            configurations=configurations
+            configurations=configurations,
+            # ToDo: webhook_configuration
         )
