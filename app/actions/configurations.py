@@ -24,4 +24,11 @@ class PullRmwHubObservationsConfiguration(PullActionConfiguration):
         description="API key used to read/write data from rmwHUB services.",
         format="password",
     )
-    rmw_url: str = "https://test.ropeless.network/api/search_others/"
+    rmw_url: str = "https://test.ropeless.network/api/"
+    er_site: str = "https://buoy.dev.pamdas.org/api/v1.0/"
+    er_token: pydantic.SecretStr = pydantic.Field(
+        ...,
+        title="ER Token",
+        description="ER token used to read/write data from buoy services.",
+        format="password",
+    )

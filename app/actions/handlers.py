@@ -47,11 +47,11 @@ async def action_pull_observations(
     rmw_adapter = RmwHubAdapter(
         action_config.api_key.get_secret_value(), action_config.rmw_url
     )
-    
+
     logger.info(
         f"Downloading data from RMW Hub API...For the dates: {start_datetime_str} - {end_datetime_str}"
     )
-    updates, deletes = rmw_adapter.download_data(start_datetime_str)
+    updates, deletes = rmw_adapter.download_data_search_others(start_datetime_str)
 
     # Optionally, log a custom messages to be shown in the portal
     await log_activity(
@@ -66,7 +66,7 @@ async def action_pull_observations(
     logger.info(
         f"Processing updates from RMW Hub API...Number of updates: {len(updates.sets)}, Number of deletes: {len(deletes)}"
     )
-    observations = rmw_adapter.process_updates(updates)
+    observations = rmw_adapter.process_updates_search_others(updates)
     # TODO: Implement process_deletes
     # rmw_adapter.process_deletes(deletes)
 

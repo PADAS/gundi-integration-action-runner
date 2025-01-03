@@ -1,9 +1,10 @@
 import pytest
 
 from app.actions.configurations import PullRmwHubObservationsConfiguration
-from app.actions.rmwhub import GearSet, Trap
+from app.actions.rmwhub import GearSetSearchOthers, TrapSearchOthers
 from ropeless_utils import State
 from gundi_core.schemas import IntegrationInformation
+
 
 @pytest.fixture
 def a_good_state():
@@ -63,8 +64,7 @@ def an_integration_without_er_buoy_config(a_state_without_er_buoy_config):
 @pytest.fixture
 def a_good_configuration():
     return PullRmwHubObservationsConfiguration(
-        api_key="anApiKey",
-        rmw_url="https://somermwhub.url"
+        api_key="anApiKey", rmw_url="https://somermwhub.url"
     )
 
 
@@ -74,14 +74,14 @@ def mock_rmwhub_response():
         "format_version": 0.1,
         "as_of_utc": "2024-11-06T20:53:21Z",
         "updates": {
-            "description": "New or changed locations of \"others\" gear",
+            "description": 'New or changed locations of "others" gear',
             "sets": [
                 {
                     "set_id": "test_set_id_0",
                     "deployment_type": "single",
                     "traps": [
                         {"sequence": 0, "latitude": -5.19816, "longitude": 122.8113}
-                    ]
+                    ],
                 },
                 {
                     "set_id": "test_set_id_1",
@@ -90,14 +90,14 @@ def mock_rmwhub_response():
                         {
                             "sequence": 0,
                             "latitude": 41.2576527,
-                            "longitude": -71.2768455
+                            "longitude": -71.2768455,
                         },
                         {
                             "sequence": 1,
                             "latitude": 41.2544098,
-                            "longitude": -71.2793166
-                        }
-                    ]
+                            "longitude": -71.2793166,
+                        },
+                    ],
                 },
                 {
                     "set_id": "test_set_id_2",
@@ -106,9 +106,9 @@ def mock_rmwhub_response():
                         {
                             "sequence": 0,
                             "latitude": 41.3830183,
-                            "longitude": -71.5085983
+                            "longitude": -71.5085983,
                         }
-                    ]
+                    ],
                 },
                 {
                     "set_id": "test_set_id_3",
@@ -117,9 +117,9 @@ def mock_rmwhub_response():
                         {
                             "sequence": 0,
                             "latitude": 41.3830183,
-                            "longitude": -71.5085983
+                            "longitude": -71.5085983,
                         }
-                    ]
+                    ],
                 },
                 {
                     "set_id": "test_set_id_4",
@@ -128,16 +128,16 @@ def mock_rmwhub_response():
                         {
                             "sequence": 0,
                             "latitude": 41.1966817,
-                            "longitude": -71.3199314
+                            "longitude": -71.3199314,
                         },
                         {
                             "sequence": 1,
                             "latitude": 41.193145,
-                            "longitude": -71.3223467
-                        }
-                    ]
-                }
-            ]
+                            "longitude": -71.3223467,
+                        },
+                    ],
+                },
+            ],
         },
         "deletes": {
             "sets": [
@@ -145,48 +145,56 @@ def mock_rmwhub_response():
                 {"set_id": "test_delete_set_id_2"},
                 {"set_id": "test_delete_set_id_3"},
                 {"set_id": "test_delete_set_id_4"},
-                {"set_id": "test_delete_set_id_5"}
+                {"set_id": "test_delete_set_id_5"},
             ]
-        }
+        },
     }
 
 
 @pytest.fixture
 def mock_rmwhub_items():
     return [
-            GearSet(
-                set_id="test_set_id_0",
-                deployment_type="single",
-                traps= [Trap(sequence= 0, latitude= -5.19816, longitude= 122.8113)],
-            ),
-            GearSet(
-                set_id="test_set_id_1",
-                deployment_type="trawl",
-                traps= [
-                    Trap(sequence= 0, latitude= 41.2576527, longitude= -71.2768455),
-                    Trap(sequence= 1, latitude= 41.2544098, longitude= -71.2793166),
-                ],
-            ),
-            GearSet(
-                set_id="test_set_id_2",
-                deployment_type="single",
-                traps= [
-                    Trap(sequence= 0, latitude= 41.3830183, longitude= -71.508598)
-                ],
-            ),
-            GearSet(
-                set_id="test_set_id_3",
-                deployment_type="single",
-                traps= [Trap(sequence= 0, latitude= 41.3830183, longitude= -71.508598)],
-            ),
-            GearSet(
-                set_id="test_set_id_4",
-                deployment_type="trawl",
-                traps= [
-                    Trap(sequence= 0, latitude= 41.1966817, longitude= -71.3199314),
-                    Trap(sequence= 1, latitude= 41.193145, longitude= -71.3223467),
-                ],
-            ),
+        GearSetSearchOthers(
+            set_id="test_set_id_0",
+            deployment_type="single",
+            traps=[TrapSearchOthers(sequence=0, latitude=-5.19816, longitude=122.8113)],
+        ),
+        GearSetSearchOthers(
+            set_id="test_set_id_1",
+            deployment_type="trawl",
+            traps=[
+                TrapSearchOthers(
+                    sequence=0, latitude=41.2576527, longitude=-71.2768455
+                ),
+                TrapSearchOthers(
+                    sequence=1, latitude=41.2544098, longitude=-71.2793166
+                ),
+            ],
+        ),
+        GearSetSearchOthers(
+            set_id="test_set_id_2",
+            deployment_type="single",
+            traps=[
+                TrapSearchOthers(sequence=0, latitude=41.3830183, longitude=-71.508598)
+            ],
+        ),
+        GearSetSearchOthers(
+            set_id="test_set_id_3",
+            deployment_type="single",
+            traps=[
+                TrapSearchOthers(sequence=0, latitude=41.3830183, longitude=-71.508598)
+            ],
+        ),
+        GearSetSearchOthers(
+            set_id="test_set_id_4",
+            deployment_type="trawl",
+            traps=[
+                TrapSearchOthers(
+                    sequence=0, latitude=41.1966817, longitude=-71.3199314
+                ),
+                TrapSearchOthers(sequence=1, latitude=41.193145, longitude=-71.3223467),
+            ],
+        ),
     ], [
         {"set_id": "test_delete_set_id_1"},
         {"set_id": "test_delete_set_id_2"},
