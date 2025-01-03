@@ -44,8 +44,20 @@ async def handle_action_config_created_event(event: ActionConfigCreated):
 
 
 async def handle_action_config_updated_event(event: ActionConfigUpdated):
-    # ToDo: implement
-    pass
+    event_data = event.payload
+    integration_id = event_data.integration_id
+    action_id = event_data.alt_id
+    action_config = await config_manager.get_action_configuration(
+        integration_id=integration_id,
+        action_id=action_id
+    )
+    for key, value in event_data.changes.items():
+        setattr(action_config, key, value)
+    await config_manager.set_action_configuration(
+        integration_id=integration_id,
+        action_id=action_id,
+        config=action_config
+    )
 
 
 async def handle_action_config_deleted_event(event: ActionConfigDeleted):
@@ -86,7 +98,7 @@ async def process_config_event(event_data, attributes):
         try:
             handler = event_handlers[event_type]
         except KeyError:
-            logger.warning(f"Event of type '{event_type}' unknown. Ignored.")
+            logger.warning(f"Event of type '{event_type}' unknown. Message discarded.")
             return {"status": "error", "message": "Unknown event type"}
         try:
             schema = event_schemas[event_type]
@@ -96,8 +108,8 @@ async def process_config_event(event_data, attributes):
         parsed_event = schema.parse_obj(event_data)
         await handler(event=parsed_event)
     except Exception as e:  # ToDo: Add specific exceptions
-        logger.exception(f"Error Processing Event: {e}",)
-        return {"status": "error", "message": f"Internal Error: str(e)"}
+        logger.exception(f"Error processing event: {type(e)}:{e}",)
+        return {"status": "error", "message": f"Internal error: {str(e)}"}
     else:
-        logger.info(f"Configuration Event {parsed_event.id} Processed successfully.")
-        return {"status": "success", "message": "Event Processed Successfully"}
+        logger.info(f"Configuration event {event_type} ({parsed_event.id}) processed successfully.")
+        return {"status": "success", "message": "Event processed successfully"}
