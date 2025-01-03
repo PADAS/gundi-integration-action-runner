@@ -3,8 +3,12 @@ import json
 
 import pytest
 from fastapi.testclient import TestClient
-from app.main import app
+from gundi_core.commands import RunIntegrationAction
 
+from app import settings
+from app.conftest import MockSubActionConfiguration
+from app.main import app
+from app.services.action_scheduler import trigger_action
 
 api_client = TestClient(app)
 
@@ -132,3 +136,72 @@ async def test_execute_action_from_api_with_invalid_config(
     )
 
     assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_trigger_subaction(
+        mocker, mock_gundi_client_v2, integration_v2,
+        mock_publish_event, mock_action_handlers,
+):
+    settings.TRIGGER_ACTIONS_ALWAYS_SYNC = False
+    settings.INTEGRATION_COMMANDS_TOPIC = "integration-actions-topic"
+    mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_scheduler.publish_event", mock_publish_event)
+    integration_id = str(integration_v2.id)
+    action_id = "pull_observations_by_date"
+    config = MockSubActionConfiguration(
+        start_datetime="2024-12-01T00:00:00Z",
+        end_datetime="2025-01-15T00:00:00Z"
+    )
+
+    await trigger_action(
+        integration_id=integration_id,
+        action_id=action_id,
+        config=config
+    )
+
+    # Check that the action was not executed directly
+    mock_action_handler, mock_config = mock_action_handlers[action_id]
+    assert not mock_action_handler.called
+    # Check that a command was published in the right topic to trigger the action
+    assert mock_publish_event.call_count == 1
+    call = mock_publish_event.mock_calls[0]
+    command, topic = call.args
+    assert isinstance(command, RunIntegrationAction)
+    assert str(command.integration_id) == integration_id
+    assert command.action_id == action_id
+    assert command.config_overrides == config.dict()
+    assert topic == settings.INTEGRATION_COMMANDS_TOPIC
+
+
+@pytest.mark.asyncio
+async def test_trigger_subaction_sync(
+        mocker, mock_gundi_client_v2, integration_v2,
+        mock_publish_event, mock_action_handlers,
+):
+    settings.TRIGGER_ACTIONS_ALWAYS_SYNC = True
+    mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_scheduler.publish_event", mock_publish_event)
+    integration_id = str(integration_v2.id)
+    action_id = "pull_observations_by_date"
+    config = MockSubActionConfiguration(
+        start_datetime="2024-12-01T00:00:00Z",
+        end_datetime="2025-01-15T00:00:00Z"
+    )
+
+    await trigger_action(
+        integration_id=integration_id,
+        action_id=action_id,
+        config=config
+    )
+
+    # Check that the action was executed directly
+    mock_action_handler, mock_config = mock_action_handlers[action_id]
+    assert mock_action_handler.called
+    assert not mock_publish_event.called
