@@ -89,7 +89,7 @@ event_schemas = {
 }
 
 
-async def process_config_event(event_data, attributes):
+async def process_config_event(event_data: dict, attributes: dict = None):
     try:
         logger.info(f"Received Configuration Event. data: {event_data}, attributes: {attributes}.")
         event = SystemEventBaseModel.parse_obj(event_data)
