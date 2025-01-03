@@ -36,7 +36,7 @@ async def execute_action(integration_id: str, action_id: str, config_overrides: 
     try:  # Get the integration config
         integration = await config_manager.get_integration_details(integration_id)
     except Exception as e:
-        message = f"Error retrieving details for integration '{integration_id}': {e}"
+        message = f"Error retrieving integration '{integration_id}': {type(e)}: {e}"
         logger.exception(message)
         await publish_event(
             event=IntegrationActionFailed(
@@ -140,7 +140,7 @@ async def execute_action(integration_id: str, action_id: str, config_overrides: 
             content=jsonable_encoder({"detail": message}),
         )
     except Exception as e:
-        message = f"Internal error executing action '{action_id}' for integration {integration_id}: {e}"
+        message = f"Internal error executing action '{action_id}' for integration '{integration_id}': {type(e)}: {e}"
         logger.exception(message)
         await publish_event(
             event=IntegrationActionFailed(
