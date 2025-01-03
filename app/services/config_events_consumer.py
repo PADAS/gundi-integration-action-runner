@@ -61,8 +61,13 @@ async def handle_action_config_updated_event(event: ActionConfigUpdated):
 
 
 async def handle_action_config_deleted_event(event: ActionConfigDeleted):
-    # ToDo: implement
-    pass
+    event_data = event.payload
+    integration_id = event_data.integration_id
+    action_id = event_data.alt_id
+    await config_manager.delete_action_configuration(
+        integration_id=integration_id,
+        action_id=action_id
+    )
 
 
 event_handlers = {
