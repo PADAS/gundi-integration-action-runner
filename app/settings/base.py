@@ -54,10 +54,12 @@ KEYCLOAK_AUTH_SERVICE = env.str("KEYCLOAK_AUTH_SERVICE", None)
 KEYCLOAK_REALM = env.str("KEYCLOAK_REALM", None)
 KEYCLOAK_ISSUER = f"{KEYCLOAK_AUTH_SERVICE}/realms/{KEYCLOAK_REALM}"
 
-# Redis settings for state manager
+
+# Redis settings for state & config managers
 REDIS_HOST = env.str("REDIS_HOST", "localhost")
 REDIS_PORT = env.int("REDIS_PORT", 6379)
 REDIS_STATE_DB = env.int("REDIS_STATE_DB", 0)
+REDIS_CONFIGS_DB = env.int("REDIS_CONFIGS_DB", 1)  # ToDo: define a convention for DB numbers across services
 
 
 REGISTER_ON_START = env.bool("REGISTER_ON_START", False)
