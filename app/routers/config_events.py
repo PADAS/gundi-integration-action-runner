@@ -15,8 +15,7 @@ router = APIRouter()
     summary="This endpoint processed configuration events from the portal",
 )
 async def process_request(
-    request: Request,  # ToDo customize schema
-    background_tasks: BackgroundTasks
+    request: Request,
 ):
     # Parse PubSub message
     json_data = await request.json()
