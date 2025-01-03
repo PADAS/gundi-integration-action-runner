@@ -52,6 +52,12 @@ class IntegrationConfigurationManager:
             with attempt:
                 await self.db_client.set(key, config.json())
 
+    async def delete_action_configuration(self, integration_id: str, action_id: str):
+        key = self._get_integration_config_key(integration_id, action_id)
+        for attempt in stamina.retry_context(on=redis.RedisError, attempts=5, wait_initial=1.0, wait_max=30, wait_jitter=3.0):
+            with attempt:
+                return await self.db_client.delete(key)
+
     async def get_integration(self, integration_id: str) -> IntegrationSummary:
         key = self._get_integration_key(integration_id)
         for attempt in stamina.retry_context(on=redis.RedisError, attempts=5, wait_initial=1.0, wait_max=30, wait_jitter=3.0):
