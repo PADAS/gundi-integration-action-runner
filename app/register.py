@@ -4,7 +4,7 @@ import pydantic
 
 from app.services.action_runner import _portal
 from app.services.self_registration import register_integration_in_gundi
-from app.services.utils import CrontabSchedule
+from app.services.action_scheduler import CrontabSchedule
 
 
 @click.command()

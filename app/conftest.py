@@ -6,7 +6,7 @@ import pytest
 from unittest.mock import MagicMock
 from app import settings
 from gcloud.aio import pubsub
-from gundi_core.schemas.v2 import Integration
+from gundi_core.schemas.v2 import Integration, IntegrationSummary
 from gundi_core.events import (
     IntegrationActionCustomLog,
     CustomActivityLog,
@@ -29,9 +29,10 @@ from gundi_core.events import (
 from app.actions import (
     PullActionConfiguration,
     AuthActionConfiguration,
-    ExecutableActionMixin,
+    ExecutableActionMixin, InternalActionConfiguration,
 )
-from app.services.utils import GlobalUISchemaOptions, FieldWithUIOptions, UIOptions, CrontabSchedule
+from app.services.utils import GlobalUISchemaOptions, FieldWithUIOptions, UIOptions
+from app.services.action_scheduler import CrontabSchedule
 from app.webhooks import (
     GenericJsonTransformConfig,
     GenericJsonPayload,
@@ -78,9 +79,86 @@ def mock_redis(mocker, mock_integration_state):
 
 
 @pytest.fixture
-def integration_v2():
-    return Integration.parse_obj(
+def mock_redis_empty(mocker, mock_integration_state):
+    redis = MagicMock()
+    redis_client = mocker.MagicMock()
+    redis_client.set.return_value = async_return(MagicMock())
+    redis_client.get.return_value = async_return(None)
+    redis_client.delete.return_value = async_return(MagicMock())
+    redis_client.setex.return_value = async_return(None)
+    redis_client.incr.return_value = redis_client
+    redis_client.decr.return_value = async_return(None)
+    redis_client.expire.return_value = redis_client
+    redis_client.execute.return_value = async_return((1, True))
+    redis_client.__aenter__.return_value = redis_client
+    redis_client.__aexit__.return_value = None
+    redis_client.pipeline.return_value = redis_client
+    redis.Redis.return_value = redis_client
+    return redis
+
+
+@pytest.fixture
+def mock_redis_with_integration_config(mocker, integration_v2_as_json):
+    redis = MagicMock()
+    redis_client = mocker.MagicMock()
+    redis_client.set.return_value = async_return(MagicMock())
+    redis_client.get.return_value = async_return(integration_v2_as_json)
+    redis_client.delete.return_value = async_return(MagicMock())
+    redis_client.setex.return_value = async_return(None)
+    redis_client.incr.return_value = redis_client
+    redis_client.decr.return_value = async_return(None)
+    redis_client.expire.return_value = redis_client
+    redis_client.execute.return_value = async_return((1, True))
+    redis_client.__aenter__.return_value = redis_client
+    redis_client.__aexit__.return_value = None
+    redis_client.pipeline.return_value = redis_client
+    redis.Redis.return_value = redis_client
+    return redis
+
+
+@pytest.fixture
+def mock_redis_with_action_config(mocker, pull_observations_config_as_json):
+    redis = MagicMock()
+    redis_client = mocker.MagicMock()
+    redis_client.set.return_value = async_return(MagicMock())
+    redis_client.get.return_value = async_return(pull_observations_config_as_json)
+    redis_client.delete.return_value = async_return(MagicMock())
+    redis_client.setex.return_value = async_return(None)
+    redis_client.incr.return_value = redis_client
+    redis_client.decr.return_value = async_return(None)
+    redis_client.expire.return_value = redis_client
+    redis_client.execute.return_value = async_return((1, True))
+    redis_client.__aenter__.return_value = redis_client
+    redis_client.__aexit__.return_value = None
+    redis_client.pipeline.return_value = redis_client
+    redis.Redis.return_value = redis_client
+    return redis
+
+
+@pytest.fixture
+def pull_observations_config_as_json():
+    return json.dumps(
         {
+            "id": "5577c323-b961-4277-9047-b1f27fd6a1b7",
+            "integration": "779ff3ab-5589-4f4c-9e0a-ae8d6c9edff0",
+            "action": {
+                "id": "75b3040f-ab1f-42e7-b39f-8965c088b154",
+                "type": "pull",
+                "name": "Pull Observations",
+                "value": "pull_observations",
+            },
+            "data": {
+                "end_datetime": "2023-11-10T06:00:00-00:00",
+                "start_datetime": "2023-11-10T05:30:00-00:00",
+                "force_run_since_start": False,
+            },
+        }
+    )
+
+
+@pytest.fixture
+def integration_v2_as_dict():
+    return {
             "id": "779ff3ab-5589-4f4c-9e0a-ae8d6c9edff0",
             "name": "Gundi X",
             "base_url": "https://gundi-er.pamdas.org",
@@ -209,7 +287,16 @@ def integration_v2():
             "status": "healthy",
             "status_details": "",
         }
-    )
+
+
+@pytest.fixture
+def integration_v2_as_json(integration_v2_as_dict):
+    return json.dumps(integration_v2_as_dict, default=str)
+
+
+@pytest.fixture
+def integration_v2(integration_v2_as_dict):
+    return Integration.parse_obj(integration_v2_as_dict)
 
 
 @pytest.fixture
@@ -772,6 +859,19 @@ def mock_state_manager(mocker):
 
 
 @pytest.fixture
+def mock_config_manager(mocker, integration_v2):
+    mock_config_manager = mocker.MagicMock()
+    mock_config_manager.get_integration.return_value = async_return(
+        IntegrationSummary.from_integration(integration_v2)
+    )
+    mock_config_manager.get_integration_details.return_value = async_return(integration_v2)
+    mock_config_manager.get_action_configuration.return_value = async_return(integration_v2.configurations[0])
+    mock_config_manager.set_integration.return_value = async_return(None)
+    mock_config_manager.set_action_configuration.return_value = async_return(None)
+    return mock_config_manager
+
+
+@pytest.fixture
 def mock_pubsub_client(
     mocker, integration_event_pubsub_message, gcp_pubsub_publish_response
 ):
@@ -851,13 +951,22 @@ class MockAuthenticateActionConfiguration(
     )
 
 
+class MockSubActionConfiguration(InternalActionConfiguration):
+    start_datetime: datetime.datetime
+    end_datetime: datetime.datetime
+
+
 @pytest.fixture
 def mock_action_handlers(mocker):
-    mock_action_handler = AsyncMock()
-    mock_action_handler.return_value = {"observations_extracted": 10}
-    mock_action_handler.crontab_schedule = CrontabSchedule.parse_obj_from_crontab("*/10 * * * * -5")
+    mock_pull_observations_action_handler = AsyncMock()
+    mock_pull_observations_action_handler.return_value = {"observations_extracted": 10}
+    mock_pull_observations_action_handler.crontab_schedule = CrontabSchedule.parse_obj_from_crontab("*/10 * * * * -5")
+    mock_pull_observations_by_date_action_handler = AsyncMock()
+    mock_pull_observations_by_date_action_handler.return_value = {"observations_extracted": 10}
+    del mock_pull_observations_by_date_action_handler.crontab_schedule
     mock_action_handlers = {
-        "pull_observations": (mock_action_handler, MockPullActionConfiguration)
+        "pull_observations": (mock_pull_observations_action_handler, MockPullActionConfiguration),
+        "pull_observations_by_date": (mock_pull_observations_by_date_action_handler, MockSubActionConfiguration)
     }
     return mock_action_handlers
 

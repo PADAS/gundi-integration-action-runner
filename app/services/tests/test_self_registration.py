@@ -2,7 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 from app.main import app
 from app.services.self_registration import register_integration_in_gundi
-from app.services.utils import crontab_schedule, CrontabSchedule
+from app.services.action_scheduler import crontab_schedule, CrontabSchedule
 
 api_client = TestClient(app)
 
