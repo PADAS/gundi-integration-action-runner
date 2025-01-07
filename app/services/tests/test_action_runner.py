@@ -16,7 +16,7 @@ api_client = TestClient(app)
 @pytest.mark.asyncio
 async def test_execute_action_from_pubsub(
         mocker, mock_gundi_client_v2, mock_publish_event, mock_action_handlers, mock_config_manager,
-        event_v2_cloud_event_headers, event_v2_cloud_event_payload
+        pubsub_message_request_headers, event_v2_cloud_event_payload
 ):
     mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
     mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
@@ -26,7 +26,7 @@ async def test_execute_action_from_pubsub(
 
     response = api_client.post(
         "/",
-        headers=event_v2_cloud_event_headers,
+        headers=pubsub_message_request_headers,
         json=event_v2_cloud_event_payload,
     )
 
@@ -96,7 +96,7 @@ async def test_execute_action_from_api_with_config_overrides(
 @pytest.mark.asyncio
 async def test_execute_action_from_pubsub_with_config_overrides(
         mocker, mock_gundi_client_v2, mock_publish_event, mock_action_handlers, mock_config_manager,
-        event_v2_cloud_event_headers, event_v2_cloud_event_payload_with_config_overrides
+        pubsub_message_request_headers, event_v2_cloud_event_payload_with_config_overrides
 ):
     mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
     mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
@@ -106,7 +106,7 @@ async def test_execute_action_from_pubsub_with_config_overrides(
 
     response = api_client.post(
         "/",
-        headers=event_v2_cloud_event_headers,
+        headers=pubsub_message_request_headers,
         json=event_v2_cloud_event_payload_with_config_overrides,
     )
 
