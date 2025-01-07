@@ -8,6 +8,7 @@ from app import settings
 
 
 class IntegrationConfigurationManager:
+    # ToDo: Add support for webhook configs
 
     def __init__(self, **kwargs):
         host = kwargs.get("host", settings.REDIS_HOST)
