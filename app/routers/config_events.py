@@ -20,8 +20,9 @@ async def process_request(
     # Parse PubSub message
     json_data = await request.json()
     pubsub_message = json_data["message"]
-    data = base64.b64decode(pubsub_message.get("data", "{}").encode("utf-8"))
-    event_data = json.loads(data)
+    message_data = pubsub_message.get("data", "")
+    decoded_data = base64.b64decode(message_data.encode("utf-8"))
+    event_data = json.loads(decoded_data) if decoded_data else {}
     attributes = pubsub_message.get("attributes")
     return await process_config_event(event_data, attributes)
 
