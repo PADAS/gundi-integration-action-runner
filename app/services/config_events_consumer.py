@@ -26,7 +26,8 @@ async def handle_integration_updated_event(event: IntegrationUpdated):
     event_data = event.payload
     integration = await config_manager.get_integration(integration_id=event_data.id)
     for key, value in event_data.changes.items():
-        setattr(integration, key, value)
+        if hasattr(integration, key):
+            setattr(integration, key, value)
     await config_manager.set_integration(integration=integration)
 
 
@@ -93,7 +94,6 @@ async def process_config_event(event_data: dict, attributes: dict = None):
     try:
         logger.info(f"Received Configuration Event. data: {event_data}, attributes: {attributes}.")
         event = SystemEventBaseModel.parse_obj(event_data)
-        event_type = event.event_type
         schema_version = event.schema_version
         if schema_version != "v1":
             logger.warning(
@@ -101,6 +101,7 @@ async def process_config_event(event_data: dict, attributes: dict = None):
             )
             return {"status": "error", "message": "Unsupported schema version"}
         try:
+            event_type = attributes.get("event_type")
             handler = event_handlers[event_type]
         except KeyError:
             logger.warning(f"Event of type '{event_type}' unknown. Message discarded.")
@@ -112,9 +113,9 @@ async def process_config_event(event_data: dict, attributes: dict = None):
             return
         parsed_event = schema.parse_obj(event_data)
         await handler(event=parsed_event)
-    except Exception as e:  # ToDo: Add specific exceptions
+    except Exception as e:  # ToDo: handle more specific exceptions
         logger.exception(f"Error processing event: {type(e)}:{e}",)
         return {"status": "error", "message": f"Internal error: {str(e)}"}
     else:
-        logger.info(f"Configuration event {event_type} ({parsed_event.id}) processed successfully.")
+        logger.info(f"Configuration event {event_type} ({parsed_event.event_id}) processed successfully.")
         return {"status": "success", "message": "Event processed successfully"}
