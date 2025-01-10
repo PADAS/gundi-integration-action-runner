@@ -60,7 +60,7 @@ async def execute_action(integration_id: str, action_id: str, config_overrides: 
     )
     if not action_config and not config_overrides:
         message = f"Configuration for action '{action_id}' for integration {str(integration.id)} " \
-                  f"is missing. Please fix the integration setup in the portal or provide a config in the request."
+                  f"is missing. Please fix the integration setup in the portal or provide a valid integration config in the request."
         logger.error(message)
         await publish_event(
             event=IntegrationActionFailed(
