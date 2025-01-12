@@ -9,6 +9,7 @@ from gundi_core.schemas.v2 import Integration
 
 from .configurations import PullRmwHubObservationsConfiguration, AuthenticateConfig
 from .rmwhub import RmwHubAdapter
+from .helpers import get_er_token_and_site
 
 logger = logging.getLogger(__name__)
 
@@ -44,14 +45,19 @@ async def action_pull_observations(
     )
     end_datetime_str = end_datetime.strftime("%Y-%m-%d %H:%M:%S")
 
+    er_token, er_destination = await get_er_token_and_site(str(integration.id))
+
     rmw_adapter = RmwHubAdapter(
-        action_config.api_key.get_secret_value(), action_config.rmw_url
+        action_config.api_key.get_secret_value(),
+        action_config.rmw_url,
+        er_token,
+        er_destination,
     )
 
     logger.info(
         f"Downloading data from RMW Hub API...For the dates: {start_datetime_str} - {end_datetime_str}"
     )
-    updates, deletes = rmw_adapter.download_data_search_others(start_datetime_str)
+    rmwSets = rmw_adapter.download_data(start_datetime_str)
 
     # Optionally, log a custom messages to be shown in the portal
     await log_activity(
@@ -64,11 +70,9 @@ async def action_pull_observations(
     )
 
     logger.info(
-        f"Processing updates from RMW Hub API...Number of updates: {len(updates.sets)}, Number of deletes: {len(deletes)}"
+        f"Processing updates from RMW Hub API...Number of gearsets returned: {len(rmwSets)}"
     )
-    observations = rmw_adapter.process_updates_search_others(updates)
-    # TODO: Implement process_deletes
-    # rmw_adapter.process_deletes(deletes)
+    observations = rmw_adapter.process_sets(rmwSets)
 
     # Send the extracted data to Gundi
     logger.info(f"Sending {len(observations)} observations to Gundi...")
