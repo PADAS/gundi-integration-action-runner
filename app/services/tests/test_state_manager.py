@@ -20,8 +20,9 @@ async def test_set_integration_state(mocker, mock_redis, integration_v2):
         state=state
     )
 
-    mock_redis.Redis.return_value.set.assert_called_once_with(
+    mock_redis.Redis.return_value.setex.assert_called_once_with(
         f"integration_state.{integration_id}.pull_observations.no-source",
+        7 * 86400,
         '{"last_execution": "' + execution_timestamp + '"}'
     )
 
@@ -62,8 +63,9 @@ async def test_delete_integration_state(mocker, mock_redis, integration_v2):
         state=state
     )
 
-    mock_redis.Redis.return_value.set.assert_called_once_with(
+    mock_redis.Redis.return_value.setex.assert_called_once_with(
         f"integration_state.{integration_id}.pull_observations.no-source",
+        7 * 86400,
         '{"last_execution": "' + execution_timestamp + '"}'
     )
 
@@ -94,8 +96,9 @@ async def test_set_source_state(mocker, mock_redis, integration_v2, mock_integra
         state=mock_integration_state
     )
 
-    mock_redis.Redis.return_value.set.assert_called_once_with(
+    mock_redis.Redis.return_value.setex.assert_called_once_with(
         f"integration_state.{integration_id}.pull_observations.{source_id}",
+        7 * 86400,
         json.dumps(mock_integration_state, default=str)
     )
 
@@ -134,8 +137,9 @@ async def test_delete_state_source_state(mocker, mock_redis, integration_v2, moc
         state=mock_integration_state
     )
 
-    mock_redis.Redis.return_value.set.assert_called_once_with(
+    mock_redis.Redis.return_value.setex.assert_called_once_with(
         f"integration_state.{integration_id}.pull_observations.{source_id}",
+        7 * 86400,
         json.dumps(mock_integration_state, default=str)
     )
 
