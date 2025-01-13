@@ -15,7 +15,7 @@ async def get_er_token_and_site(integration_id: str) -> Tuple[str, str]:
 
     for destination in connection_details.destinations:
         destination_details = await _client.get_integration_details(destination.id)
-        if destination_details.integration_type == "er":
+        if destination_details.type.value == "earth_ranger":
             return destination_details.token, destination_details.site
 
     return None, None

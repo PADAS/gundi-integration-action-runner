@@ -1,12 +1,13 @@
 from datetime import datetime, timedelta
 from enum import Enum
+from typing import List
+
+from app.actions.buoy import BuoyClient
 import hashlib
 import logging
 import json
-from typing import List
 import pydantic
 import requests
-from app.actions.buoy import BuoyClient
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +143,7 @@ class GearSet(pydantic.BaseModel):
         # TODO: solve not being able to control Trap ID (Subject ID) upon creation in ER
         # Question: Use name to store Trap ID? Or use a different field?
         # Solution: Add both names and IDs to ER ID/name to subject mapping?
-        # Use Name to create new subjects from RMWHub data and ID to update existing subjects.
+        # Use Name = Trap ID to create new subjects from RMWHub data and Subject ID to update existing subjects.
         observation = {
             "name": subject_name,
             "source": subject_name,
@@ -180,7 +181,7 @@ class RmwHubAdapter:
         self.rmw_client = RmwHubClient(api_key, rmw_url)
         self.er_client = BuoyClient(er_token, er_destination)
 
-    def download_data(
+    async def download_data(
         self, start_datetime_str: str, minute_interval: int, status: bool = None
     ) -> RmwSets:
         """
@@ -188,7 +189,7 @@ class RmwHubAdapter:
         ref: https://ropeless.network/api/docs#/Download
         """
 
-        response = self.rmw_client.search_hub(
+        response = await self.rmw_client.search_hub(
             start_datetime_str, minute_interval, status
         )
         response_json = json.loads(response)
@@ -209,17 +210,34 @@ class RmwHubAdapter:
 
         # Download Data from ER for the same time interval as RmwHub
         # TODO: Only download recent updates from ER
-        er_subjects = await self.er_client.get_er_subjects()
+        er_subjects = await self.er_client.get_er_subjects(start_datetime_str)
 
         # Create lists of er_subject_names and rmw_trap_ids/set_ids
         er_subject_id_to_subject_mapping = dict(
             (subject.get("id"), subject) for subject in er_subjects
         )
+        er_subject_id_to_subject_mapping.update(
+            dict((subject.get("name"), subject) for subject in er_subjects)
+        )
+
         subjects_in_er = set(er_subject_id_to_subject_mapping.keys())
         er_subjectsources = await self.er_client.get_er_subjectsources()
         subject_id_to_subjectsource_mapping = dict(
             (subjectsource.get("subject"), subjectsource)
             for subjectsource in er_subjectsources
+        )
+        subject_id_to_subjectsource_mapping.update(
+            dict(
+                (
+                    self.er_client.resolve_subject_name(
+                        subject_id_to_subjectsource_mapping[
+                            subjectsource.get("subject")
+                        ].get("name")
+                    ),
+                    subjectsource,
+                )
+                for subjectsource in er_subjectsources
+            )
         )
 
         rmw_trap_id_to_set_mapping = self.create_trap_to_gearset_mapping(sets=sets)
@@ -232,7 +250,8 @@ class RmwHubAdapter:
         #   For each set in ER:
         for er_subject_id in subjects_in_er:
             # Check if the set ID is in the Rmw sets
-            if er_subject_id in traps_in_rmw:
+            # TODO: Check if the trap ID or the subject name is in visited so that traps are not visited twice and uploaded twice to RMW
+            if er_subject_id in traps_in_rmw and er_subject_id not in visited:
                 # If yes, add all traps in current gearset to list of "visited" set IDs.
                 gearset = rmw_trap_id_to_set_mapping[er_subject_id]
                 visited.add(gearset.traps[0].trap_id)
@@ -393,6 +412,38 @@ class RmwHubAdapter:
                 trap_id_to_set_mapping[trap.trap_id] = gear_set
         return trap_id_to_set_mapping
 
+    async def update_status(self, er_subject: dict, rmw_set: GearSet):
+        """
+        Update the status of the ER subject based on the RMW status and deployment/retrieval times
+        """
+
+        # TODO: Check if the the ID being checked for is UUID, if not find subject by name
+        # Determine if ER or RMW has the most recent update in order to update status in ER:
+        datetime_str_format = "%Y-%m-%dT%H:%M:%S"
+        er_last_updated = datetime.strptime(
+            er_subject.get("updated_at"), datetime_str_format
+        )
+        deployment_time = datetime.strptime(
+            rmw_set.get("deploy_datetime_utc"), datetime_str_format
+        )
+        retrieval_time = datetime.strptime(
+            rmw_set.get("retrieved_datetime_utc"), datetime_str_format
+        )
+
+        if er_last_updated > deployment_time and er_last_updated > retrieval_time:
+            return
+        elif er_last_updated < deployment_time or er_last_updated < retrieval_time:
+            if rmw_set.get("status") == "deployed":
+                await self.er_client.patch_er_subject_status(er_subject.get("id"), True)
+            elif rmw_set.get("status") == "retrieved":
+                await self.er_client.patch_er_subject_status(
+                    er_subject.get("id"), False
+                )
+        else:
+            logger.error(
+                f"Failed to compare gear set for trap ID {er_subject.get('id')}. ER last updated: {er_last_updated}, RMW deployed: {deployment_time}, RMW retrieved: {retrieval_time}"
+            )
+
 
 class RmwHubClient:
     HEADERS = {"accept": "application/json", "Content-Type": "application/json"}
@@ -409,15 +460,15 @@ class RmwHubClient:
         ref: https://ropeless.network/api/docs#/Download
         """
 
-        start_datetime = datetime.strptime(start_datetime_str, "%Y-%m-%dT%H:%M:%S")
+        start_datetime = datetime.strptime(start_datetime_str, "%Y-%m-%d %H:%M:%S")
         end_datetime = start_datetime + timedelta(minutes=minute_interval)
-        end_datetime_str = end_datetime.strftime("%Y-%m-%dT%H:%M:%S")
+        end_datetime_str = end_datetime.strftime("%Y-%m-%d %H:%M:%S")
 
         data = {
             "format_version": 0.1,
             "api_key": self.api_key,
             "max_sets": 1000,
-            "status": "deployed",
+            # "status": "deployed",
             "from_latitude": -90,
             "to_latitude": 90,
             "from_longitude": -180,
@@ -433,7 +484,7 @@ class RmwHubClient:
 
         url = self.rmw_url + "/search_hub/"
 
-        response = await requests.post(url, headers=RmwHubClient.HEADERS, json=data)
+        response = requests.post(url, headers=RmwHubClient.HEADERS, json=data)
 
         if response.status_code != 200:
             logger.error(

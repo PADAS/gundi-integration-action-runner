@@ -25,3 +25,10 @@ class PullRmwHubObservationsConfiguration(PullActionConfiguration):
         format="password",
     )
     rmw_url: str = "https://test.ropeless.network/api/"
+    er_token: pydantic.SecretStr = pydantic.Field(
+        ...,
+        title="ER Token",
+        description="Token used to authenticate with ER services.",
+        format="password",
+    )
+    er_site = "https://buoy.dev.pamdas.org/api/v1.0"
