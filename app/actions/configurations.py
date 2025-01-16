@@ -1,4 +1,4 @@
-from .core import PullActionConfiguration, AuthActionConfiguration
+from .core import InternalActionConfiguration, PullActionConfiguration, AuthActionConfiguration
 import pydantic
 
 class AuthenticateConfig(AuthActionConfiguration):
@@ -10,3 +10,6 @@ class AuthenticateConfig(AuthActionConfiguration):
 
 class PullObservationsConfig(PullActionConfiguration):
     endpoint: str = "mobile/vehicles"
+
+class PullObservationsFromDeviceBatch(InternalActionConfiguration):
+    devices: list[str]
