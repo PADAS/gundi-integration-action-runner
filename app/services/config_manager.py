@@ -87,8 +87,9 @@ class IntegrationConfigurationManager:
         integration_summary = await self.get_integration(integration_id)
         configurations = []
         for action in integration_summary.type.actions:
-            config = await self.get_action_configuration(integration_id, action.id)
-            configurations.append(config)
+            config = await self.get_action_configuration(integration_id, action.value)
+            if config:
+                configurations.append(config)
         return Integration(
             id=integration_summary.id,
             name=integration_summary.name,

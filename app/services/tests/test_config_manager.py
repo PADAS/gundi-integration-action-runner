@@ -1,6 +1,6 @@
 import pytest
 
-from gundi_core.schemas.v2 import IntegrationSummary, IntegrationActionConfiguration
+from gundi_core.schemas.v2 import IntegrationSummary, IntegrationActionConfiguration, Integration
 from app.services.config_manager import IntegrationConfigurationManager
 
 
@@ -89,3 +89,25 @@ async def test_get_action_configuration_from_gundi(
     assert isinstance(action_config, IntegrationActionConfiguration)
     mock_redis_empty.Redis.return_value.get.assert_called_once_with(f"integrationconfig.{integration_id}.{action_id}")
     mock_gundi_client_v2_class.return_value.get_integration_details.assert_called_once_with(integration_id)
+
+
+@pytest.mark.asyncio
+async def test_get_integration_details_with_empty_redis_db(
+        mocker, mock_redis_empty, mock_gundi_client_v2_class, integration_v2,
+):
+    mocker.patch("app.services.config_manager.redis", mock_redis_empty)
+    mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
+    config_manager = IntegrationConfigurationManager()
+    integration_id = str(integration_v2.id)
+
+    integration = await config_manager.get_integration_details(integration_id)
+
+    assert integration
+    assert isinstance(integration, Integration)
+    assert len(integration.configurations) == len(integration_v2.configurations)
+    assert integration.id == integration_v2.id
+    mock_gundi_client_v2_class.return_value.get_integration_details.assert_called_with(integration_id)
+    for config in integration_v2.configurations:
+        action_id = config.action.value
+        mock_redis_empty.Redis.return_value.get.assert_any_call(f"integrationconfig.{integration_id}.{action_id}")
+
