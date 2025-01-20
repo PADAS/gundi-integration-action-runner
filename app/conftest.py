@@ -1007,7 +1007,7 @@ def mock_api_key():
 
 
 @pytest.fixture
-def event_v2_cloud_event_payload():
+def event_v2_pubsub_payload():
     timestamp = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     return {
         "message": {
@@ -1022,7 +1022,7 @@ def event_v2_cloud_event_payload():
 
 
 @pytest.fixture
-def event_v2_cloud_event_payload_with_config_overrides():
+def event_v2_pubsub_payload_with_config_overrides():
     timestamp = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     return {
         "message": {

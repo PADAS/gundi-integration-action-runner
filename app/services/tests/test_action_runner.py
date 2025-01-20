@@ -16,7 +16,7 @@ api_client = TestClient(app)
 @pytest.mark.asyncio
 async def test_execute_action_from_pubsub(
         mocker, mock_gundi_client_v2, mock_publish_event, mock_action_handlers, mock_config_manager,
-        pubsub_message_request_headers, event_v2_cloud_event_payload
+        pubsub_message_request_headers, event_v2_pubsub_payload
 ):
     mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
     mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
@@ -27,13 +27,18 @@ async def test_execute_action_from_pubsub(
     response = api_client.post(
         "/",
         headers=pubsub_message_request_headers,
-        json=event_v2_cloud_event_payload,
+        json=event_v2_pubsub_payload,
     )
 
     assert response.status_code == 200
-    assert mock_config_manager.get_integration_details.called
     assert not mock_gundi_client_v2.get_integration_details.called
-    mock_action_handler, mock_config = mock_action_handlers["pull_observations"]
+    payload = event_v2_pubsub_payload["message"]["data"]
+    payload_dict = json.loads(base64.b64decode(payload).decode("utf-8"))
+    integration_id = payload_dict.get("integration_id")
+    action_id = payload_dict.get("action_id")
+    assert mock_config_manager.get_integration_details.called
+    mock_config_manager.get_integration_details.assert_called_with(integration_id)
+    mock_action_handler, mock_config = mock_action_handlers[action_id]
     assert mock_action_handler.called
 
 
@@ -47,18 +52,22 @@ async def test_execute_action_from_api(
     mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
     mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
     mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+    integration_id = str(integration_v2.id)
+    action_id = "pull_observations"
 
     response = api_client.post(
         "/v1/actions/execute/",
         json={
-            "integration_id": str(integration_v2.id),
-            "action_id": "pull_observations"
+            "integration_id": integration_id,
+            "action_id": action_id
         }
     )
 
     assert response.status_code == 200
     assert not mock_gundi_client_v2.get_integration_details.called
-    mock_action_handler, mock_config = mock_action_handlers["pull_observations"]
+    assert mock_config_manager.get_integration_details.called
+    mock_config_manager.get_integration_details.assert_called_with(integration_id)
+    mock_action_handler, mock_config = mock_action_handlers[action_id]
     assert mock_action_handler.called
 
 
@@ -96,7 +105,7 @@ async def test_execute_action_from_api_with_config_overrides(
 @pytest.mark.asyncio
 async def test_execute_action_from_pubsub_with_config_overrides(
         mocker, mock_gundi_client_v2, mock_publish_event, mock_action_handlers, mock_config_manager,
-        pubsub_message_request_headers, event_v2_cloud_event_payload_with_config_overrides
+        pubsub_message_request_headers, event_v2_pubsub_payload_with_config_overrides
 ):
     mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
     mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
@@ -107,7 +116,7 @@ async def test_execute_action_from_pubsub_with_config_overrides(
     response = api_client.post(
         "/",
         headers=pubsub_message_request_headers,
-        json=event_v2_cloud_event_payload_with_config_overrides,
+        json=event_v2_pubsub_payload_with_config_overrides,
     )
 
     assert response.status_code == 200
@@ -115,7 +124,7 @@ async def test_execute_action_from_pubsub_with_config_overrides(
     assert not mock_gundi_client_v2.get_integration_details.called
     mock_action_handler, mock_config = mock_action_handlers["pull_observations"]
     assert mock_action_handler.called
-    encoded_data = event_v2_cloud_event_payload_with_config_overrides["message"]["data"]
+    encoded_data = event_v2_pubsub_payload_with_config_overrides["message"]["data"]
     decoded_data = base64.b64decode(encoded_data).decode("utf-8")
     config_overrides = json.loads(decoded_data)["config_overrides"]
     for k, v in config_overrides.items():
