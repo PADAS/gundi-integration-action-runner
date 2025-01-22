@@ -9,6 +9,13 @@ class AuthenticateConfig(AuthActionConfiguration, ExecutableActionMixin):
                                 description = "Password for Bluetrax account",
                                 format="password")
 
+    ui_global_options: GlobalUISchemaOptions = GlobalUISchemaOptions(
+        order=[
+            "username",
+            "password",
+        ],
+    )
+
 
 class PullEventsConfig(PullActionConfiguration):
     pass
