@@ -3,9 +3,7 @@ import logging
 import time
 import traceback
 
-import httpx
 import pydantic
-import stamina
 from gundi_client_v2 import GundiClient
 
 from app.actions import action_handlers
@@ -16,7 +14,6 @@ from fastapi.responses import JSONResponse
 from gundi_core.events import IntegrationActionFailed, ActionExecutionFailed
 
 from .config_manager import IntegrationConfigurationManager
-from .utils import find_config_for_action
 from .activity_logger import publish_event
 
 _portal = GundiClient()

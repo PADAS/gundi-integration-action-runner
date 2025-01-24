@@ -1,6 +1,5 @@
 import importlib
 import inspect
-from typing import Optional
 
 from pydantic import BaseModel
 from app.services.utils import UISchemaModelMixin
@@ -20,6 +19,7 @@ class PullActionConfiguration(ActionConfiguration):
 
 class ExecutableActionMixin:
     pass
+
 
 
 class PushActionConfiguration(ActionConfiguration):
