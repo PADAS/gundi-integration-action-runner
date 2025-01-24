@@ -1,6 +1,5 @@
 import importlib
 import inspect
-from typing import Optional
 
 from pydantic import BaseModel
 from app.services.utils import UISchemaModelMixin
@@ -10,12 +9,17 @@ class ActionConfiguration(UISchemaModelMixin, BaseModel):
     pass
 
 
+class InternalActionConfiguration(BaseModel):
+    pass
+
+
 class PullActionConfiguration(ActionConfiguration):
     pass
 
 
 class ExecutableActionMixin:
     pass
+
 
 
 class PushActionConfiguration(ActionConfiguration):
