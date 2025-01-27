@@ -106,6 +106,12 @@ async def action_pull_observations(
         )
         total_observations.extend(observations)
 
+        # Upload changes from ER to RMW Hub
+        put_set_id_observations = await rmw_adapter.process_rmw_upload(
+            rmwSets, start_datetime_str
+        )
+        total_observations.extend(put_set_id_observations)
+
         # Send the extracted data to Gundi in batches
         for batch in generate_batches(observations):
             logger.info(f"Sending {len(batch)} observations to Gundi...")
@@ -180,6 +186,12 @@ async def action_pull_observations_24_hour_sync(
             rmwSets, start_datetime_str, sync_interval_minutes
         )
         total_observations.extend(observations)
+
+        # Upload changes from ER to RMW Hub
+        put_set_id_observations = await rmw_adapter.process_rmw_upload(
+            rmwSets, start_datetime_str
+        )
+        total_observations.extend(put_set_id_observations)
 
         # Send the extracted data to Gundi in batches
         for batch in generate_batches(observations):
