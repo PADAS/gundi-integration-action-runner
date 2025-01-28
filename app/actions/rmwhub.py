@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import Enum
 import hashlib
-from typing import List
+from typing import List, Optional
 
 import json
 import logging
@@ -9,7 +9,8 @@ import pytz
 import uuid
 import httpx
 import json
-from pydantic import validator, BaseModel
+from pydantic import NoneStr, validator, BaseModel
+import stamina
 
 from app.actions.buoy import BuoyClient
 
@@ -33,12 +34,12 @@ class Trap(BaseModel):
     sequence: int
     latitude: float
     longitude: float
-    deploy_datetime_utc: str
-    surface_datetime_utc: str
-    retrieved_datetime_utc: str
+    deploy_datetime_utc: Optional[NoneStr]
+    surface_datetime_utc: Optional[NoneStr]
+    retrieved_datetime_utc: Optional[NoneStr]
     status: str
     accuracy: str
-    release_type: str
+    release_type: Optional[NoneStr]
     is_on_end: bool
 
     def __getitem__(self, key):
@@ -394,28 +395,27 @@ class RmwHubAdapter:
         updates = []
 
         # Get updates from the last interval_minutes in ER
-        er_subjects = self.er_client.get_er_subjects(start_datetime_str)
+        er_subjects = await self.er_client.get_er_subjects(start_datetime_str)
 
         # Get rmw trap IDs
         rmw_trap_ids = set()
-        rmw_set_ids = set()
         rmw_set_id_to_gearset_mapping = self.create_set_id_to_gearset_mapping(
             rmw_sets.sets
         )
+        rmw_set_ids = rmw_set_id_to_gearset_mapping.keys()
 
         for gearset in rmw_sets.sets:
-            rmw_set_ids.add(RmwHubAdapter.clean_id_str(gearset.id))
             for trap in gearset.traps:
                 rmw_trap_ids.add(RmwHubAdapter.clean_id_str(trap.id))
 
         # Iterate through er_subjects and determine what is an insert and what is an update to RmwHub
-        er_inserts = set()
-        er_updates = set()
+        er_inserts = []
+        er_updates = []
         for subject in er_subjects:
             if RmwHubAdapter.clean_id_str(subject.get("name")) in rmw_trap_ids:
-                er_updates.add(subject)
+                er_updates.append(subject)
             else:
-                er_inserts.add(subject)
+                er_inserts.append(subject)
 
         # Collect set ID updates for Earthranger subjects from RMW inserts
         new_observations = []
@@ -450,7 +450,7 @@ class RmwHubAdapter:
                 subject.get("additional").get("rmwhub_set_id")
             ]
             updated_gearset = await self.create_rmw_update_from_er_subject(
-                subject, rmw_gearset.id
+                subject, rmw_gearset
             )
 
             updates.add(updated_gearset)
@@ -605,7 +605,7 @@ class RmwHubAdapter:
         await self.rmw_client.upload_data(updates)
 
     async def create_rmw_update_from_er_subject(
-        self, er_subject: dict, set_id: str = None
+        self, er_subject: dict, rmw_gearset: GearSet = None
     ) -> GearSet:
         """
         Create new updates from ER data for upload to RMWHub.
@@ -622,9 +622,18 @@ class RmwHubAdapter:
         deployed = er_subject.get("is_active")
 
         for device in er_subject.get("additional").get("devices"):
+            # Use just the ID for the Trap ID if the gearset is originally from RMW
+            subject_name = er_subject.get("name")
+            cleaned_id = RmwHubAdapter.clean_id_str(subject_name)
+            trap_id = (
+                cleaned_id
+                if rmw_gearset and subject_name.startswith("rmw")
+                else "e_" + cleaned_id
+            )
+
             traps.append(
                 Trap(
-                    id="e_" + str(RmwHubAdapter.clean_id_str(er_subject.get("id"))),
+                    id=trap_id,
                     sequence=1 if device.get("label") == "a" else 2,
                     latitude=device.get("location").get("latitude"),
                     longitude=device.get("location").get("longitude"),
@@ -639,18 +648,25 @@ class RmwHubAdapter:
                     retrieved_datetime_utc=device.get("last_updated")
                     if not deployed
                     else None,
-                    status=Status.DEPLOYED if deployed else Status.RETRIEVED,
+                    status="deployed" if deployed else "retrieved",
+                    accuracy="",
+                    is_on_end=True,
                 )
             )
 
         # Create gear set:
-        if not set_id:
-            set_id = uuid.uuid4()
+        if not rmw_gearset:
+            set_id = "e_" + str(uuid.uuid4())
+            vessel_id = ""
+        else:
+            set_id = rmw_gearset.id
+            vessel_id = rmw_gearset.vessel_id
         gear_set = GearSet(
-            id="e_" + str(RmwHubAdapter.clean_id_str(set_id)),
+            vessel_id=vessel_id,
+            id=set_id,
             deployment_type="trawl" if len(traps) > 1 else "single",
             traps_in_set=len(traps),
-            trawl_path=None,
+            trawl_path="",
             share_with=["Earth Ranger"],
             traps=traps,
         )
@@ -664,7 +680,7 @@ class RmwHubAdapter:
 
         set_id_to_set_mapping = {}
         for gear_set in sets:
-            set_id_to_set_mapping[gear_set.id] = gear_set
+            set_id_to_set_mapping[RmwHubAdapter.clean_id_str(gear_set.id)] = gear_set
         return set_id_to_set_mapping
 
     @staticmethod
@@ -727,7 +743,7 @@ class RmwHubClient:
         url = self.rmw_url + "/search_hub/"
 
         async with httpx.AsyncClient() as client:
-            response = client.post(url, headers=RmwHubClient.HEADERS, json=data)
+            response = await client.post(url, headers=RmwHubClient.HEADERS, json=data)
 
         if response.status_code != 200:
             logger.error(
@@ -751,7 +767,9 @@ class RmwHubClient:
         }
 
         with httpx.AsyncClient() as client:
-            response = client.post(url, headers=RmwHubClient.HEADERS, json=upload_data)
+            response = await client.post(
+                url, headers=RmwHubClient.HEADERS, json=upload_data
+            )
 
         if response.status_code != 200:
             logger.error(
