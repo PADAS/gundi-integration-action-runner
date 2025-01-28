@@ -108,12 +108,13 @@ class GearSet(BaseModel):
         for trap in self.traps:
             devices.append(
                 {
-                    "device_id": "rmwhub_" + str(trap.id),
+                    "device_id": "rmwhub_" + str(RmwHubAdapter.clean_id_str(trap.id)),
                     "label": "a" if trap.sequence == 1 else "b",
                     "location": {
                         "latitude": trap.latitude,
                         "longitude": trap.longitude,
                     },
+                    "last_updated": trap.get_latest_update_time(),
                 }
             )
 
@@ -256,7 +257,7 @@ class RmwHubAdapter:
         # Create maps of er_subject_names and rmw_trap_ids/set_ids
         # RMW trap IDs would be in the subject name
         self.er_subject_name_to_subject_mapping = dict(
-            (self.er_client.clean_subject_name(subject.get("name")), subject)
+            (RmwHubAdapter.clean_id_str(subject.get("name")), subject)
             for subject in er_subjects
         )
         self.er_subject_id_to_subject_mapping = dict(
@@ -364,7 +365,7 @@ class RmwHubAdapter:
         er_updates = set()
         for subject in er_subjects:
             if (
-                self.er_client.clean_subject_name(subject.get("name"))
+                RmwHubAdapter.clean_id_str(subject.get("name"))
                 .replace("e_", "")
                 .replace("rmw_", "")
                 in rmw_trap_ids
@@ -450,15 +451,11 @@ class RmwHubAdapter:
             return
         elif er_subject and (
             er_last_updated < deployment_time or er_last_updated < retrieval_time
-        ):  # TODO: Use stamina for retries here
+        ):
             await self.er_client.patch_er_subject_status(
-                er_subject.get("id"), True if trap.status == "deployed" else False
+                er_subject.get("name"), True if trap.status == "deployed" else False
             )
         elif not er_subject:
-            logger.error(
-                f"Insert operation for Trap {trap.id}. Cannot update subject that does not exist."
-            )
-
             trap_id_in_er = "rmwhub_" + (
                 trap.id.replace("e_", "").replace("rmwhub_", "")
             )
@@ -587,6 +584,22 @@ class RmwHubAdapter:
         for gear_set in sets:
             set_id_to_set_mapping[gear_set.id] = gear_set
         return set_id_to_set_mapping
+
+    @classmethod
+    def clean_id_str(self, subject_name: str):
+        """
+        Resolve the subject name to the actual subject name
+        """
+
+        cleaned_str = (
+            subject_name.replace("device_", "")
+            .replace("_0", "")
+            .replace("_1", "")
+            .replace("rmwhub_", "")
+            .replace("e_", "")
+            .replace("rmw_", "")
+        )
+        return cleaned_str
 
 
 class RmwHubClient:
