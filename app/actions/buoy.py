@@ -1,7 +1,6 @@
 import json
 from typing import List
 import logging
-import uuid
 
 import requests
 
@@ -29,10 +28,10 @@ class BuoyClient:
         response = requests.get(url, headers=BuoyClient.headers)
 
         if response.status_code == 200:
-            print("Request was successful")
+            print("Request to get ER subjects was successful")
             data = json.loads(response.text)
             if len(data["data"]) == 0:
-                logger.error(f"No subject sources found")
+                logger.error(f"No subjects found")
                 return None
             return data["data"]
         else:
@@ -40,38 +39,51 @@ class BuoyClient:
 
         return []
 
-    async def patch_er_subject_status(self, er_subject_id: str, state: bool):
+    async def get_er_subject_by_name(self, name: str) -> dict:
+
+        url = (
+            self.er_site
+            + f"/subjects/?name={name}&include_details=True&include_inactive=True"
+        )
+        BuoyClient.headers["Authorization"] = f"Bearer {self.er_token}"
+        response = requests.get(url, headers=BuoyClient.headers)
+
+        if response.status_code == 200:
+            print(f"Request to get ER subject with name: {name} was successful")
+            data = json.loads(response.text)
+            if len(data["data"]) == 0:
+                logger.error(f"No subjects found")
+                return None
+            return data["data"]
+        else:
+            logger.error(
+                f"Failed to get subject with name: {name}. Status code: {response.status_code}"
+            )
+
+        return []
+
+    async def patch_er_subject_status(self, er_subject_name: str, state: bool):
         """
         Update the state of a subject by either the subject ID or the subject name
         """
 
-        BuoyClient.headers["Authorization"] = f"Bearer {self.er_token}"
+        subject = await self.get_er_subject_by_name(er_subject_name)
+        subject = subject[0] if subject else None
+        if not subject:
+            logger.error(f"Subject with name {er_subject_name} not found")
+            return
 
-        # TODO: Check if er_subject_id is not UUID, then find the subject by name
-        try:
-            uuid_obj = uuid.UUID(er_subject_id)
-            url = self.er_site + f"/subject/{er_subject_id}"
-        except ValueError:
-            url = self.er_site + f"/subject/?name={er_subject_id}"
+        BuoyClient.headers["Authorization"] = f"Bearer {self.er_token}"
+        url = self.er_site + f"/subject/{subject.get('id')}/"
 
         dict = {"is_active": state}
         response = requests.patch(url, headers=BuoyClient.headers, json=dict)
         if response.status_code != 200:
             logger.exception(
                 "Failed to update subject state for %s. Error: %s",
-                er_subject_id,
+                er_subject_name,
                 response.text,
             )
-
-    def clean_subject_name(self, subject_name: str):
-        """
-        Resolve the subject name to the actual subject name
-        """
-
-        cleaned_str = (
-            subject_name.replace("device_", "")
-            .replace("_0", "")
-            .replace("_1", "")
-            .replace("rmwhub_", "")
+        logger.info(
+            f"Successfully updated subject state for {er_subject_name} to {state}"
         )
-        return cleaned_str
