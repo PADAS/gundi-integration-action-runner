@@ -49,14 +49,13 @@ async def _handle_error(
         error_details.update({
             "request_verb": str(request.method),
             "request_url": str(request.url),
-            "request_data": request.text
+            "request_data": str(getattr(request, "content", getattr(request, "body", None)) or "")
         })
     if response := getattr(exc, "response", None):
         error_details.update({
-            "server_response_status": response.status_code,
-            "server_response_body": response.text
+            "server_response_status": getattr(response, "status_code", None),
+            "server_response_body": str(getattr(response, "text", getattr(response, "content", None)) or "")
         })
-        status_code = response.status_code  # Use actual response code if available
 
     # Publish the error event
     await publish_event(
