@@ -566,7 +566,7 @@ class RmwHubAdapter:
         # Create gear set:
         gear_set = GearSet(
             id=er_subjectsource.get("id"),
-            deployment_type="trawl" if len(traps > 1) else "single",
+            deployment_type="trawl" if len(traps) > 1 else "single",
             traps_in_set=len(traps),
             trawl_path=None,
             share_with=["Earth Ranger"],
