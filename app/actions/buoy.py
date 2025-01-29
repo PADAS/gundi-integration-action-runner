@@ -48,7 +48,9 @@ class BuoyClient:
             + f"/subjects/?name={name}&include_details=True&include_inactive=True"
         )
         BuoyClient.headers["Authorization"] = f"Bearer {self.er_token}"
-        response = requests.get(url, headers=BuoyClient.headers)
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, headers=BuoyClient.headers)
 
         if response.status_code == 200:
             print(f"Request to get ER subject with name: {name} was successful")
