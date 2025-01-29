@@ -28,7 +28,10 @@ async def _handle_error(
         exc: Exception, integration_id: str, action_id: str,
         config_data=None, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
 ):
-    """Handles errors by logging, extracting details, publishing events, and returning a JSON response."""
+    """
+    Handles errors by logging, extracting details as available, and publishing events for activity logs.
+    Returns a JSON response with error details too.
+    """
 
     message = f"Error in action '{action_id}' for integration '{integration_id}': {type(exc).__name__}: {exc}"
     logger.exception(message)
@@ -124,7 +127,7 @@ async def execute_action(integration_id: str, action_id: str, config_overrides: 
         return await _handle_error(e, integration_id, action_id,
                                    config_data={"configurations": [c.dict() for c in integration.configurations]})
 
-    # Success.
+    # Success. Log the execution time and return the result
     end_time = time.monotonic()
     execution_time = end_time - start_time
     logger.debug(
