@@ -45,13 +45,13 @@ async def _handle_error(
     }
 
     # Extract additional request/response details if available
-    if request := getattr(exc, "request", None):
+    if (request := getattr(exc, "request", None)) is not None:
         error_details.update({
             "request_verb": str(request.method),
             "request_url": str(request.url),
             "request_data": str(getattr(request, "content", getattr(request, "body", None)) or "")
         })
-    if response := getattr(exc, "response", None):
+    if (response := getattr(exc, "response", None)) is not None:  # bool(response) on status errors returns False
         error_details.update({
             "server_response_status": getattr(response, "status_code", None),
             "server_response_body": str(getattr(response, "text", getattr(response, "content", None)) or "")
