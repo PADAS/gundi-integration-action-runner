@@ -1,6 +1,8 @@
 import asyncio
 import datetime
 import json
+
+import httpx
 import pydantic
 import pytest
 from unittest.mock import MagicMock
@@ -974,7 +976,78 @@ def mock_action_handlers(mocker):
 
 
 @pytest.fixture
-def mock_auth_action_handlers(mocker):
+def mock_pull_observations_handler_with_400_error():
+    # Mock an HTTP response with an error
+    error_body = {
+        "error": "Bad Request",
+        "code": 400,
+        "message": "start_time can't be older than 10 days"
+    }
+    response = httpx.Response(
+        status_code=400,
+        request=httpx.Request("POST", "https://example.com/api", json={"start_time": "2024-01-10T05:30:00-00:00"}),
+        content=json.dumps(error_body).encode("utf-8"),  # Convert dict to JSON string and encode
+        headers={"Content-Type": "application/json"}  # Ensure correct content type
+    )
+    error = httpx.HTTPStatusError("Bad Request", request=response.request, response=response)
+
+    # Create the mock handler
+    mock_pull_observations_action_handler = AsyncMock()
+    mock_pull_observations_action_handler.side_effect = error
+
+    return mock_pull_observations_action_handler
+
+@pytest.fixture
+def mock_pull_observations_handler_with_500_error():
+    # Mock an HTTP response with an error
+    error_body = {
+        "error": "Internal Server Error",
+        "code": 500,
+        "message": "Something went wrong"
+    }
+    response = httpx.Response(
+        status_code=500,
+        request=httpx.Request("POST", "https://example.com/api", json={"start_time": "2024-01-10T05:30:00-00:00"}),
+        content=json.dumps(error_body).encode("utf-8"),  # Convert dict to JSON string and encode
+        headers={"Content-Type": "application/json"}  # Ensure correct content type
+    )
+    error = httpx.HTTPStatusError("Internal Server Error", request=response.request, response=response)
+
+    # Create the mock handler
+    mock_pull_observations_action_handler = AsyncMock()
+    mock_pull_observations_action_handler.side_effect = error
+
+    return mock_pull_observations_action_handler
+
+
+@pytest.fixture
+def mock_pull_observations_handler_with_generic_error():
+    mock_pull_observations_action_handler = AsyncMock()
+    mock_pull_observations_action_handler.side_effect = Exception("Something went wrong")
+    return mock_pull_observations_action_handler
+
+
+@pytest.fixture
+def mock_action_handlers_with_request_errors(
+        request,
+        mock_pull_observations_handler_with_400_error,
+        mock_pull_observations_handler_with_500_error,
+        mock_pull_observations_handler_with_generic_error
+):
+    if request.param == "bad_request":
+        handler = mock_pull_observations_handler_with_400_error
+    elif request.param == "internal_error":
+        handler = mock_pull_observations_handler_with_500_error
+    else:
+        handler = mock_pull_observations_handler_with_generic_error
+    mock_action_handlers = {
+        "pull_observations": (handler, MockPullActionConfiguration)
+    }
+    return mock_action_handlers
+
+
+@pytest.fixture
+def mock_auth_action_handlers():
     mock_action_handler = AsyncMock()
     mock_action_handler.return_value = {
         "username": "me@example.com",

@@ -3,7 +3,9 @@ import json
 
 import pytest
 from fastapi.testclient import TestClient
+from fastapi import status
 from gundi_core.commands import RunIntegrationAction
+from gundi_core.events import IntegrationActionFailed
 
 from app import settings
 from app.conftest import MockSubActionConfiguration
@@ -224,3 +226,62 @@ async def test_trigger_subaction_sync(
     mock_action_handler, mock_config = mock_action_handlers[action_id]
     assert mock_action_handler.called
     assert not mock_publish_event.called
+
+
+@pytest.mark.parametrize(
+    "mock_action_handlers_with_request_errors",
+    ["bad_request", "internal_error" ],
+    indirect=["mock_action_handlers_with_request_errors"]
+)
+@pytest.mark.asyncio
+async def test_execute_action_with_handler_error(
+        mocker, mock_gundi_client_v2, integration_v2, mock_config_manager,
+        mock_publish_event, mock_action_handlers_with_request_errors
+):
+    mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers_with_request_errors)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+
+    response = api_client.post(
+        "/v1/actions/execute/",
+        json={
+            "integration_id": str(integration_v2.id),
+            "action_id": "pull_observations"
+        }
+    )
+
+    # Check that 500 is returned to indicate that the action execution failed
+    assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+    # Check that extra details related to the error are returned when available
+    response_data = response.json()
+    mock_handler, _ = mock_action_handlers_with_request_errors["pull_observations"]
+    expected_error = mock_handler.side_effect
+    assert "detail" in response_data
+    error_details = response_data["detail"]
+    assert "error" in error_details
+    assert "error_traceback" in error_details
+    assert error_details.get("request_verb") == expected_error.request.method
+    assert error_details.get("request_url") == str(expected_error.request.url)
+    assert error_details.get("request_data") == str(expected_error.request.content or expected_error.request.body)
+    assert error_details.get("server_response_status") == expected_error.response.status_code
+    assert error_details.get("server_response_body") == str(expected_error.response.text)
+
+    # Check that also an event with error details was published for the activity logs
+    assert mock_publish_event.called
+    assert mock_publish_event.call_count == 1
+    call = mock_publish_event.mock_calls[0]
+    assert call.kwargs.get("topic_name") == settings.INTEGRATION_EVENTS_TOPIC
+    event = call.kwargs.get("event")
+    assert event
+    assert isinstance(event, IntegrationActionFailed)
+    assert event.payload
+    assert event.payload.error
+    assert event.payload.error_traceback
+    assert event.payload.request_verb == expected_error.request.method
+    assert event.payload.request_url == str(expected_error.request.url)
+    assert event.payload.request_data == str(expected_error.request.content or expected_error.request.body)
+    assert event.payload.server_response_status == expected_error.response.status_code
+    assert event.payload.server_response_body == str(expected_error.response.text)
+
