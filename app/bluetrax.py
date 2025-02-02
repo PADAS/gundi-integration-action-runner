@@ -117,10 +117,12 @@ async def get_asset_history(unit_id: str, start_time: datetime, end_time: dateti
           }
     
     async with httpx.AsyncClient() as client:
-        r = await client.get("https://rest.bluetrax.co.ke/AnalyticsService", 
+        r = await client.post("https://rest.bluetrax.co.ke/AnalyticsService", 
                              params={'request': json.dumps(q)}
         )
-        if r.status_code == 200:
+
+        if r.is_success:
             return HistoryResult(**r.json())
         else:
+            # TODO: Collect these errors and write to Activity Log.
             return None
