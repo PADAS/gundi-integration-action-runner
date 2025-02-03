@@ -281,11 +281,24 @@ class RmwHubAdapter:
                     rmw_inserts.add(gearset)
 
         # Handle inserts to Earthranger
+        visited_inserts = set()
         for gearset in rmw_inserts:
-            logger.info(f"Rmw Set ID {gearset.id} not found in ER subjects.")
+            logger.info(f"Rmw Set ID {gearset.id} not found in ER subjects. Inserting.")
 
             # Process each trap individually
             for trap in gearset.traps:
+
+                traps_in_gearset = {
+                    RmwHubAdapter.clean_id_str(geartrap.id)
+                    for geartrap in gearset.traps
+                }
+                if traps_in_gearset & visited_inserts:
+                    logger.info(
+                        f"Skipping insert for trap ID {trap.id}. Already processed."
+                    )
+                    continue
+
+                visited_inserts.update(traps_in_gearset)
 
                 logger.info(f"Processing trap ID {trap.id} for insert to ER.")
 
@@ -302,11 +315,23 @@ class RmwHubAdapter:
                     logger.info(f"ER has the most recent update for trap ID {trap.id}.")
 
         # Handle updates to Earthranger
+        visited_updates = set()
         for gearset in rmw_updates:
-            logger.info(f"Rmw Set ID {gearset.id} found in ER subjects.")
+            logger.info(f"Rmw Set ID {gearset.id} found in ER subjects. Updating.")
 
             # Process each trap individually
             for trap in gearset.traps:
+                traps_in_gearset = {
+                    RmwHubAdapter.clean_id_str(geartrap.id)
+                    for geartrap in gearset.traps
+                }
+                if traps_in_gearset & visited_updates:
+                    logger.info(
+                        f"Skipping insert for trap ID {trap.id}. Already processed."
+                    )
+                    continue
+
+                visited_updates.update(traps_in_gearset)
                 logger.info(f"Processing trap ID {trap.id} for update to ER.")
 
                 # Get subject from ER
