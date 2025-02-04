@@ -297,10 +297,7 @@ class RmwHubAdapter:
         rmw_updates = set()
         for gearset in rmw_sets.sets:
             for trap in gearset.traps:
-                if (
-                    trap.id.replace("e_", "").replace("rmwhub_", "")
-                    in er_subject_names_and_ids
-                ):
+                if RmwHubAdapter.clean_id_str(trap.id) in er_subject_names_and_ids:
                     rmw_updates.add(gearset)
                 else:
                     rmw_inserts.add(gearset)
