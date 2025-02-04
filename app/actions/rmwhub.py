@@ -76,13 +76,10 @@ class Trap(BaseModel):
     # TODO: Convert to local function within get_latest_update_time after update status code is removed. RF-755
     def convert_est_to_utc(self, datetime_str: str) -> str:
         """
-        Convert the datetime string from Eastern Time to UTC.
-        RMWHub is missing timezone info but it is known to be in Eastern Time.
+        Convert the datetime string to UTC.
         """
 
-        eastern_tz = pytz.timezone("US/Eastern")
         datetime_obj = datetime.strptime(datetime_str, "%Y-%m-%dT%H:%M:%S")
-        datetime_obj = eastern_tz.localize(datetime_obj)
         datetime_obj = datetime_obj.astimezone(pytz.utc)
         return datetime_obj.isoformat()
 
