@@ -20,7 +20,7 @@ async def test_handler_action_pull_observations(
     Test handler.action_pull_observations
     """
 
-    items, _ = mock_rmwhub_items
+    items = mock_rmwhub_items
 
     mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
     mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
@@ -36,8 +36,12 @@ async def test_handler_action_pull_observations(
         return_value=(RmwSets(sets=items), []),
     )
     mocker.patch(
-        "app.actions.rmwhub.RmwHubAdapter.process_updates",
+        "app.actions.rmwhub.RmwHubAdapter.process_rmw_download",
         return_value=mock_rmw_observations,
+    )
+    mocker.patch(
+        "app.actions.helpers.get_er_token_and_site",
+        return_value=("super_secret_token", "er.destination.com"),
     )
 
     from app.actions.handlers import action_pull_observations
