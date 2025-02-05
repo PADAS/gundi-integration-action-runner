@@ -1,9 +1,9 @@
 # actions/handlers.py
+from enum import Enum
 import logging
 from datetime import datetime, timedelta
 from typing import Tuple
 
-from app.actions.helpers import Environment, get_er_token_and_site
 from app.services.action_scheduler import crontab_schedule
 from app.services.activity_logger import activity_logger, log_activity
 from app.services.gundi import send_observations_to_gundi
@@ -24,6 +24,12 @@ LOAD_BATCH_SIZE = 100
 headers = {
     "Authorization": f"Bearer ",
 }
+
+
+class Environment(Enum):
+    DEV = "Buoy Dev"
+    STAGE = "Buoy Staging"
+    PRODUCTION = "Buoy Prod"
 
 
 async def action_auth(integration: Integration, action_config: AuthenticateConfig):
