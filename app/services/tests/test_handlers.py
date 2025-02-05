@@ -26,7 +26,7 @@ async def test_handler_action_pull_observations(
     mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
     mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
     mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
-    mocker.patch("app.services.gundi.GundiClient", mock_gundi_client_v2_class)
+    mocker.patch("app.actions.handlers.GundiClient", mock_gundi_client_v2_class)
     mocker.patch(
         "app.services.gundi.GundiDataSenderClient", mock_gundi_sensors_client_class
     )
