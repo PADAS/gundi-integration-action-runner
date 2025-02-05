@@ -14,7 +14,6 @@ from .configurations import PullRmwHubObservationsConfiguration, AuthenticateCon
 from .rmwhub import RmwHubAdapter
 
 logger = logging.getLogger(__name__)
-_client = GundiClient()
 
 
 LOAD_BATCH_SIZE = 100
@@ -49,6 +48,7 @@ async def action_pull_observations(
 
     # TODO: Create sub-actions for each destination
     total_observations = []
+    _client = GundiClient()
     connection_details = await _client.get_connection_details(integration.id)
     for destination in connection_details.destinations:
         environment = Environment(destination.name)
