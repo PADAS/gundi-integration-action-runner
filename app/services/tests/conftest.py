@@ -74,7 +74,17 @@ def a_good_connection():
     connection = Connection(
         provider=ConnectionIntegration(
             id="00000000-0000-0000-0000-000000000000",
-        )
+        ),
+        destinations=[
+            ConnectionIntegration(
+                id="00000000-0000-0000-0000-000000000001",
+                name="Buoy Dev",
+            ),
+            ConnectionIntegration(
+                id="00000000-0000-0000-0000-000000000002",
+                name="Buoy Staging",
+            ),
+        ],
     )
     return connection
 

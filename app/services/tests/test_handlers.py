@@ -13,6 +13,7 @@ async def test_handler_action_pull_observations(
     mock_get_gundi_api_key,
     a_good_configuration,
     a_good_integration,
+    a_good_connection,
     mock_rmwhub_items,
     mock_rmw_observations,
 ):
@@ -33,14 +34,18 @@ async def test_handler_action_pull_observations(
     mocker.patch("app.services.gundi._get_gundi_api_key", mock_get_gundi_api_key)
     mocker.patch(
         "app.actions.rmwhub.RmwHubAdapter.download_data",
-        return_value=(RmwSets(sets=items), []),
+        return_value=(RmwSets(sets=items)),
     )
     mocker.patch(
         "app.actions.rmwhub.RmwHubAdapter.process_rmw_download",
         return_value=mock_rmw_observations,
     )
     mocker.patch(
-        "app.actions.helpers.get_er_token_and_site",
+        "app.actions.rmwhub.RmwHubAdapter.push_status_updates",
+        return_value=None,
+    )
+    mocker.patch(
+        "app.actions.handlers.get_er_token_and_site",
         return_value=("super_secret_token", "er.destination.com"),
     )
 
@@ -50,4 +55,6 @@ async def test_handler_action_pull_observations(
         a_good_integration, action_config=a_good_configuration
     )
 
-    assert action_response.get("observations_extracted") == len(mock_rmw_observations)
+    assert action_response.get("observations_extracted") == (
+        len(mock_rmw_observations) * len(a_good_connection.destinations)
+    )
