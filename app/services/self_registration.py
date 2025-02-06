@@ -11,6 +11,7 @@ from app.actions import (
     PullActionConfiguration,
     PushActionConfiguration,
     ExecutableActionMixin,
+    InternalActionConfiguration,
 )
 from app.settings import INTEGRATION_TYPE_SLUG, INTEGRATION_SERVICE_URL
 from .core import ActionTypeEnum
@@ -19,7 +20,7 @@ from app.webhooks.core import get_webhook_handler, GenericJsonTransformConfig
 logger = logging.getLogger(__name__)
 
 
-async def register_integration_in_gundi(gundi_client, type_slug=None, service_url=None):
+async def register_integration_in_gundi(gundi_client, type_slug=None, service_url=None, action_schedules=None):
     # Prepare the integration name and value
     integration_type_slug = type_slug or INTEGRATION_TYPE_SLUG
     if not integration_type_slug:
@@ -43,7 +44,10 @@ async def register_integration_in_gundi(gundi_client, type_slug=None, service_ur
     # Prepare the actions and schemas
     actions = []
     for action_id, handler in action_handlers.items():
-        _, config_model = handler
+        func, config_model = handler
+        if issubclass(config_model, InternalActionConfiguration):
+            logger.info(f"Skipping internal action '{action_id}'.")
+            continue  # Internal actions are not registered in Gundi
         action_name = action_id.replace("_", " ").title()
         action_schema = json.loads(config_model.schema_json())
         action_ui_schema = config_model.ui_schema()
@@ -59,19 +63,28 @@ async def register_integration_in_gundi(gundi_client, type_slug=None, service_ur
         if issubclass(config_model, ExecutableActionMixin):
             action_schema["is_executable"] = True
 
-        actions.append(
-            {
-                "type": action_type,
-                "name": action_name,
-                "value": action_id,
-                "description": f"{integration_type_name} {action_name} action",
-                "schema": action_schema,
-                "ui_schema": action_ui_schema,
-                "is_periodic_action": (
-                    True if issubclass(config_model, PullActionConfiguration) else False
-                ),
-            }
-        )
+        action = {
+            "type": action_type,
+            "name": action_name,
+            "value": action_id,
+            "description": f"{integration_type_name} {action_name} action",
+            "schema": action_schema,
+            "ui_schema": action_ui_schema,
+        }
+
+        if issubclass(config_model, PullActionConfiguration):
+            action["is_periodic_action"] = True
+            # Schedules can be specified by argument or using a decorator
+            if action_schedules and action_id in action_schedules:
+                action["crontab_schedule"] = action_schedules[action_id].dict()
+            elif hasattr(func, "crontab_schedule"):
+                crontab_schedule = getattr(func, "crontab_schedule")
+                action["crontab_schedule"] = crontab_schedule.dict()
+        else:
+            action["is_periodic_action"] = False
+
+        actions.append(action)
+
     data["actions"] = actions
 
     try:  # Register webhook config if available

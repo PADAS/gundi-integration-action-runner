@@ -1,12 +1,14 @@
 import asyncio
 import datetime
 import json
+
+import httpx
 import pydantic
 import pytest
 from unittest.mock import MagicMock
 from app import settings
 from gcloud.aio import pubsub
-from gundi_core.schemas.v2 import Integration
+from gundi_core.schemas.v2 import Integration, IntegrationSummary
 from gundi_core.events import (
     IntegrationActionCustomLog,
     CustomActivityLog,
@@ -29,9 +31,10 @@ from gundi_core.events import (
 from app.actions import (
     PullActionConfiguration,
     AuthActionConfiguration,
-    ExecutableActionMixin,
+    ExecutableActionMixin, InternalActionConfiguration,
 )
 from app.services.utils import GlobalUISchemaOptions, FieldWithUIOptions, UIOptions
+from app.services.action_scheduler import CrontabSchedule
 from app.webhooks import (
     GenericJsonTransformConfig,
     GenericJsonPayload,
@@ -78,9 +81,86 @@ def mock_redis(mocker, mock_integration_state):
 
 
 @pytest.fixture
-def integration_v2():
-    return Integration.parse_obj(
+def mock_redis_empty(mocker, mock_integration_state):
+    redis = MagicMock()
+    redis_client = mocker.MagicMock()
+    redis_client.set.return_value = async_return(MagicMock())
+    redis_client.get.return_value = async_return(None)
+    redis_client.delete.return_value = async_return(MagicMock())
+    redis_client.setex.return_value = async_return(None)
+    redis_client.incr.return_value = redis_client
+    redis_client.decr.return_value = async_return(None)
+    redis_client.expire.return_value = redis_client
+    redis_client.execute.return_value = async_return((1, True))
+    redis_client.__aenter__.return_value = redis_client
+    redis_client.__aexit__.return_value = None
+    redis_client.pipeline.return_value = redis_client
+    redis.Redis.return_value = redis_client
+    return redis
+
+
+@pytest.fixture
+def mock_redis_with_integration_config(mocker, integration_v2_as_json):
+    redis = MagicMock()
+    redis_client = mocker.MagicMock()
+    redis_client.set.return_value = async_return(MagicMock())
+    redis_client.get.return_value = async_return(integration_v2_as_json)
+    redis_client.delete.return_value = async_return(MagicMock())
+    redis_client.setex.return_value = async_return(None)
+    redis_client.incr.return_value = redis_client
+    redis_client.decr.return_value = async_return(None)
+    redis_client.expire.return_value = redis_client
+    redis_client.execute.return_value = async_return((1, True))
+    redis_client.__aenter__.return_value = redis_client
+    redis_client.__aexit__.return_value = None
+    redis_client.pipeline.return_value = redis_client
+    redis.Redis.return_value = redis_client
+    return redis
+
+
+@pytest.fixture
+def mock_redis_with_action_config(mocker, pull_observations_config_as_json):
+    redis = MagicMock()
+    redis_client = mocker.MagicMock()
+    redis_client.set.return_value = async_return(MagicMock())
+    redis_client.get.return_value = async_return(pull_observations_config_as_json)
+    redis_client.delete.return_value = async_return(MagicMock())
+    redis_client.setex.return_value = async_return(None)
+    redis_client.incr.return_value = redis_client
+    redis_client.decr.return_value = async_return(None)
+    redis_client.expire.return_value = redis_client
+    redis_client.execute.return_value = async_return((1, True))
+    redis_client.__aenter__.return_value = redis_client
+    redis_client.__aexit__.return_value = None
+    redis_client.pipeline.return_value = redis_client
+    redis.Redis.return_value = redis_client
+    return redis
+
+
+@pytest.fixture
+def pull_observations_config_as_json():
+    return json.dumps(
         {
+            "id": "5577c323-b961-4277-9047-b1f27fd6a1b7",
+            "integration": "779ff3ab-5589-4f4c-9e0a-ae8d6c9edff0",
+            "action": {
+                "id": "75b3040f-ab1f-42e7-b39f-8965c088b154",
+                "type": "pull",
+                "name": "Pull Observations",
+                "value": "pull_observations",
+            },
+            "data": {
+                "end_datetime": "2023-11-10T06:00:00-00:00",
+                "start_datetime": "2023-11-10T05:30:00-00:00",
+                "force_run_since_start": False,
+            },
+        }
+    )
+
+
+@pytest.fixture
+def integration_v2_as_dict():
+    return {
             "id": "779ff3ab-5589-4f4c-9e0a-ae8d6c9edff0",
             "name": "Gundi X",
             "base_url": "https://gundi-er.pamdas.org",
@@ -209,7 +289,16 @@ def integration_v2():
             "status": "healthy",
             "status_details": "",
         }
-    )
+
+
+@pytest.fixture
+def integration_v2_as_json(integration_v2_as_dict):
+    return json.dumps(integration_v2_as_dict, default=str)
+
+
+@pytest.fixture
+def integration_v2(integration_v2_as_dict):
+    return Integration.parse_obj(integration_v2_as_dict)
 
 
 @pytest.fixture
@@ -717,20 +806,14 @@ def mock_gundi_sensors_client_class(
 def events_created_response():
     return [
         {
-            "id": "e1e1e1e1-e1e1-e1e1-e1e1-e1e1e1e1e1e1",
-            "title": "Animal Sighting",
-            "event_type": "wildlife_sighting_rep",
-            "recorded_at": "2024-01-29 20:51:10-03:00",
-            "location": {"lat": -51.688645, "lon": -72.704421},
-            "event_details": {"site_name": "MM Spot", "species": "lion"},
+            "object_id": "af8e2946-bad6-4d02-8a26-99dde34bd9fa",
+            "created_at": "2024-07-04T13:15:26.559894Z",
+            "updated_at": None,
         },
         {
-            "id": "e1e1e1e1-e1e1-e1e1-e1e1-e1e1e1e1e1e2",
-            "title": "Animal Sighting",
-            "event_type": "wildlife_sighting_rep",
-            "recorded_at": "2024-01-29 20:51:25-03:00",
-            "location": {"lat": -51.688646, "lon": -72.704421},
-            "event_details": {"site_name": "MM Spot", "species": "lion"},
+            "object_id": "gat51h73-dd71-dj88-91uh-jah7162hy6fa",
+            "created_at": "2024-07-03T13:15:26.559894Z",
+            "updated_at": None,
         },
     ]
 
@@ -739,12 +822,12 @@ def events_created_response():
 def event_attachment_created_response():
     return [
         {
-            "object_id": "af8e2946-bad6-4d02-8a26-99dde34bd9fa",
+            "object_id": "af8e2946-bad6-4d02-8a26-99dde34bd9fb",
             "created_at": "2024-07-04T13:15:26.559894Z",
             "updated_at": None,
         },
         {
-            "object_id": "gat51h73-dd71-dj88-91uh-jah7162hy6fs",
+            "object_id": "gat51h73-dd71-dj88-91uh-jah7162hy6fb",
             "created_at": "2024-07-03T13:15:26.559894Z",
             "updated_at": None,
         },
@@ -755,22 +838,14 @@ def event_attachment_created_response():
 def observations_created_response():
     return [
         {
-            "id": "e1e1e1e1-e1e1-e1e1-e1e1-e1e1e1e1e1e1",
-            "source": "device-xy123",
-            "type": "tracking-device",
-            "subject_type": "puma",
-            "recorded_at": "2024-01-24 09:03:00-0300",
-            "location": {"lat": -51.748, "lon": -72.720},
-            "additional": {"speed_kmph": 5},
+            "object_id": "af8e2946-bad6-4d02-8a26-99dde34bd9fc",
+            "created_at": "2024-07-04T13:15:26.559894Z",
+            "updated_at": None,
         },
         {
-            "id": "e1e1e1e1-e1e1-e1e1-e1e1-e1e1e1e1e1e2",
-            "source": "test-device-mariano",
-            "type": "tracking-device",
-            "subject_type": "puma",
-            "recorded_at": "2024-01-24 09:05:00-0300",
-            "location": {"lat": -51.755, "lon": -72.755},
-            "additional": {"speed_kmph": 5},
+            "object_id": "gat51h73-dd71-dj88-91uh-jah7162hy6fc",
+            "created_at": "2024-07-03T13:15:26.559894Z",
+            "updated_at": None,
         },
     ]
 
@@ -783,6 +858,21 @@ def mock_state_manager(mocker):
     )
     mock_state_manager.set_state.return_value = async_return(None)
     return mock_state_manager
+
+
+@pytest.fixture
+def mock_config_manager(mocker, integration_v2):
+    mock_config_manager = mocker.MagicMock()
+    mock_config_manager.get_integration.return_value = async_return(
+        IntegrationSummary.from_integration(integration_v2)
+    )
+    mock_config_manager.get_integration_details.return_value = async_return(integration_v2)
+    mock_config_manager.get_action_configuration.return_value = async_return(integration_v2.configurations[0])
+    mock_config_manager.set_integration.return_value = async_return(None)
+    mock_config_manager.set_action_configuration.return_value = async_return(None)
+    mock_config_manager.delete_integration.return_value = async_return(None)
+    mock_config_manager.delete_action_configuration.return_value = async_return(None)
+    return mock_config_manager
 
 
 @pytest.fixture
@@ -865,18 +955,99 @@ class MockAuthenticateActionConfiguration(
     )
 
 
+class MockSubActionConfiguration(InternalActionConfiguration):
+    start_datetime: datetime.datetime
+    end_datetime: datetime.datetime
+
+
 @pytest.fixture
 def mock_action_handlers(mocker):
-    mock_action_handler = AsyncMock()
-    mock_action_handler.return_value = {"observations_extracted": 10}
+    mock_pull_observations_action_handler = AsyncMock()
+    mock_pull_observations_action_handler.return_value = {"observations_extracted": 10}
+    mock_pull_observations_action_handler.crontab_schedule = CrontabSchedule.parse_obj_from_crontab("*/10 * * * * -5")
+    mock_pull_observations_by_date_action_handler = AsyncMock()
+    mock_pull_observations_by_date_action_handler.return_value = {"observations_extracted": 10}
+    del mock_pull_observations_by_date_action_handler.crontab_schedule
     mock_action_handlers = {
-        "pull_observations": (mock_action_handler, MockPullActionConfiguration)
+        "pull_observations": (mock_pull_observations_action_handler, MockPullActionConfiguration),
+        "pull_observations_by_date": (mock_pull_observations_by_date_action_handler, MockSubActionConfiguration)
     }
     return mock_action_handlers
 
 
 @pytest.fixture
-def mock_auth_action_handlers(mocker):
+def mock_pull_observations_handler_with_400_error():
+    # Mock an HTTP response with an error
+    error_body = {
+        "error": "Bad Request",
+        "code": 400,
+        "message": "start_time can't be older than 10 days"
+    }
+    response = httpx.Response(
+        status_code=400,
+        request=httpx.Request("POST", "https://example.com/api", json={"start_time": "2024-01-10T05:30:00-00:00"}),
+        content=json.dumps(error_body).encode("utf-8"),  # Convert dict to JSON string and encode
+        headers={"Content-Type": "application/json"}  # Ensure correct content type
+    )
+    error = httpx.HTTPStatusError("Bad Request", request=response.request, response=response)
+
+    # Create the mock handler
+    mock_pull_observations_action_handler = AsyncMock()
+    mock_pull_observations_action_handler.side_effect = error
+
+    return mock_pull_observations_action_handler
+
+@pytest.fixture
+def mock_pull_observations_handler_with_500_error():
+    # Mock an HTTP response with an error
+    error_body = {
+        "error": "Internal Server Error",
+        "code": 500,
+        "message": "Something went wrong"
+    }
+    response = httpx.Response(
+        status_code=500,
+        request=httpx.Request("POST", "https://example.com/api", json={"start_time": "2024-01-10T05:30:00-00:00"}),
+        content=json.dumps(error_body).encode("utf-8"),  # Convert dict to JSON string and encode
+        headers={"Content-Type": "application/json"}  # Ensure correct content type
+    )
+    error = httpx.HTTPStatusError("Internal Server Error", request=response.request, response=response)
+
+    # Create the mock handler
+    mock_pull_observations_action_handler = AsyncMock()
+    mock_pull_observations_action_handler.side_effect = error
+
+    return mock_pull_observations_action_handler
+
+
+@pytest.fixture
+def mock_pull_observations_handler_with_generic_error():
+    mock_pull_observations_action_handler = AsyncMock()
+    mock_pull_observations_action_handler.side_effect = Exception("Something went wrong")
+    return mock_pull_observations_action_handler
+
+
+@pytest.fixture
+def mock_action_handlers_with_request_errors(
+        request,
+        mock_pull_observations_handler_with_400_error,
+        mock_pull_observations_handler_with_500_error,
+        mock_pull_observations_handler_with_generic_error
+):
+    if request.param == "bad_request":
+        handler = mock_pull_observations_handler_with_400_error
+    elif request.param == "internal_error":
+        handler = mock_pull_observations_handler_with_500_error
+    else:
+        handler = mock_pull_observations_handler_with_generic_error
+    mock_action_handlers = {
+        "pull_observations": (handler, MockPullActionConfiguration)
+    }
+    return mock_action_handlers
+
+
+@pytest.fixture
+def mock_auth_action_handlers():
     mock_action_handler = AsyncMock()
     mock_action_handler.return_value = {
         "username": "me@example.com",
@@ -909,7 +1080,7 @@ def mock_api_key():
 
 
 @pytest.fixture
-def event_v2_cloud_event_payload():
+def event_v2_pubsub_payload():
     timestamp = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     return {
         "message": {
@@ -924,7 +1095,7 @@ def event_v2_cloud_event_payload():
 
 
 @pytest.fixture
-def event_v2_cloud_event_payload_with_config_overrides():
+def event_v2_pubsub_payload_with_config_overrides():
     timestamp = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     return {
         "message": {
@@ -939,7 +1110,7 @@ def event_v2_cloud_event_payload_with_config_overrides():
 
 
 @pytest.fixture
-def event_v2_cloud_event_headers():
+def pubsub_message_request_headers():
     timestamp = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     return {
         "host": "integrationx-actions-runner-jabcutl7za-uc.a.run.app",
@@ -960,6 +1131,132 @@ def event_v2_cloud_event_headers():
         "ce-specversion": "1.0",
         "ce-type": "google.cloud.pubsub.topic.v1.messagePublished",
         "ce-time": timestamp,
+    }
+
+
+@pytest.fixture
+def integration_created_event_as_pubsub_message():
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    return {
+       "message": {
+          "attributes": {
+             "event_type": "IntegrationCreated",
+             "gundi_version": "v2",
+             "integration_type": "ebird"
+          },
+          "data": "eyJldmVudF9pZCI6ICJlNDIxNmNlNS02NTAzLTRlOTMtOWUxMS0zMDAyM2IyZTEzYzIiLCAidGltZXN0YW1wIjogIjIwMjUtMDEtMDcgMTM6NDY6MzUuMzI0NjQ2KzAwOjAwIiwgInNjaGVtYV92ZXJzaW9uIjogInYxIiwgInBheWxvYWQiOiB7ImlkIjogImM0NTE3Y2U4LTNjMTQtNDZjMC05YzY4LTg5NzhiZGMzNGExZiIsICJuYW1lIjogIltNYXJpYW5vXSBlQmlyZCBOZXciLCAidHlwZSI6IHsiaWQiOiAiNWJmM2YwYzEtOWVmNC00OGUyLTg2MTYtMGMxMTE3YTExNmU0IiwgIm5hbWUiOiAiRWJpcmQiLCAidmFsdWUiOiAiZWJpcmQiLCAiZGVzY3JpcHRpb24iOiAiRGVmYXVsdCB0eXBlIGZvciBpbnRlZ3JhdGlvbnMgd2l0aCBFYmlyZCIsICJhY3Rpb25zIjogW3siaWQiOiAiNjFjYWQ2YzMtNzJmOC00YzA3LWJmODgtOGQ1ODJmM2FlNTU3IiwgInR5cGUiOiAiYXV0aCIsICJuYW1lIjogIkF1dGgiLCAidmFsdWUiOiAiYXV0aCIsICJkZXNjcmlwdGlvbiI6ICJFYmlyZCBBdXRoIGFjdGlvbiIsICJhY3Rpb25fc2NoZW1hIjogeyJ0eXBlIjogIm9iamVjdCIsICJ0aXRsZSI6ICJBdXRoZW50aWNhdGVDb25maWciLCAicmVxdWlyZWQiOiBbImFwaV9rZXkiXSwgInByb3BlcnRpZXMiOiB7ImFwaV9rZXkiOiB7InR5cGUiOiAic3RyaW5nIiwgInRpdGxlIjogImVCaXJkIEFQSSBLZXkiLCAiZm9ybWF0IjogInBhc3N3b3JkIiwgIndyaXRlT25seSI6IHRydWUsICJkZXNjcmlwdGlvbiI6ICJBUEkga2V5IGdlbmVyYXRlZCBmcm9tIGVCaXJkJ3Mgd2Vic2l0ZSBhdCBodHRwczovL2ViaXJkLm9yZy9hcGkva2V5Z2VuIn19LCAiZGVmaW5pdGlvbnMiOiB7fSwgImlzX2V4ZWN1dGFibGUiOiB0cnVlfSwgInVpX3NjaGVtYSI6IHt9fSwgeyJpZCI6ICIzYzg5NDkwZC1lMTQ3LTRhM2QtYTFjOS00NDkzMjdjMjg2YjQiLCAidHlwZSI6ICJwdWxsIiwgIm5hbWUiOiAiUHVsbCBFdmVudHMiLCAidmFsdWUiOiAicHVsbF9ldmVudHMiLCAiZGVzY3JpcHRpb24iOiAiRWJpcmQgUHVsbCBFdmVudHMgYWN0aW9uIiwgImFjdGlvbl9zY2hlbWEiOiB7InR5cGUiOiAib2JqZWN0IiwgInRpdGxlIjogIlB1bGxFdmVudHNDb25maWciLCAiZXhhbXBsZXMiOiBbeyJkaXN0YW5jZSI6IDMwLCAibGF0aXR1ZGUiOiA0Ny41MjE4MDgyLCAibnVtX2RheXMiOiAxLCAibG9uZ2l0dWRlIjogLTEyMi4zODY0NTA2fV0sICJyZXF1aXJlZCI6IFsibGF0aXR1ZGUiLCAibG9uZ2l0dWRlIiwgImRpc3RhbmNlIiwgIm51bV9kYXlzIl0sICJwcm9wZXJ0aWVzIjogeyJkaXN0YW5jZSI6IHsidHlwZSI6ICJudW1iZXIiLCAidGl0bGUiOiAiRGlzdGFuY2UiLCAiZGVmYXVsdCI6IDI1LCAibWF4aW11bSI6IDUwLCAibWluaW11bSI6IDEsICJkZXNjcmlwdGlvbiI6ICJEaXN0YW5jZSBpbiBraWxvbWV0ZXJzIHRvIHNlYXJjaCBhcm91bmQuICBNYXg6IDUwa20uICBEZWZhdWx0OiAyNWttLiJ9LCAibGF0aXR1ZGUiOiB7InR5cGUiOiAibnVtYmVyIiwgInRpdGxlIjogIkxhdGl0dWRlIiwgImRlZmF1bHQiOiAwLCAiZGVzY3JpcHRpb24iOiAiTGF0aXR1ZGUgb2YgcG9pbnQgdG8gc2VhcmNoIGFyb3VuZC4gIElmIG5vdCBwcmVzZW50LCBhIHNlYXJjaCByZWdpb24gc2hvdWQgYmUgaW5jbHVkZWQgaW5zdGVhZC4ifSwgIm51bV9kYXlzIjogeyJ0eXBlIjogImludGVnZXIiLCAidGl0bGUiOiAiTnVtYmVyIG9mIERheXMiLCAiZGVmYXVsdCI6IDIsICJkZXNjcmlwdGlvbiI6ICJOdW1iZXIgb2YgZGF5cyBvZiBkYXRhIHRvIHB1bGwgZnJvbSBlQmlyZC4gIERlZmF1bHQ6IDIifSwgImxvbmdpdHVkZSI6IHsidHlwZSI6ICJudW1iZXIiLCAidGl0bGUiOiAiTG9uZ2l0dWRlIiwgImRlZmF1bHQiOiAwLCAiZGVzY3JpcHRpb24iOiAiTG9uZ2l0dWRlIG9mIHBvaW50IHRvIHNlYXJjaCBhcm91bmQuICBJZiBub3QgcHJlc2VudCwgYSBzZWFyY2ggcmVnaW9uIHNob3VkIGJlIGluY2x1ZGVkIGluc3RlYWQuIn0sICJyZWdpb25fY29kZSI6IHsidHlwZSI6ICJzdHJpbmciLCAidGl0bGUiOiAiUmVnaW9uIENvZGUiLCAiZGVmYXVsdCI6ICIiLCAiZGVzY3JpcHRpb24iOiAiQW4gZUJpcmQgcmVnaW9uIGNvZGUgdGhhdCBzaG91bGQgYmUgdXNlZCBpbiB0aGUgcXVlcnkuICBFaXRoZXIgYSByZWdpb24gY29kZSBvciBhIGNvbWJpbmF0aW9uIG9mIGxhdGl0dWRlLCBsb25naXR1ZGUgYW5kIGRpc3RhbmNlIHNob3VsZCBiZSBpbmNsdWRlZC4ifSwgInNwZWNpZXNfY29kZSI6IHsidHlwZSI6ICJzdHJpbmciLCAidGl0bGUiOiAiU3BlY2llcyBDb2RlIiwgImRlZmF1bHQiOiAiIiwgImRlc2NyaXB0aW9uIjogIkFuIGVCaXJkIHNwZWNpZXMgY29kZSB0aGF0IHNob3VsZCBiZSB1c2VkIGluIHRoZSBxdWVyeS4gIElmIG5vdCBpbmNsdWRlZCwgYWxsIHNwZWNpZXMgd2lsbCBiZSBzZWFyY2hlZC4ifSwgImluY2x1ZGVfcHJvdmlzaW9uYWwiOiB7InR5cGUiOiAiYm9vbGVhbiIsICJ0aXRsZSI6ICJJbmNsdWRlIFVucmV2aWV3ZWQiLCAiZGVmYXVsdCI6IGZhbHNlLCAiZGVzY3JpcHRpb24iOiAiV2hldGhlciBvciBub3QgdG8gaW5jbHVkZSBvYnNlcnZhdGlvbnMgdGhhdCBoYXZlIG5vdCB5ZXQgYmVlbiByZXZpZXdlZC4gIERlZmF1bHQ6IEZhbHNlLiJ9fSwgImRlZmluaXRpb25zIjoge319LCAidWlfc2NoZW1hIjoge319XSwgIndlYmhvb2siOiBudWxsfSwgImJhc2VfdXJsIjogIiIsICJlbmFibGVkIjogdHJ1ZSwgIm93bmVyIjogeyJpZCI6ICI0NTAxODM5OC03YTJhLTRmNDgtODk3MS0zOWEyNzEwZDVkYmQiLCAibmFtZSI6ICJHdW5kaSBFbmdpbmVlcmluZyIsICJkZXNjcmlwdGlvbiI6ICJUZXN0IG9yZ2FuaXphdGlvbiJ9LCAiZGVmYXVsdF9yb3V0ZSI6IG51bGwsICJhZGRpdGlvbmFsIjoge319LCAiZXZlbnRfdHlwZSI6ICJJbnRlZ3JhdGlvbkNyZWF0ZWQifQ==",
+          "messageId": "13447993655349188",
+          "message_id": "13447993655349188",
+          "orderingKey": "config-event",
+          "publishTime": timestamp,
+          "publish_time": timestamp
+       },
+       "subscription": "projects/cdip-dev-78ca/subscriptions/onyesha-config-events-sub-dev"
+    }
+
+
+@pytest.fixture
+def integration_updated_event_as_pubsub_message():
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    return {
+       "message": {
+          "attributes": {
+             "event_type": "IntegrationUpdated",
+             "gundi_version": "v2",
+             "integration_type": "ebird"
+          },
+          "data": "eyJldmVudF9pZCI6ICIzNTA4OGU5Yi03NmVhLTRlMTYtOGU3Yy0yZDIxMTAyYWY4YmYiLCAidGltZXN0YW1wIjogIjIwMjUtMDEtMDcgMTQ6MDM6MjguMTQ2Mzc2KzAwOjAwIiwgInNjaGVtYV92ZXJzaW9uIjogInYxIiwgInBheWxvYWQiOiB7ImlkIjogImM0NTE3Y2U4LTNjMTQtNDZjMC05YzY4LTg5NzhiZGMzNGExZiIsICJhbHRfaWQiOiBudWxsLCAiY2hhbmdlcyI6IHsibmFtZSI6ICJbTWFyaWFub10gZUJpcmQgZWRpdGVkIn19LCAiZXZlbnRfdHlwZSI6ICJJbnRlZ3JhdGlvblVwZGF0ZWQifQ==",
+          "messageId": "13448233363859388",
+          "message_id": "13448233363859388",
+          "orderingKey": "config-event",
+          "publishTime": timestamp,
+          "publish_time": timestamp
+       },
+       "subscription":"projects/cdip-dev-78ca/subscriptions/onyesha-config-events-sub-dev"
+    }
+
+
+@pytest.fixture
+def integration_deleted_event_as_pubsub_message():
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    return {
+       "message": {
+          "attributes": {
+             "event_type": "IntegrationDeleted",
+             "gundi_version": "v2",
+             "integration_type": "ebird"
+          },
+          "data": "eyJldmVudF9pZCI6ICJjNGMzZmQ5MC1iYWNkLTRjM2QtOTRmNS0wNTZmYjRlNGMyZGUiLCAidGltZXN0YW1wIjogIjIwMjUtMDEtMDcgMTQ6MDg6MjMuOTc5MzMwKzAwOjAwIiwgInNjaGVtYV92ZXJzaW9uIjogInYxIiwgInBheWxvYWQiOiB7ImlkIjogImM0NTE3Y2U4LTNjMTQtNDZjMC05YzY4LTg5NzhiZGMzNGExZiIsICJhbHRfaWQiOiBudWxsfSwgImV2ZW50X3R5cGUiOiAiSW50ZWdyYXRpb25EZWxldGVkIn0=",
+          "messageId": "13447620335530987",
+          "message_id": "13447620335530987",
+          "orderingKey": "config-event",
+          "publishTime": timestamp,
+          "publish_time": timestamp
+       },
+       "subscription": "projects/cdip-dev-78ca/subscriptions/onyesha-config-events-sub-dev"
+    }
+
+
+@pytest.fixture
+def action_config_created_event_as_pubsub_message():
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    return {
+       "message": {
+          "attributes": {
+             "event_type": "ActionConfigCreated",
+             "gundi_version": "v2",
+             "integration_type": "ebird"
+          },
+          "data": "eyJldmVudF9pZCI6ICIxYzI2YzM4Yy03YmRiLTRiMmUtYjY3NS1hYmE3OGIzODMyOTYiLCAidGltZXN0YW1wIjogIjIwMjUtMDEtMDcgMTM6NDY6MzUuNDc4MzM4KzAwOjAwIiwgInNjaGVtYV92ZXJzaW9uIjogInYxIiwgInBheWxvYWQiOiB7ImlkIjogIjQ3MzFlN2VhLTc3NWUtNDllZS1hNzUzLTBkMGE3YWQ0YjZmOCIsICJpbnRlZ3JhdGlvbiI6ICJjNDUxN2NlOC0zYzE0LTQ2YzAtOWM2OC04OTc4YmRjMzRhMWYiLCAiYWN0aW9uIjogeyJpZCI6ICIzYzg5NDkwZC1lMTQ3LTRhM2QtYTFjOS00NDkzMjdjMjg2YjQiLCAidHlwZSI6ICJwdWxsIiwgIm5hbWUiOiAiUHVsbCBFdmVudHMiLCAidmFsdWUiOiAicHVsbF9ldmVudHMifSwgImRhdGEiOiB7ImRpc3RhbmNlIjogMjUsICJsYXRpdHVkZSI6IDAsICJudW1fZGF5cyI6IDIsICJsb25naXR1ZGUiOiAwLCAicmVnaW9uX2NvZGUiOiAiIiwgInNwZWNpZXNfY29kZSI6ICIiLCAiaW5jbHVkZV9wcm92aXNpb25hbCI6IGZhbHNlfX0sICJldmVudF90eXBlIjogIkFjdGlvbkNvbmZpZ0NyZWF0ZWQifQ==",
+          "messageId": "13446922393245117",
+          "message_id": "13446922393245117",
+          "orderingKey": "config-event",
+          "publishTime": timestamp,
+          "publish_time": timestamp
+       },
+       "subscription": "projects/cdip-dev-78ca/subscriptions/onyesha-config-events-sub-dev"
+    }
+
+
+@pytest.fixture
+def action_config_updated_event_as_pubsub_message():
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    return {
+       "message": {
+          "attributes": {
+             "event_type": "ActionConfigUpdated",
+             "gundi_version": "v2",
+             "integration_type": "cellstop"
+          },
+          "data": "eyJldmVudF9pZCI6ICI5NTIzNzVhZC0xNjRjLTRjODMtOTAyMS1iNDEwNDQzMjg0MGUiLCAidGltZXN0YW1wIjogIjIwMjUtMDEtMDcgMTI6MzE6NTYuMzAyMzg0KzAwOjAwIiwgInNjaGVtYV92ZXJzaW9uIjogInYxIiwgInBheWxvYWQiOiB7ImlkIjogIjgxMzQ0MzQ1LWY2OTEtNDIzMC04ZmFiLTZkMjQ2NDcyOTA4NSIsICJhbHRfaWQiOiAicHVsbF9vYnNlcnZhdGlvbnMiLCAiY2hhbmdlcyI6IHsiZGF0YSI6IHsibG9va2JhY2tfZGF5cyI6IDJ9fSwgImludGVncmF0aW9uX2lkIjogIjUyMDFjODQ3LWE5MzgtNDhiMC1iYTY0LWFkOTI1NTI3MzZiMSJ9LCAiZXZlbnRfdHlwZSI6ICJBY3Rpb25Db25maWdVcGRhdGVkIn0=",
+          "messageId": "13447454391491311",
+          "message_id": "13447454391491311",
+          "orderingKey": "config-event",
+          "publishTime": timestamp,
+          "publish_time": timestamp
+       },
+       "subscription": "projects/cdip-dev-78ca/subscriptions/onyesha-config-events-sub-dev"
+    }
+
+
+@pytest.fixture
+def action_config_deleted_event_as_pubsub_message():
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    return {
+       "message": {
+          "attributes": {
+             "event_type": "ActionConfigDeleted",
+             "gundi_version": "v2",
+             "integration_type": "cellstop"
+          },
+          "data": "eyJldmVudF9pZCI6ICJhMjNmMzA1MC03MGMxLTQ4NGMtYTI3YS0yYTI2NmI1MzNkZjUiLCAidGltZXN0YW1wIjogIjIwMjUtMDEtMDcgMTQ6MTc6MDYuMTAwODQwKzAwOjAwIiwgInNjaGVtYV92ZXJzaW9uIjogInYxIiwgInBheWxvYWQiOiB7ImlkIjogIjcwNGE5ZTNlLWRiZmMtNDYwNC1hMjZmLTI3OGMwZDVkYjRiNiIsICJhbHRfaWQiOiAicHVsbF9vYnNlcnZhdGlvbnMiLCAiaW50ZWdyYXRpb25faWQiOiAiMDNjYTlmYTUtMmEyOS00YWYzLWFhMzAtZDQ4MjRkMWJiMzUyIn0sICJldmVudF90eXBlIjogIkFjdGlvbkNvbmZpZ0RlbGV0ZWQifQ==",
+          "messageId": "13448151204087837",
+          "message_id": "13448151204087837",
+          "orderingKey": "config-event",
+          "publishTime": timestamp,
+          "publish_time": timestamp
+       },
+       "subscription": "projects/cdip-dev-78ca/subscriptions/onyesha-config-events-sub-dev"
     }
 
 
