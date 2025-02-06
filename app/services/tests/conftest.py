@@ -4,6 +4,7 @@ from app.actions.configurations import PullRmwHubObservationsConfiguration
 from app.actions.rmwhub import GearSet, Trap
 from ropeless_utils import State
 from gundi_core.schemas import IntegrationInformation
+from gundi_core.schemas.v2 import Connection, ConnectionIntegration
 
 
 @pytest.fixture
@@ -66,6 +67,26 @@ def a_good_configuration():
     return PullRmwHubObservationsConfiguration(
         api_key="anApiKey", rmw_url="https://somermwhub.url"
     )
+
+
+@pytest.fixture
+def a_good_connection():
+    connection = Connection(
+        provider=ConnectionIntegration(
+            id="00000000-0000-0000-0000-000000000000",
+        ),
+        destinations=[
+            ConnectionIntegration(
+                id="00000000-0000-0000-0000-000000000001",
+                name="Buoy Dev",
+            ),
+            ConnectionIntegration(
+                id="00000000-0000-0000-0000-000000000002",
+                name="Buoy Staging",
+            ),
+        ],
+    )
+    return connection
 
 
 @pytest.fixture

@@ -1,10 +1,11 @@
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from enum import Enum
 from typing import List
 
 import hashlib
 import logging
 import httpx
+import pytz
 import requests
 import json
 from pydantic import validator, BaseModel
@@ -17,7 +18,8 @@ logger = logging.getLogger(__name__)
 
 SOURCE_TYPE = "ropeless_buoy"
 SUBJECT_SUBTYPE = "ropeless_buoy_device"
-EVENT_TYPE = "gear_position_rmwhub"
+GEAR_DEPLOYED_EVENT = "gear_deployed"
+GEAR_RETRIEVED_EVENT = "gear_retrieved"
 
 
 class Status(Enum):
@@ -60,19 +62,26 @@ class Trap(BaseModel):
         Get the last updated time of the trap.
         """
 
-        deployment_time = datetime.strptime(
-            self.deploy_datetime_utc, "%Y-%m-%dT%H:%M:%S"
-        ).replace(tzinfo=timezone.utc)
-        retrived_time = datetime.strptime(
-            self.retrieved_datetime_utc, "%Y-%m-%dT%H:%M:%S"
-        ).replace(tzinfo=timezone.utc)
+        deployment_time_iso = Trap.convert_est_to_utc(self.deploy_datetime_utc)
+        retrived_time_iso = Trap.convert_est_to_utc(self.retrieved_datetime_utc)
 
-        if deployment_time > retrived_time:
-            last_updated = deployment_time
+        if deployment_time_iso > retrived_time_iso:
+            last_updated = deployment_time_iso
         else:
-            last_updated = retrived_time
+            last_updated = retrived_time_iso
 
-        return str(last_updated.isoformat())
+        return str(last_updated)
+
+    @classmethod
+    # TODO: Convert to local function within get_latest_update_time after update status code is removed. RF-755
+    def convert_est_to_utc(self, datetime_str: str) -> str:
+        """
+        Convert the datetime string to UTC.
+        """
+
+        datetime_obj = datetime.strptime(datetime_str, "%Y-%m-%dT%H:%M:%S")
+        datetime_obj = datetime_obj.astimezone(pytz.utc)
+        return datetime_obj.isoformat()
 
 
 class GearSet(BaseModel):
@@ -130,8 +139,7 @@ class GearSet(BaseModel):
         observations = []
 
         for trap in self.traps:
-            latest_update = trap.get_latest_update_time()
-            if latest_update == trap.deploy_datetime_utc:
+            if trap.status == "deployed":
                 observations.append(
                     self.create_observation_for_event(trap, devices, Status.DEPLOYED)
                 )
@@ -167,7 +175,9 @@ class GearSet(BaseModel):
                 "subject_name": subject_name,
                 "rmwhub_set_id": self.id,
                 "display_id": display_id_hash,
-                "event_type": EVENT_TYPE,
+                "event_type": GEAR_DEPLOYED_EVENT
+                if trap.status == "deployed"
+                else GEAR_RETRIEVED_EVENT,
                 "devices": devices,
             },
         }
@@ -177,6 +187,21 @@ class GearSet(BaseModel):
         )
 
         return observation
+
+    def get_trap_ids(self) -> set:
+        """
+        Get the trap IDs for the gear set.
+        """
+
+        return {RmwHubAdapter.clean_id_str(geartrap.id) for geartrap in self.traps}
+
+    def is_visited(self, visited: set) -> bool:
+        """
+        Check if the gearset has been visited.
+        """
+
+        traps_in_gearset = self.get_trap_ids()
+        return traps_in_gearset & visited
 
 
 class RmwSets(BaseModel):
@@ -240,7 +265,7 @@ class RmwHubAdapter:
 
         return RmwSets(sets=gearsets)
 
-    async def process_sets(
+    async def process_rmw_download(
         self, rmw_sets: RmwSets, start_datetime_str: str, minute_interval: int
     ) -> List:
         """
@@ -272,20 +297,26 @@ class RmwHubAdapter:
         rmw_updates = set()
         for gearset in rmw_sets.sets:
             for trap in gearset.traps:
-                if (
-                    trap.id.replace("e_", "").replace("rmwhub_", "")
-                    in er_subject_names_and_ids
-                ):
+                if RmwHubAdapter.clean_id_str(trap.id) in er_subject_names_and_ids:
                     rmw_updates.add(gearset)
                 else:
                     rmw_inserts.add(gearset)
 
         # Handle inserts to Earthranger
+        visited_inserts = set()
         for gearset in rmw_inserts:
-            logger.info(f"Rmw Set ID {gearset.id} not found in ER subjects.")
+            logger.info(f"Rmw Set ID {gearset.id} not found in ER subjects. Inserting.")
 
             # Process each trap individually
             for trap in gearset.traps:
+
+                if gearset.is_visited(visited_inserts):
+                    logger.info(
+                        f"Skipping insert for trap ID {trap.id}. Already processed."
+                    )
+                    continue
+
+                visited_inserts.update(gearset.get_trap_ids())
 
                 logger.info(f"Processing trap ID {trap.id} for insert to ER.")
 
@@ -302,11 +333,20 @@ class RmwHubAdapter:
                     logger.info(f"ER has the most recent update for trap ID {trap.id}.")
 
         # Handle updates to Earthranger
+        visited_updates = set()
         for gearset in rmw_updates:
-            logger.info(f"Rmw Set ID {gearset.id} found in ER subjects.")
+            logger.info(f"Rmw Set ID {gearset.id} found in ER subjects. Updating.")
 
-            # Process each trap individually
             for trap in gearset.traps:
+
+                # Process each trap individually
+                if gearset.is_visited(visited_updates):
+                    logger.info(
+                        f"Skipping insert for trap ID {trap.id}. Already processed."
+                    )
+                    continue
+
+                visited_updates.update(gearset.get_trap_ids())
                 logger.info(f"Processing trap ID {trap.id} for update to ER.")
 
                 # Get subject from ER
@@ -398,15 +438,22 @@ class RmwHubAdapter:
             rmw_sets.sets
         )
 
+        visited_traps = set()
         for observation in observations:
-            rmw_set_id = (
-                observation.get("additional")
-                .get("rmwhub_set_id")
-                .replace("rmwhub_", "")
-                .replace("e_", "")
+            rmw_set_id = RmwHubAdapter.clean_id_str(
+                observation.get("additional").get("rmwhub_set_id")
             )
             rmw_set = rmw_set_id_to_gearset_mapping[rmw_set_id]
+
             for trap in rmw_set.traps:
+                if trap.id in visited_traps:
+                    logger.info(
+                        f"Skipping update for trap ID {trap.id}. Already processed."
+                    )
+                    continue
+
+                visited_traps.add(trap.id)
+
                 # Get subject from ER
                 clean_trap_id = trap.id.replace("e_", "").replace("rmwhub_", "")
                 if clean_trap_id in self.er_subject_name_to_subject_mapping.keys():
@@ -433,32 +480,26 @@ class RmwHubAdapter:
         """
 
         # Determine if ER or RMW has the most recent update in order to update status in ER:
-        datetime_str_format = "%Y-%m-%dT%H:%M:%S"
         if er_subject:
             er_last_updated = datetime.fromisoformat(er_subject.get("updated_at"))
-        deployment_time = datetime.strptime(
-            trap.deploy_datetime_utc, datetime_str_format
-        ).replace(tzinfo=timezone.utc)
-        retrieval_time = datetime.strptime(
-            trap.retrieved_datetime_utc, datetime_str_format
-        ).replace(tzinfo=timezone.utc)
+        deployment_time_iso = Trap.convert_est_to_utc(trap.deploy_datetime_utc)
+        retrieval_time_iso = Trap.convert_est_to_utc(trap.retrieved_datetime_utc)
 
         if (
             er_subject
-            and er_last_updated > deployment_time
-            and er_last_updated > retrieval_time
+            and er_last_updated > deployment_time_iso
+            and er_last_updated > retrieval_time_iso
         ):
             return
         elif er_subject and (
-            er_last_updated < deployment_time or er_last_updated < retrieval_time
+            er_last_updated < deployment_time_iso
+            or er_last_updated < retrieval_time_iso
         ):
             await self.er_client.patch_er_subject_status(
                 er_subject.get("name"), True if trap.status == "deployed" else False
             )
         elif not er_subject:
-            trap_id_in_er = "rmwhub_" + (
-                trap.id.replace("e_", "").replace("rmwhub_", "")
-            )
+            trap_id_in_er = "rmwhub_" + RmwHubAdapter.clean_id_str(trap.id)
             async for attempt in stamina.retry_context(
                 on=httpx.HTTPError, wait_initial=1.0, wait_jitter=5.0, wait_max=32.0
             ):
@@ -468,7 +509,7 @@ class RmwHubAdapter:
                     )
         else:
             logger.error(
-                f"Failed to compare gear set for trap ID {trap.id}. RMW deployed: {deployment_time}, RMW retrieved: {retrieval_time}"
+                f"Failed to compare gear set for trap ID {trap.id}. RMW deployed: {deployment_time_iso}, RMW retrieved: {retrieval_time_iso}"
             )
 
     async def create_observations(
@@ -590,6 +631,9 @@ class RmwHubAdapter:
         """
         Resolve the subject name to the actual subject name
         """
+        if not subject_name:
+            logger.error("Cannot clean string. Subject name is empty.")
+            return None
 
         cleaned_str = (
             subject_name.replace("device_", "")
