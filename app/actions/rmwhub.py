@@ -57,31 +57,26 @@ class Trap(BaseModel):
             )
         )
 
-    def get_latest_update_time(self) -> str:
+    def get_latest_update_time(self) -> datetime:
         """
-        Get the last updated time of the trap.
+        Get the last updated time of the trap based on the status.
         """
 
-        deployment_time_iso = Trap.convert_est_to_utc(self.deploy_datetime_utc)
-        retrived_time_iso = Trap.convert_est_to_utc(self.retrieved_datetime_utc)
-
-        if deployment_time_iso > retrived_time_iso:
-            last_updated = deployment_time_iso
-        else:
-            last_updated = retrived_time_iso
-
-        return str(last_updated)
+        if self.status == "deployed":
+            return Trap.convert_to_utc(self.deploy_datetime_utc)
+        elif self.status == "retrieved":
+            return Trap.convert_to_utc(self.retrieved_datetime_utc)
 
     @classmethod
     # TODO: Convert to local function within get_latest_update_time after update status code is removed. RF-755
-    def convert_est_to_utc(self, datetime_str: str) -> str:
+    def convert_to_utc(self, datetime_str: str) -> datetime:
         """
         Convert the datetime string to UTC.
         """
 
         datetime_obj = datetime.strptime(datetime_str, "%Y-%m-%dT%H:%M:%S")
         datetime_obj = datetime_obj.astimezone(pytz.utc)
-        return datetime_obj.isoformat()
+        return datetime_obj
 
 
 class GearSet(BaseModel):
@@ -123,7 +118,7 @@ class GearSet(BaseModel):
                         "latitude": trap.latitude,
                         "longitude": trap.longitude,
                     },
-                    "last_updated": trap.get_latest_update_time(),
+                    "last_updated": trap.get_latest_update_time().isoformat(),
                 }
             )
 
@@ -162,7 +157,7 @@ class GearSet(BaseModel):
         display_id_hash = hashlib.sha256(str(self.id).encode()).hexdigest()[:12]
         subject_name = "rmwhub_" + trap.id
 
-        last_updated = trap.get_latest_update_time()
+        last_updated = trap.get_latest_update_time().isoformat()
         observation = {
             "name": subject_name,
             "source": subject_name,
@@ -482,19 +477,12 @@ class RmwHubAdapter:
         # Determine if ER or RMW has the most recent update in order to update status in ER:
         if er_subject:
             er_last_updated = datetime.fromisoformat(er_subject.get("updated_at"))
-        deployment_time_iso = Trap.convert_est_to_utc(trap.deploy_datetime_utc)
-        retrieval_time_iso = Trap.convert_est_to_utc(trap.retrieved_datetime_utc)
 
-        if (
-            er_subject
-            and er_last_updated > deployment_time_iso
-            and er_last_updated > retrieval_time_iso
-        ):
+        trap_latest_update_time = trap.get_latest_update_time()
+
+        if er_subject and er_last_updated > trap_latest_update_time:
             return
-        elif er_subject and (
-            er_last_updated < deployment_time_iso
-            or er_last_updated < retrieval_time_iso
-        ):
+        elif er_subject and (er_last_updated < trap_latest_update_time):
             await self.er_client.patch_er_subject_status(
                 er_subject.get("name"), True if trap.status == "deployed" else False
             )
@@ -509,7 +497,7 @@ class RmwHubAdapter:
                     )
         else:
             logger.error(
-                f"Failed to compare gear set for trap ID {trap.id}. RMW deployed: {deployment_time_iso}, RMW retrieved: {retrieval_time_iso}"
+                f"Failed to compare gear set for trap ID {trap.id}. RMW latest update time: {trap_latest_update_time.isoformat()}"
             )
 
     async def create_observations(
