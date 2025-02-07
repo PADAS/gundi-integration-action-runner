@@ -1,17 +1,18 @@
 from datetime import datetime, timedelta
 from enum import Enum
+import hashlib
 from typing import List
 
-import hashlib
+import json
 import logging
 import httpx
 import pytz
-import requests
-import json
 from pydantic import validator, BaseModel
+import requests
 import stamina
 
 from app.actions.buoy import BuoyClient
+
 
 logger = logging.getLogger(__name__)
 
@@ -138,10 +139,15 @@ class GearSet(BaseModel):
                 observations.append(
                     self.create_observation_for_event(trap, devices, Status.DEPLOYED)
                 )
-            else:
+            elif trap.status == "retrieved":
                 observations.append(
                     self.create_observation_for_event(trap, devices, Status.RETRIEVED)
                 )
+            else:
+                logger.error(
+                    f"Invalid status for trap ID {trap.id}. Status: {trap.status}"
+                )
+                return []
 
         logger.info(f"Created {len(observations)} observations for gear set {self.id}.")
 
@@ -316,7 +322,7 @@ class RmwHubAdapter:
                 logger.info(f"Processing trap ID {trap.id} for insert to ER.")
 
                 # Create observations for the gear set from RmwHub
-                new_observations = await self.create_observations(trap, gearset, None)
+                new_observations = await self.create_observations(gearset)
 
                 observations.extend(new_observations)
                 logger.info(
@@ -345,7 +351,7 @@ class RmwHubAdapter:
                 logger.info(f"Processing trap ID {trap.id} for update to ER.")
 
                 # Get subject from ER
-                clean_trap_id = trap.id.replace("e_", "").replace("rmwhub_", "")
+                clean_trap_id = RmwHubAdapter.clean_id_str(trap.id)
                 if clean_trap_id in self.er_subject_name_to_subject_mapping.keys():
                     er_subject = self.er_subject_name_to_subject_mapping.get(
                         clean_trap_id
@@ -361,9 +367,7 @@ class RmwHubAdapter:
                     er_subject = None
 
                 # Create observations for the gear set from RmwHub
-                new_observations = await self.create_observations(
-                    trap, gearset, er_subject
-                )
+                new_observations = await self.create_observations(gearset)
 
                 observations.extend(new_observations)
                 logger.info(
@@ -500,35 +504,12 @@ class RmwHubAdapter:
                 f"Failed to compare gear set for trap ID {trap.id}. RMW latest update time: {trap_latest_update_time.isoformat()}"
             )
 
-    async def create_observations(
-        self, trap_to_update: Trap, rmw_set: GearSet, er_subject: dict
-    ) -> List:
+    async def create_observations(self, rmw_set: GearSet) -> List:
         """
         Create new observations for ER from RmwHub data.
 
         Returns an empty list if ER has the most recent updates. Otherwise, list of new observations to write to ER.
         """
-
-        if er_subject:
-            # If locations in ER and rmw match, no updates are needed
-            device_index = 0 if trap_to_update.sequence == 1 else 1
-            er_device_latitude = (
-                er_subject.get("additional")
-                .get("devices")[device_index]
-                .get("location")
-                .get("latitude")
-            )
-            er_device_longitude = (
-                er_subject.get("additional")
-                .get("devices")[device_index]
-                .get("location")
-                .get("longitude")
-            )
-            if (
-                er_device_latitude == trap_to_update.latitude
-                and er_device_longitude == trap_to_update.longitude
-            ):
-                return []
 
         # Create observations for the gear set
         observations = rmw_set.create_observations()
