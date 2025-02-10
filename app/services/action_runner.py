@@ -119,6 +119,24 @@ async def execute_action(integration_id: str, action_id: str, config_overrides: 
             config_data={"configurations": [c.dict() for c in integration.configurations]},
             status_code=status.HTTP_504_GATEWAY_TIMEOUT
         )
+    except asyncio.TimeoutError:
+        message = f"Action '{action_id}' timed out for integration {integration_id} after {settings.MAX_ACTION_EXECUTION_TIME} seconds. Please consider splitting the workload in sub-actions."
+        logger.exception(message)
+        await publish_event(
+            event=IntegrationActionFailed(
+                payload=ActionExecutionFailed(
+                    integration_id=integration_id,
+                    action_id=action_id,
+                    config_data={"configurations": [c.dict() for c in integration.configurations]},
+                    error=message
+                )
+            ),
+            topic_name=settings.INTEGRATION_EVENTS_TOPIC,
+        )
+        return JSONResponse(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            content=jsonable_encoder({"detail": message}),
+        )
     except Exception as e:
         return await _handle_error(e, integration_id, action_id,
                                    config_data={"configurations": [c.dict() for c in integration.configurations]})
