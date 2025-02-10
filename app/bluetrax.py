@@ -122,7 +122,11 @@ async def get_asset_history(unit_id: str, start_time: datetime, end_time: dateti
         )
 
         if r.is_success:
-            return HistoryResult(**r.json())
-        else:
-            # TODO: Collect these errors and write to Activity Log.
-            return None
+            try:
+                data = r.json()
+                history = HistoryResult.validate(data)
+                return history
+            except pydantic.ValidationError as ve:
+                raise ve
+
+        r.raise_for_status()
