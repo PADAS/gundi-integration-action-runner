@@ -2,6 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 from app.main import app
 from app.services.self_registration import register_integration_in_gundi
+from app.services.action_scheduler import crontab_schedule, CrontabSchedule
 
 api_client = TestClient(app)
 
@@ -59,6 +60,14 @@ async def test_register_integration_with_slug_setting(
                         "ui:order": ["lookback_days", "force_fetch"],
                     },
                     "is_periodic_action": True,
+                    "crontab_schedule": {
+                        "day_of_month": "*",
+                        "day_of_week": "*",
+                        "hour": "*",
+                        "minute": "*/10",
+                        "month_of_year": "*",
+                        "tz_offset": -5
+                    },
                 }
             ],
             "webhook": {
@@ -146,6 +155,14 @@ async def test_register_integration_with_slug_arg(
                         "ui:order": ["lookback_days", "force_fetch"],
                     },
                     "is_periodic_action": True,
+                    "crontab_schedule": {
+                        "day_of_month": "*",
+                        "day_of_week": "*",
+                        "hour": "*",
+                        "minute": "*/10",
+                        "month_of_year": "*",
+                        "tz_offset": -5
+                    },
                 }
             ],
             "webhook": {
@@ -235,6 +252,14 @@ async def test_register_integration_with_service_url_arg(
                         "ui:order": ["lookback_days", "force_fetch"],
                     },
                     "is_periodic_action": True,
+                    "crontab_schedule": {
+                        "day_of_month": "*",
+                        "day_of_week": "*",
+                        "hour": "*",
+                        "minute": "*/10",
+                        "month_of_year": "*",
+                        "tz_offset": -5
+                    },
                 }
             ],
             "webhook": {
@@ -327,6 +352,14 @@ async def test_register_integration_with_service_url_setting(
                         "ui:order": ["lookback_days", "force_fetch"],
                     },
                     "is_periodic_action": True,
+                    "crontab_schedule": {
+                        "day_of_month": "*",
+                        "day_of_week": "*",
+                        "hour": "*",
+                        "minute": "*/10",
+                        "month_of_year": "*",
+                        "tz_offset": -5
+                    },
                 }
             ],
             "webhook": {
@@ -438,3 +471,26 @@ async def test_register_integration_with_executable_action(
             },
         }
     )
+
+
+@pytest.mark.asyncio
+async def test_crontab_schedule_decorator(
+        mocker, mock_publish_event, integration_v2, pull_observations_config
+):
+
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+
+    @crontab_schedule("5-55/10 * * * *")
+    async def action_pull_observations(integration, action_config):
+        return {"observations_extracted": 10}
+
+    assert hasattr(action_pull_observations, "crontab_schedule")
+    expected_schedule = CrontabSchedule(
+        minute='5-55/10',
+        hour='*',
+        day_of_week='*',
+        day_of_month='*',
+        month_of_year='*',
+        tz_offset=0
+    )
+    assert action_pull_observations.crontab_schedule == expected_schedule
