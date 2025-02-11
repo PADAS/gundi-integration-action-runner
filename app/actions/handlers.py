@@ -71,8 +71,8 @@ async def action_pull_observations(integration:Integration, action_config: PullE
                 await send_observations_to_gundi(observations=[transform(item)for item in batch],
                                                   integration_id=integration.id)
 
-            if asset_history.data:
-                asset_state[asset.unit_id] = max(item.fixtime for item in asset_history.data)
+            if getattr(asset_history, 'data', None):                
+                asset_state[asset.unit_id] = max(item.fixtime for item in asset_history.data)       
 
     for unit_id, item in asset_state.items():
         await state_manager.set_state(integration_id=integration.id, action_id="pull_observations", state={"latest_fixtime": item.isoformat()}, source_id=unit_id)

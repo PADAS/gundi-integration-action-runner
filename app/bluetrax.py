@@ -117,10 +117,16 @@ async def get_asset_history(unit_id: str, start_time: datetime, end_time: dateti
           }
     
     async with httpx.AsyncClient() as client:
-        r = await client.get("https://rest.bluetrax.co.ke/AnalyticsService", 
+        r = await client.post("https://rest.bluetrax.co.ke/AnalyticsService", 
                              params={'request': json.dumps(q)}
         )
-        if r.status_code == 200:
-            return HistoryResult(**r.json())
-        else:
-            return None
+
+        if r.is_success:
+            try:
+                data = r.json()
+                history = HistoryResult.validate(data)
+                return history
+            except pydantic.ValidationError as ve:
+                raise ve
+
+        r.raise_for_status()
