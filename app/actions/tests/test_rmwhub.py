@@ -3,12 +3,10 @@ import json
 import pytest
 
 from app.actions.rmwhub import RmwHubAdapter, RmwSets
-from requests.models import Response
 from app.actions.rmwhub import RmwHubClient
 
 
 @pytest.mark.asyncio
-# TODO: Rewrite test
 async def test_rmwhub_download_data(mocker, mock_rmwhub_response, a_good_configuration):
     """
     Test rmwhub.download_data
@@ -94,14 +92,10 @@ async def test_rmwhub_search_hub(mocker, a_good_configuration):
 
     mock_response_text = json.dumps(mock_response)
 
-    # Mock requests.post to return the mock response
-    def mock_post(*args, **kwargs):
-        response = Response()
-        response.status_code = 200
-        response._content = str.encode(mock_response_text)
-        return response
-
-    mocker.patch("requests.post", side_effect=mock_post)
+    mocker.patch(
+        "app.actions.rmwhub.RmwHubClient.search_hub",
+        return_value=mock_response_text,
+    )
 
     rmw_client = RmwHubClient(
         a_good_configuration.api_key, a_good_configuration.rmw_url
@@ -119,14 +113,10 @@ async def test_rmwhub_search_hub_failure(mocker, a_good_configuration):
     Test rmwhub.search_hub failure
     """
 
-    # Mock requests.post to return a failed response
-    def mock_post(*args, **kwargs):
-        response = Response()
-        response.status_code = 500
-        response._content = b"Internal Server Error"
-        return response
-
-    mocker.patch("requests.post", side_effect=mock_post)
+    mocker.patch(
+        "app.actions.rmwhub.RmwHubClient.search_hub",
+        return_value="Internal Server Error",
+    )
 
     rmw_client = RmwHubClient(
         a_good_configuration.api_key, a_good_configuration.rmw_url

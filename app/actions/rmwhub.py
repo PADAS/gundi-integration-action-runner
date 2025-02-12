@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 import hashlib
 from typing import List, Optional
@@ -284,8 +284,9 @@ class RmwHubAdapter:
         # Create maps of er_subject_names and rmw_trap_ids/set_ids
         # RMW trap IDs would be in the subject name
         self.er_subject_name_to_subject_mapping = dict(
-            (RmwHubAdapter.clean_id_str(subject.get("name")), subject)
-            (RmwHubAdapter.clean_id_str(subject.get("name")), subject)
+            (RmwHubAdapter.clean_id_str(subject.get("name")), subject)(
+                RmwHubAdapter.clean_id_str(subject.get("name")), subject
+            )
             for subject in er_subjects
         )
         self.er_subject_id_to_subject_mapping = dict(
@@ -353,7 +354,6 @@ class RmwHubAdapter:
                 logger.info(f"Processing trap ID {trap.id} for update to ER.")
 
                 # Get subject from ER
-                clean_trap_id = RmwHubAdapter.clean_id_str(trap.id)
                 clean_trap_id = RmwHubAdapter.clean_id_str(trap.id)
                 if clean_trap_id in self.er_subject_name_to_subject_mapping.keys():
                     er_subject = self.er_subject_name_to_subject_mapping.get(
