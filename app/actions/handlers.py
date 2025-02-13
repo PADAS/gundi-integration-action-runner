@@ -7,13 +7,16 @@ from gundi_core import schemas
 from gundi_core.events import LogLevel
 from gundi_core.schemas.v2 import Integration
 
-from app.actions.buoy import BuoyClient
 from app.actions.configurations import EdgeTechConfiguration
 from app.actions.edgetech import EdgeTechClient
+from app.actions.edgetech.processor import EdgetTechProcessor
 from app.services.activity_logger import activity_logger, log_activity
+from app.services.gundi import send_observations_to_gundi
 from app.services.utils import find_config_for_action
 
 logger = logging.getLogger(__name__)
+
+LOAD_BATCH_SIZE = 100
 
 
 class Environment(Enum):
@@ -28,14 +31,23 @@ async def action_pull_edgetech_observations(
 ):
     edgetech_client = EdgeTechClient(config=action_config)
     data = await edgetech_client.download_data()
+
     _client = GundiClient()
     connection_details = await _client.get_connection_details(integration.id)
+
     for destination in connection_details.destinations:
         environment = Environment(destination.name)
 
         er_token, er_destination = await get_er_token_and_site(integration, environment)
 
-        buoy_client = BuoyClient(er_token, er_destination)
+        processor = EdgetTechProcessor(data, er_token, er_destination)
+        observations = await processor.process()
+
+        for batch in generate_batches(observations):
+            logger.info(f"Sending {len(batch)} observations to Gundi...")
+            await send_observations_to_gundi(
+                observations=batch, integration_id=str(integration.id)
+            )
 
         logging.info(
             f"Executing pull action for integration {integration} and environment {environment}..."
@@ -51,6 +63,11 @@ async def action_pull_edgetech_observations(
         logger.info(
             f"Downloaded {len(data)} records from EdgeTech API for integration {integration}"
         )
+
+
+def generate_batches(iterable, n=LOAD_BATCH_SIZE):
+    for i in range(0, len(iterable), n):
+        yield iterable[i : i + n]
 
 
 async def get_er_token_and_site(

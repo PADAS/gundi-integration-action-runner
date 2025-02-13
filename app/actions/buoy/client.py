@@ -15,7 +15,6 @@ class BuoyClient:
             "Authorization": f"Bearer {self.er_token}",
         }
 
-    # TODO: Validate include details works as expected
     async def get_er_subjects(self, start_datetime: str = None) -> List:
         query_params = {
             "include_details": True,

@@ -9,7 +9,7 @@ from typing import List
 import aiohttp
 
 from app.actions.configurations import EdgeTechConfiguration
-from app.actions.edgetech.enums import Buoy
+from app.actions.edgetech.types import Buoy
 
 logger = logging.getLogger(__name__)
 
