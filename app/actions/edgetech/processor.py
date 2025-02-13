@@ -10,20 +10,52 @@ from app.actions.edgetech.types import Buoy
 
 logger = logging.getLogger(__name__)
 
+
 class EdgetTechProcessor:
     def __init__(
         self, data: List[dict], er_token: str, er_url: str, filters: dict = None
     ):
+        """
+        Initialize an EdgetTechProcessor instance.
+
+        This constructor parses raw data records into Buoy objects, initializes an ER client for
+        further processing, and sets up filters for processing buoy data.
+
+        Args:
+            data (List[dict]): A list of dictionaries representing raw buoy data records.
+            er_token (str): Authentication token for the ER client.
+            er_url (str): URL endpoint for the ER client.
+            filters (dict, optional): A dictionary containing filter criteria (e.g., start_date and end_date).
+                                      If not provided, default filters covering the last 180 days are used.
+        """
         self._data = [Buoy.parse_obj(record) for record in data]
         self._er_client = BuoyClient(er_token, er_url)
         self._filters = filters or self._get_default_filters()
 
-    def _get_default_filters(self):
+    def _get_default_filters(self) -> Dict[str, any]:
+        """
+        Generate default filter criteria for processing buoy data.
+
+        The default filters define a time window starting 180 days before the current UTC time
+        and ending at the current UTC time.
+
+        Returns:
+            Dict[str, any]: A dictionary with 'start_date' and 'end_date' keys defining the filter window.
+        """
         end_date = datetime.now(timezone.utc)
         start_date = end_date - timedelta(days=180)
         return {"start_date": start_date, "end_date": end_date}
 
-    def _filter_data(self):
+    def _filter_data(self) -> List[Buoy]:
+        """
+        Filter buoy data records based on the defined time window.
+
+        Iterates over the parsed buoy data and selects records whose 'currentState.lastUpdated'
+        timestamp falls within the filter's start_date and end_date range.
+
+        Returns:
+            List[Buoy]: A list of Buoy objects that satisfy the filter criteria.
+        """
         filtered_data: List[Buoy] = []
         for record in self._data:
             record_current_state = record.currentState.lastUpdated
@@ -36,6 +68,15 @@ class EdgetTechProcessor:
         return filtered_data
 
     def _get_newest_buoy_states(self) -> Dict[str, Buoy]:
+        """
+        Retrieve the most recent state for each unique buoy based on serial number.
+
+        Filters the buoy data and then selects the buoy record with the latest 'lastUpdated'
+        timestamp for each serial number.
+
+        Returns:
+            Dict[str, Buoy]: A dictionary mapping each buoy's serial number to its newest Buoy record.
+        """
         filtered_data = self._filter_data()
         newest_by_serial = {}
         for buoy in filtered_data:
@@ -50,8 +91,20 @@ class EdgetTechProcessor:
 
     def _are_equivalent(self, er_subject: ObservationSubject, buoy: Buoy) -> bool:
         """
-        Determine if the ObservationSubject (representing a device observation)
-        is equivalent to the Buoy (which contains a CurrentState).
+        Determine whether an ER subject and a Buoy record represent equivalent device states.
+
+        The comparison checks the following:
+            1. Matching serial numbers (handling an 'edgetech_' prefix if present).
+            2. Matching active state versus deletion status.
+            3. Matching geographic location if available.
+            4. Matching update timestamps.
+
+        Args:
+            er_subject (ObservationSubject): The ER system's subject representing a device observation.
+            buoy (Buoy): The buoy object containing current state information.
+
+        Returns:
+            bool: True if the ER subject and the buoy record are equivalent; otherwise, False.
         """
         # (1) Serial Number:
         prefix = "edgetech_"
@@ -99,7 +152,26 @@ class EdgetTechProcessor:
 
         return True
 
-    async def process(self):
+    async def process(self) -> List[dict]:
+        """
+        Process buoy data to generate observation events for the ER system.
+
+        This asynchronous method performs the following steps:
+            1. Retrieves the latest buoy states grouped by serial number.
+            2. Fetches existing ER subjects from the ER client.
+            3. Maps ER subjects by serial number and categorizes buoy states into:
+                - Inserts: Buoys not present in ER.
+                - Updates: Buoys present in ER that require updating.
+                - No-ops: Buoys present in ER with equivalent data.
+            4. Generates observation events for new or updated buoys.
+            5. Logs information about the inserts, updates, and no-ops.
+
+        Returns:
+            List[dict]: A list of dictionaries representing the observation events generated during processing.
+
+        Raises:
+            pydantic.ValidationError: If validation fails when creating buoy observation events.
+        """
         buoy_states = self._get_newest_buoy_states()
 
         er_subjects = self._er_client.get_er_subjects()

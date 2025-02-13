@@ -16,18 +16,55 @@ logger = logging.getLogger(__name__)
 
 # TODO: Verify how will the token update behave
 class EdgeTechClient:
+    """
+    Client for interacting with the EdgeTech API.
+
+    This client handles authentication token management and data downloading from the EdgeTech service.
+    It uses the provided configuration (EdgeTechConfiguration) for setting up token refresh, API endpoints,
+    and other parameters.
+    """
+
     def __init__(self, config: EdgeTechConfiguration, *args, **kwargs):
+        """
+        Initialize an EdgeTechClient instance with the given configuration.
+
+        Args:
+            config (EdgeTechConfiguration): Configuration settings for connecting to the EdgeTech API.
+            *args: Additional positional arguments.
+            **kwargs: Additional keyword arguments.
+        """
         self._token_json = config.token_json.get_secret_value()
         self._config = config
 
     def _set_token(self, token_response, refresh_token=None, *args, **kwargs):
+        """
+        Update the token information based on the token response.
+
+        This method calculates the token's expiry time and updates the internal token JSON.
+        Optionally, if a refresh token is provided and missing in the token response, it is added.
+
+        Args:
+            token_response (dict): The response dictionary containing token details.
+            refresh_token (str, optional): The refresh token to use if not present in token_response.
+            *args: Additional positional arguments.
+            **kwargs: Additional keyword arguments.
+        """
         token_response["expires_at"] = time.time() + token_response["expires_in"]
         if "refresh_token" not in token_response and refresh_token:
             token_response["refresh_token"] = refresh_token
 
         self._token_json = token_response
 
-    async def _update_token(self):
+    async def _update_token(self) -> dict:
+        """
+        Refresh the authentication token using the refresh token.
+
+        Sends a POST request to the token URL with the necessary refresh parameters.
+        Upon receiving the new token, it updates the internal token JSON using the _set_token method.
+
+        Returns:
+            dict: The updated token JSON containing the new access token and expiry information.
+        """
         refresh_token = self._token_json.get("refresh_token")
 
         refresh_params = {
@@ -46,7 +83,16 @@ class EdgeTechClient:
 
         return self._token_json
 
-    async def _get_token(self):
+    async def _get_token(self) -> dict:
+        """
+        Retrieve a valid authentication token, refreshing it if expired.
+
+        Checks if the current token has expired based on its 'expires_at' field.
+        If expired, triggers a token update; otherwise, returns the current token.
+
+        Returns:
+            dict: The valid token JSON with access token and expiry details.
+        """
         now = time.time()
 
         if now >= self._token_json["expires_at"]:
@@ -55,6 +101,22 @@ class EdgeTechClient:
         return self._token_json
 
     async def download_data(self) -> List[Buoy]:
+        """
+        Download buoy data from the EdgeTech API.
+
+        This method performs the following steps:
+            1. Retrieves a valid authentication token.
+            2. Initiates a data dump request to the API.
+            3. Follows redirection to download the compressed data file.
+            4. Decompresses the downloaded gzip data and loads it as JSON.
+            5. Parses the JSON data into a list of Buoy objects.
+
+        Returns:
+            List[Buoy]: A list of Buoy objects parsed from the downloaded data.
+
+        Raises:
+            ValueError: If the API responses are invalid or missing required headers.
+        """
         token = await self._get_token()
 
         access_token = token["access_token"]
