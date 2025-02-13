@@ -1,3 +1,4 @@
+from ast import List
 from datetime import datetime
 from typing import Optional
 
@@ -41,3 +42,5 @@ class CurrentState(pydantic.BaseModel):
 
 class Buoy(pydantic.BaseModel):
     currentState: CurrentState
+    serialNumber: str
+    changeRecords: List

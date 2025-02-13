@@ -4,16 +4,20 @@ import json
 import logging
 import re
 import time
+from typing import List
 
 import aiohttp
-from actions.configurations import EdgeTechConfiguration
+
+from app.actions.configurations import EdgeTechConfiguration
+from app.actions.edgetech.enums import Buoy
 
 logger = logging.getLogger(__name__)
 
 
+# TODO: Verify how will the token update behave
 class EdgeTechClient:
     def __init__(self, config: EdgeTechConfiguration, *args, **kwargs):
-        self._token = config.token.get_secret_value()
+        self._token_json = config.token_json.get_secret_value()
         self._config = config
 
     def _set_token(self, token_response, refresh_token=None, *args, **kwargs):
@@ -21,10 +25,10 @@ class EdgeTechClient:
         if "refresh_token" not in token_response and refresh_token:
             token_response["refresh_token"] = refresh_token
 
-        self._token = token_response
+        self._token_json = token_response
 
     async def _update_token(self):
-        refresh_token = self._token.get("refresh_token")
+        refresh_token = self._token_json.get("refresh_token")
 
         refresh_params = {
             "client_id": self._config.client_id,
@@ -38,35 +42,19 @@ class EdgeTechClient:
                 self._config.token_url, data=refresh_params
             ) as response:
                 token_response = await response.json()
-                self._set_token(token_response, self._token["refresh_token"])
+                self._set_token(token_response, self._token_json["refresh_token"])
 
-        return self._token
-
-    async def _generate_token(self):
-        authorize_query = {
-            "response_type": "code",
-            "client_id": self._config.client_id,
-            "redirect_uri": self._config.redirect_uri,
-            "audience": self._config.a,
-            "scope": self._config.scope,
-        }
-        #! In the edgetech cdip-integrations the user needs to login into "{authorize_url}?{authorize_query}"
-        #! Then get url so the code generated can be retrieved from it and then request the token generation endpoint
-        #! An authorization_code flow.
-
-        # TODO: Understand how to do it in this action runner framework, maybe ask for the code in Configuration
+        return self._token_json
 
     async def _get_token(self):
         now = time.time()
 
-        if not self.token:
-            self._token = await self._generate_token()
-        elif now >= self._token["expires_at"]:
-            self._token = await self._update_token(self._token)
+        if now >= self._token_json["expires_at"]:
+            self._token_json = await self._update_token(self._token_json)
 
-        return self._token
+        return self._token_json
 
-    async def download_data(self):
+    async def download_data(self) -> List[Buoy]:
         token = await self._get_token()
 
         access_token = token["access_token"]
@@ -86,7 +74,6 @@ class EdgeTechClient:
 
             dump_url = f"{self._config.api_base_url}{dump_location}"
 
-            # Poll for dump completion
             for attempt in range(self._config.num_get_retry):
                 logger.debug(
                     f"Get Dump Attempt {attempt + 1}/{self._config.num_get_retry}"
@@ -123,4 +110,4 @@ class EdgeTechClient:
                                 data = json.load(fo)
                         break
 
-        return data
+        return [Buoy.parse_obj(item) for item in data]

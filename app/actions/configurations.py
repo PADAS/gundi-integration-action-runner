@@ -1,15 +1,14 @@
 import pydantic
-
-from .core import ActionConfiguration
+from core import ActionConfiguration
 
 # TODO: Check if is necessary to request every field or just the Stage (Enum) and then match/case other fields like cdip-integrations
 
 
 class EdgeTechConfiguration(ActionConfiguration):
-    token: pydantic.SecretStr = pydantic.Field(
+    token_json: pydantic.SecretStr = pydantic.Field(
         ...,
-        title="Token",
-        description="Token for the Edge Tech API.",
+        title="Token JSON",
+        description="Token JSON for the Edge Tech API.",
     )
     api_base_url: pydantic.AnyHttpUrl = pydantic.Field(
         ...,

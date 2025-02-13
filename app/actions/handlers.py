@@ -7,11 +7,11 @@ from gundi_core import schemas
 from gundi_core.events import LogLevel
 from gundi_core.schemas.v2 import Integration
 
+from app.actions.buoy import BuoyClient
+from app.actions.configurations import EdgeTechConfiguration
+from app.actions.edgetech import EdgeTechClient
 from app.services.activity_logger import activity_logger, log_activity
 from app.services.utils import find_config_for_action
-
-from .configurations import EdgeTechConfiguration
-from .edgetech import EdgeTechClient
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +34,8 @@ async def action_pull_edgetech_observations(
         environment = Environment(destination.name)
 
         er_token, er_destination = await get_er_token_and_site(integration, environment)
+
+        buoy_client = BuoyClient(er_token, er_destination)
 
         logging.info(
             f"Executing pull action for integration {integration} and environment {environment}..."
