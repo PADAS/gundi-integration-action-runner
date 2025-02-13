@@ -1,8 +1,6 @@
 import pydantic
 from core import ActionConfiguration
 
-# TODO: Check if is necessary to request every field or just the Stage (Enum) and then match/case other fields like cdip-integrations
-
 
 class EdgeTechConfiguration(ActionConfiguration):
     token_json: pydantic.SecretStr = pydantic.Field(
@@ -25,22 +23,15 @@ class EdgeTechConfiguration(ActionConfiguration):
         title="Redirect URI",
         description="Redirect URI for the Edge Tech API key.",
     )
-    scope: str = pydantic.Field(
-        ...,
-        title="Scope",
-        description="Scope for the Edge Tech API key.",
-    )
+
     token_url: pydantic.AnyHttpUrl = pydantic.Field(
         ...,
         title="Token URL",
         description="URL to get the Edge Tech API key.",
     )
-    authorize_url: pydantic.AnyHttpUrl = pydantic.Field(
-        ...,
-        title="Authorize URL",
-        description="URL to authorize the Edge Tech API key.",
-    )
+
     num_get_retry: int = 60
+    scope: str = "offline_access database:dump openid profile email"
 
     @property
     def v1_url(self):
