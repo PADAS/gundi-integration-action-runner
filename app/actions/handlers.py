@@ -130,7 +130,7 @@ async def action_pull_observations(
 
 
 @activity_logger()
-@crontab_schedule("0 0 * * *")  # Run every 24 hours at midnight
+@crontab_schedule("10 0 * * *")  # Run every 24 hours at 12:10 AM
 async def action_pull_observations_24_hour_sync(
     integration, action_config: PullRmwHubObservationsConfiguration
 ):

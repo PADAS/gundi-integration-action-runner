@@ -66,7 +66,7 @@ def a_good_connection():
 
 
 @pytest.fixture
-def mock_rmwhub_response():
+def get_mock_rmwhub_data():
     return {
         "format_version": 0.1,
         "as_of_utc": "2025-01-03T02:21:57Z",
@@ -417,6 +417,17 @@ def mock_rmwhub_items():
 
 
 @pytest.fixture
+def mock_rmw_upload_response():
+    return {
+        "description": "Update confirmation",
+        "acknowledged": True,
+        "datetime_utc": "2025-01-28T22:04:57Z",
+        "trap_count": 5,
+        "failed_sets": [],
+    }
+
+
+@pytest.fixture
 # TODO: Add an observation for each subject (Trap), currently only 1 per set
 def mock_rmw_observations():
     return [
@@ -582,5 +593,109 @@ def mock_rmw_observations():
                     }
                 ],
             },
+        },
+    ]
+
+
+@pytest.fixture
+def mock_er_subjects():
+    return [
+        {
+            "content_type": "observations.subject",
+            "id": "0302a774-1971-4a64-8264-1d7f17969442",
+            "name": "FBB01895-0BC3-4498-ACAC-BCBCE12F1363",
+            "subject_type": "ropeless_buoy",
+            "subject_subtype": "ropeless_buoy_device",
+            "common_name": None,
+            "additional": {
+                "devices": [
+                    {
+                        "label": "a",
+                        "location": {"latitude": 42.6762, "longitude": -70.6255043},
+                        "device_id": "FBB01895-0BC3-4498-ACAC-BCBCE12F1363",
+                        "last_updated": "2025-01-26T03:20:57+00:00",
+                    }
+                ],
+                "display_id": "30548f5def46",
+                "event_type": "gear_position_rmwhub",
+                "subject_name": "FBB01895-0BC3-4498-ACAC-BCBCE12F1363",
+                "rmwhub_set_id": "FBB01895-0BC3-4498-ACAC-BCBCE12F1363",
+            },
+            "created_at": "2025-01-28T14:51:02.996570-08:00",
+            "updated_at": "2025-01-28T14:51:02.996595-08:00",
+            "is_active": True,
+            "user": None,
+            "tracks_available": False,
+            "image_url": "/static/pin-black.svg",
+            "url": "https://buoy.dev.pamdas.org/api/v1.0/subject/0302a774-1971-4a64-8264-1d7f17969442",
+        },
+        {
+            "content_type": "observations.subject",
+            "id": "081bfce1-e977-46ad-b948-aa90c9283304",
+            "name": "BB1ABEBC-13BF-4110-A4A3-DE6C4F7022D4",
+            "subject_type": "ropeless_buoy",
+            "subject_subtype": "ropeless_buoy_device",
+            "common_name": None,
+            "additional": {
+                "devices": [
+                    {
+                        "label": "a",
+                        "location": {"latitude": 20.629892, "longitude": -105.318998},
+                        "device_id": "F6528E48-39B9-49A8-8F24-0023CF5EE3D7",
+                        "last_updated": "2025-01-25T13:22:32+00:00",
+                    },
+                    {
+                        "label": "b",
+                        "location": {"latitude": 20.624751, "longitude": -105.310673},
+                        "device_id": "BB1ABEBC-13BF-4110-A4A3-DE6C4F7022D4",
+                        "last_updated": "2025-01-25T13:22:32+00:00",
+                    },
+                ],
+                "display_id": "84f360b0a8a5",
+                "event_type": "gear_deployed",
+                "subject_name": "BB1ABEBC-13BF-4110-A4A3-DE6C4F7022D4",
+                "rmwhub_set_id": "000F8EA8-EFBC-4B47-8359-A91CC7843D9H",
+            },
+            "created_at": "2025-02-11T13:49:50.852032-08:00",
+            "updated_at": "2025-02-11T13:49:50.852056-08:00",
+            "is_active": True,
+            "user": None,
+            "tracks_available": False,
+            "image_url": "/static/pin-black.svg",
+            "url": "https://buoy.dev.pamdas.org/api/v1.0/subject/081bfce1-e977-46ad-b948-aa90c9283304",
+        },
+        {
+            "content_type": "observations.subject",
+            "id": "0931ddaa-770c-4bb4-9d66-b8106c17e043",
+            "name": "296A5748-7F7A-4A6B-B055-BFFD4CE6E48F",
+            "subject_type": "ropeless_buoy",
+            "subject_subtype": "ropeless_buoy_device",
+            "common_name": None,
+            "additional": {
+                "devices": [
+                    {
+                        "label": "a",
+                        "location": {"latitude": 42.6762032, "longitude": -70.6253728},
+                        "device_id": "296A5748-7F7A-4A6B-B055-BFFD4CE6E48F",
+                        "last_updated": "2025-01-24T14:43:45+00:00",
+                    },
+                    {
+                        "label": "b",
+                        "location": {"latitude": 42.6762032, "longitude": -70.6253728},
+                        "device_id": "CD7F5F30-B498-4F4A-A2CE-81E9FCF3CB46",
+                        "last_updated": "2025-01-24T14:43:45+00:00",
+                    },
+                ],
+                "display_id": "71be27a7ed7e",
+                "event_type": "gear_position_rmwhub",
+                "subject_name": "296A5748-7F7A-4A6B-B055-BFFD4CE6E48F",
+            },
+            "created_at": "2025-01-28T14:50:57.323144-08:00",
+            "updated_at": "2025-01-28T14:50:57.323169-08:00",
+            "is_active": True,
+            "user": None,
+            "tracks_available": False,
+            "image_url": "/static/pin-black.svg",
+            "url": "https://buoy.dev.pamdas.org/api/v1.0/subject/0931ddaa-770c-4bb4-9d66-b8106c17e043",
         },
     ]
