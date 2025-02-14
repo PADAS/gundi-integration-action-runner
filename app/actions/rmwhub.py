@@ -284,10 +284,9 @@ class RmwHubAdapter:
         # Create maps of er_subject_names and rmw_trap_ids/set_ids
         # RMW trap IDs would be in the subject name
         self.er_subject_name_to_subject_mapping = dict(
-            (RmwHubAdapter.clean_id_str(subject.get("name")), subject)(
-                RmwHubAdapter.clean_id_str(subject.get("name")), subject
-            )
+            (RmwHubAdapter.clean_id_str(subject.get("name")), subject)
             for subject in er_subjects
+            if er_subject.get("name")
         )
         self.er_subject_id_to_subject_mapping = dict(
             (subject.get("id"), subject) for subject in er_subjects
