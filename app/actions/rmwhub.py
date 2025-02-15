@@ -417,13 +417,21 @@ class RmwHubAdapter:
         er_updates = set()
         for subject in er_subjects:
             subject_name = subject.get("name")
+            if not subject_name:
+                logger.error(f"Subject ID {subject.get('id')} has no name. No action.")
             if subject_name.startswith("rmw"):
+                logger.info(
+                    f"Subject ID {subject_name} originally from rmwHub. Skipped."
+                )
                 continue
             # Use display_id for ER subjects to ensure uniqueness among gear sets
             elif RmwHubAdapter.clean_id_str(subject_name) in rmw_trap_ids:
                 er_updates.add(subject["additional"]["display_id"])
             else:
                 er_inserts.add(subject["additional"]["display_id"])
+
+        logger.info(f"{len(er_inserts)} Inserts to rmwHub.")
+        logger.info(f"{len(er_updates)} Updates to rmwHub.")
 
         # Collect set ID updates for Earthranger subjects from RMW inserts
         new_observations = []
@@ -467,7 +475,7 @@ class RmwHubAdapter:
 
             updates.append(updated_gearset)
             logger.info(
-                f"Processed update for gear set with set ID {updated_gearset.id} from ER subject ID: {subject.id}."
+                f"Processed update for gear set with set ID {updated_gearset.id} from ER subject ID: {subject['id']}."
             )
 
         response = await self._upload_data(updates)
@@ -747,8 +755,6 @@ class RmwHubAdapter:
 
         cleaned_str = (
             subject_name.replace("device_", "")
-            .replace("_0", "")
-            .replace("_1", "")
             .replace("rmwhub_", "")
             .replace("rmw_", "")
             .replace("e_", "")
