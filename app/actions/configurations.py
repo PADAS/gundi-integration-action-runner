@@ -1,8 +1,9 @@
 import pydantic
-from core import ActionConfiguration
+
+from .core import PullActionConfiguration
 
 
-class EdgeTechConfiguration(ActionConfiguration):
+class EdgeTechConfiguration(PullActionConfiguration):
     token_json: pydantic.SecretStr = pydantic.Field(
         ...,
         title="Token JSON",

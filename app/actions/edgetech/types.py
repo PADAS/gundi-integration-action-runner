@@ -1,6 +1,5 @@
-from ast import Dict, List
 from datetime import datetime
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 import pydantic
 
@@ -54,7 +53,7 @@ class Buoy(pydantic.BaseModel):
     def deployed(self) -> bool:
         return self.currentState.isDeployed or not self.currentState.isDeleted
 
-    def create_observation(self, prefix: str) -> Dict[str, any]:
+    def create_observation(self, prefix: str) -> Dict[str, Any]:
         subject_name = f"edgetech_{self.serialNumber}"
         current_state = self.currentState
         observation = {
