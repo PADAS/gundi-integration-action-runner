@@ -7,7 +7,9 @@ from app.actions.rmwhub import RmwHubClient
 
 
 @pytest.mark.asyncio
-async def test_rmwhub_download_data(mocker, get_mock_rmwhub_data, a_good_configuration):
+async def test_rmwhub_download_data(
+    mocker, get_mock_rmwhub_data, a_good_configuration, a_good_integration
+):
     """
     Test rmwhub.download_data
     """
@@ -21,6 +23,7 @@ async def test_rmwhub_download_data(mocker, get_mock_rmwhub_data, a_good_configu
     from app.actions.rmwhub import RmwHubAdapter
 
     rmwadapter = RmwHubAdapter(
+        a_good_integration.id,
         a_good_configuration.api_key,
         a_good_configuration.rmw_url,
         "super_secret_token",
@@ -35,7 +38,9 @@ async def test_rmwhub_download_data(mocker, get_mock_rmwhub_data, a_good_configu
 
 @pytest.mark.asyncio
 # TODO: rewrite test
-async def test_process_rmw_download(mocker, mock_rmwhub_items, a_good_configuration):
+async def test_process_rmw_download(
+    mocker, mock_rmwhub_items, a_good_configuration, a_good_integration
+):
     """
     Test rmwhub.process_updates
     """
@@ -52,6 +57,7 @@ async def test_process_rmw_download(mocker, mock_rmwhub_items, a_good_configurat
     )
 
     rmwadapter = RmwHubAdapter(
+        a_good_integration.id,
         a_good_configuration.api_key,
         a_good_configuration.rmw_url,
         "super_secret_token",
@@ -132,6 +138,7 @@ async def test_rmwhub_search_hub_failure(mocker, a_good_configuration):
 async def test_rmwhub_adapter_process_rmw_upload_insert_success(
     mocker,
     a_good_configuration,
+    a_good_integration,
     mock_rmwhub_items,
     mock_rmw_upload_response,
     mock_er_subjects,
@@ -142,6 +149,7 @@ async def test_rmwhub_adapter_process_rmw_upload_insert_success(
     """
 
     rmw_adapter = RmwHubAdapter(
+        a_good_integration.id,
         a_good_configuration.api_key,
         a_good_configuration.rmw_url,
         "super_secret_token",
@@ -207,6 +215,7 @@ async def test_rmwhub_adapter_process_rmw_upload_insert_success(
 async def test_rmwhub_adapter_process_rmw_upload_update_success(
     mocker,
     a_good_configuration,
+    a_good_integration,
     mock_rmwhub_items_update,
     mock_er_subjects_update,
     mock_rmw_upload_response,
@@ -216,6 +225,7 @@ async def test_rmwhub_adapter_process_rmw_upload_update_success(
     """
 
     rmw_adapter = RmwHubAdapter(
+        a_good_integration.id,
         a_good_configuration.api_key,
         a_good_configuration.rmw_url,
         "super_secret_token",
@@ -247,13 +257,14 @@ async def test_rmwhub_adapter_process_rmw_upload_update_success(
 
 @pytest.mark.asyncio
 async def test_rmwhub_adapter_process_rmw_upload_failure(
-    mocker, a_good_configuration, mock_rmwhub_items
+    mocker, a_good_configuration, a_good_integration, mock_rmwhub_items
 ):
     """
     Test rmwhub.search_hub no sets
     """
 
     rmw_adapter = RmwHubAdapter(
+        a_good_integration.id,
         a_good_configuration.api_key,
         a_good_configuration.rmw_url,
         "super_secret_token",

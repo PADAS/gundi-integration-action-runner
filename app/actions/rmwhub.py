@@ -13,6 +13,8 @@ from pydantic import NoneStr, validator, BaseModel
 import stamina
 
 from app.actions.buoy import BuoyClient
+from app.services.activity_logger import log_action_activity
+from gundi_core.schemas.v2.gundi import LogLevel
 
 
 logger = logging.getLogger(__name__)
@@ -105,7 +107,7 @@ class GearSet(BaseModel):
     def __hash__(self):
         return hash((self.id, self.deployment_type, tuple(self.traps)))
 
-    def get_devices(self) -> List:
+    async def get_devices(self) -> List:
         """
         Get the devices info for the gear set.
         """
@@ -114,7 +116,7 @@ class GearSet(BaseModel):
         for trap in self.traps:
             devices.append(
                 {
-                    "device_id": "rmwhub_" + str(RmwHubAdapter.clean_id_str(trap.id)),
+                    "device_id": "rmwhub_" + str(await self.clean_id_str(trap.id)),
                     "label": "a" if trap.sequence == 1 else "b",
                     "location": {
                         "latitude": trap.latitude,
@@ -190,19 +192,22 @@ class GearSet(BaseModel):
 
         return observation
 
-    def get_trap_ids(self) -> set:
+    async def get_trap_ids(self) -> set:
         """
         Get the trap IDs for the gear set.
         """
 
-        return {RmwHubAdapter.clean_id_str(geartrap.id) for geartrap in self.traps}
+        return {
+            geartrap.id.replace("e_", "").replace("rmwhub_", "")
+            for geartrap in self.traps
+        }
 
-    def is_visited(self, visited: set) -> bool:
+    async def is_visited(self, visited: set) -> bool:
         """
         Check if the gearset has been visited.
         """
 
-        traps_in_gearset = self.get_trap_ids()
+        traps_in_gearset = await self.get_trap_ids()
         return traps_in_gearset & visited
 
 
@@ -211,7 +216,15 @@ class RmwSets(BaseModel):
 
 
 class RmwHubAdapter:
-    def __init__(self, api_key: str, rmw_url: str, er_token: str, er_destination: str):
+    def __init__(
+        self,
+        integration_id: str,
+        api_key: str,
+        rmw_url: str,
+        er_token: str,
+        er_destination: str,
+    ):
+        self.integration_id = integration_id
         self.rmw_client = RmwHubClient(api_key, rmw_url)
         self.er_client = BuoyClient(er_token, er_destination)
         self.er_subject_name_to_subject_mapping = {}
@@ -283,10 +296,8 @@ class RmwHubAdapter:
 
         # Create maps of er_subject_names and rmw_trap_ids/set_ids
         # RMW trap IDs would be in the subject name
-        self.er_subject_name_to_subject_mapping = dict(
-            (RmwHubAdapter.clean_id_str(subject.get("name")), subject)
-            for subject in er_subjects
-            if er_subject.get("name")
+        self.er_subject_name_to_subject_mapping = (
+            await self.create_name_to_subject_mapping(er_subjects)
         )
         self.er_subject_id_to_subject_mapping = dict(
             (subject.get("id"), subject) for subject in er_subjects
@@ -300,7 +311,7 @@ class RmwHubAdapter:
         rmw_updates = set()
         for gearset in rmw_sets.sets:
             for trap in gearset.traps:
-                if RmwHubAdapter.clean_id_str(trap.id) in er_subject_names_and_ids:
+                if await self.clean_id_str(trap.id) in er_subject_names_and_ids:
                     rmw_updates.add(gearset)
                 else:
                     rmw_inserts.add(gearset)
@@ -313,13 +324,13 @@ class RmwHubAdapter:
             # Process each trap individually
             for trap in gearset.traps:
 
-                if gearset.is_visited(visited_inserts):
+                if await gearset.is_visited(visited_inserts):
                     logger.info(
                         f"Skipping insert for trap ID {trap.id}. Already processed."
                     )
                     continue
 
-                visited_inserts.update(gearset.get_trap_ids())
+                visited_inserts.update(await gearset.get_trap_ids())
 
                 logger.info(f"Processing trap ID {trap.id} for insert to ER.")
 
@@ -343,17 +354,17 @@ class RmwHubAdapter:
             for trap in gearset.traps:
 
                 # Process each trap individually
-                if gearset.is_visited(visited_updates):
+                if await gearset.is_visited(visited_updates):
                     logger.info(
                         f"Skipping insert for trap ID {trap.id}. Already processed."
                     )
                     continue
 
-                visited_updates.update(gearset.get_trap_ids())
+                visited_updates.update(await gearset.get_trap_ids())
                 logger.info(f"Processing trap ID {trap.id} for update to ER.")
 
                 # Get subject from ER
-                clean_trap_id = RmwHubAdapter.clean_id_str(trap.id)
+                clean_trap_id = await self.clean_id_str(trap.id)
                 if clean_trap_id in self.er_subject_name_to_subject_mapping.keys():
                     er_subject = self.er_subject_name_to_subject_mapping.get(
                         clean_trap_id
@@ -403,14 +414,14 @@ class RmwHubAdapter:
 
         # Get rmw trap IDs
         rmw_trap_ids = set()
-        rmw_set_id_to_gearset_mapping = self.create_set_id_to_gearset_mapping(
+        rmw_set_id_to_gearset_mapping = await self.create_set_id_to_gearset_mapping(
             rmw_sets.sets
         )
         rmw_set_ids = rmw_set_id_to_gearset_mapping.keys()
 
         for gearset in rmw_sets.sets:
             for trap in gearset.traps:
-                rmw_trap_ids.add(RmwHubAdapter.clean_id_str(trap.id))
+                rmw_trap_ids.add(await self.clean_id_str(trap.id))
 
         # Iterate through er_subjects and determine what is an insert and what is an update to RmwHub
         er_inserts = set()
@@ -425,7 +436,7 @@ class RmwHubAdapter:
                 )
                 continue
             # Use display_id for ER subjects to ensure uniqueness among gear sets
-            elif RmwHubAdapter.clean_id_str(subject_name) in rmw_trap_ids:
+            elif await self.clean_id_str(subject_name) in rmw_trap_ids:
                 er_updates.add(subject["additional"]["display_id"])
             else:
                 er_inserts.add(subject["additional"]["display_id"])
@@ -489,13 +500,13 @@ class RmwHubAdapter:
         Process the status updates from the RMW Hub API.
         """
 
-        rmw_set_id_to_gearset_mapping = self.create_set_id_to_gearset_mapping(
+        rmw_set_id_to_gearset_mapping = await self.create_set_id_to_gearset_mapping(
             rmw_sets.sets
         )
 
         visited_traps = set()
         for observation in observations:
-            rmw_set_id = RmwHubAdapter.clean_id_str(
+            rmw_set_id = await self.clean_id_str(
                 observation.get("additional").get("rmwhub_set_id")
             )
             rmw_set = rmw_set_id_to_gearset_mapping[rmw_set_id]
@@ -510,7 +521,7 @@ class RmwHubAdapter:
                 visited_traps.add(trap.id)
 
                 # Get subject from ER
-                clean_trap_id = RmwHubAdapter.clean_id_str(trap.id)
+                clean_trap_id = await self.clean_id_str(trap.id)
                 if clean_trap_id in self.er_subject_name_to_subject_mapping.keys():
                     er_subject = self.er_subject_name_to_subject_mapping.get(
                         clean_trap_id
@@ -552,7 +563,7 @@ class RmwHubAdapter:
                 f"Insert operation for Trap {trap.id}. Cannot update subject that does not exist."
             )
 
-            trap_id_in_er = "rmwhub_" + (RmwHubAdapter.clean_id_str(trap.id))
+            trap_id_in_er = "rmwhub_" + (await self.clean_id_str(trap.id))
             async for attempt in stamina.retry_context(
                 on=httpx.HTTPError, wait_initial=1.0, wait_jitter=5.0, wait_max=32.0
             ):
@@ -677,7 +688,7 @@ class RmwHubAdapter:
         for device in er_subject.get("additional").get("devices"):
             # Use just the ID for the Trap ID if the gearset is originally from RMW
             subject_name = er_subject.get("name")
-            cleaned_id = RmwHubAdapter.clean_id_str(subject_name)
+            cleaned_id = await self.clean_id_str(subject_name)
             trap_id = (
                 cleaned_id
                 if rmw_gearset and subject_name.startswith("rmw")
@@ -734,23 +745,47 @@ class RmwHubAdapter:
 
         return gear_set
 
-    def create_set_id_to_gearset_mapping(self, sets: List[GearSet]) -> dict:
+    async def create_set_id_to_gearset_mapping(self, sets: List[GearSet]) -> dict:
         """
         Create a mapping of Set IDs to GearSets.
         """
 
         set_id_to_set_mapping = {}
         for gear_set in sets:
-            set_id_to_set_mapping[RmwHubAdapter.clean_id_str(gear_set.id)] = gear_set
+            set_id_to_set_mapping[await self.clean_id_str(gear_set.id)] = gear_set
         return set_id_to_set_mapping
 
-    @staticmethod
-    def clean_id_str(subject_name: str):
+    async def create_name_to_subject_mapping(self, er_subjects: List) -> dict:
+        """
+        Create a mapping of ER subject names to subjects.
+        """
+
+        name_to_subject_mapping = {}
+        for subject in er_subjects:
+            if subject.get("name"):
+                name_to_subject_mapping[self.clean_id_str(subject.get("id"))] = subject
+            else:
+                msg = "Cannot clean string. Subject name is empty."
+                await log_action_activity(
+                    integration_id=self.integration_id,
+                    action_id="pull_observations",
+                    title=msg,
+                    level=LogLevel.ERROR,
+                )
+        return name_to_subject_mapping
+
+    async def clean_id_str(self, subject_name: str):
         """
         Resolve the ID string to just the UUID
         """
         if not subject_name:
-            logger.error("Cannot clean string. Subject name is empty.")
+            msg = "Cannot clean string. Subject name is empty."
+            await log_action_activity(
+                integration_id=self.integration_id,
+                action_id="pull_observations",
+                title=msg,
+                level=LogLevel.ERROR,
+            )
             return None
 
         cleaned_str = (

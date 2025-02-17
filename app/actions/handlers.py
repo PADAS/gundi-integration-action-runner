@@ -65,10 +65,14 @@ async def action_pull_observations(
     connection_details = await _client.get_connection_details(integration.id)
     for destination in connection_details.destinations:
         environment = Environment(destination.name)
-
         er_token, er_destination = await get_er_token_and_site(integration, environment)
 
+        logger.info(
+            f"Downloading data from rmwHub to the Earthranger destination: {str(environment)}..."
+        )
+
         rmw_adapter = RmwHubAdapter(
+            integration.id,
             action_config.api_key.get_secret_value(),
             action_config.rmw_url,
             er_token,
@@ -90,6 +94,7 @@ async def action_pull_observations(
             data={
                 "start_date_time": start_datetime_str,
                 "end_date_time": end_datetime_str,
+                "environment": str(environment),
             },
             config_data=action_config.dict(),
         )
@@ -148,7 +153,12 @@ async def action_pull_observations_24_hour_sync(
         environment = Environment(destination.name)
         er_token, er_destination = await get_er_token_and_site(integration, environment)
 
+        logger.info(
+            f"Downloading data from rmwHub to the Earthranger destination: {str(environment)}..."
+        )
+
         rmw_adapter = RmwHubAdapter(
+            integration.id,
             action_config.api_key.get_secret_value(),
             action_config.rmw_url,
             er_token,
@@ -171,6 +181,7 @@ async def action_pull_observations_24_hour_sync(
             data={
                 "start_date_time": start_datetime_str,
                 "end_date_time": end_datetime_str,
+                "environment": str(environment),
             },
             config_data=action_config.dict(),
         )
