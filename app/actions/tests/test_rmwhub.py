@@ -4,6 +4,7 @@ import pytest
 
 from app.actions.rmwhub import RmwHubAdapter, RmwSets
 from app.actions.rmwhub import RmwHubClient
+from app.conftest import AsyncMock
 
 
 @pytest.mark.asyncio
@@ -156,6 +157,8 @@ async def test_rmwhub_adapter_process_rmw_upload_insert_success(
         "er.destination.com",
     )
     start_datetime_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    mock_log_activity = AsyncMock()
+    mocker.patch("app.actions.rmwhub.log_action_activity", mock_log_activity)
 
     # Test handle 0 rmw_sets and 0 ER subjects
     data = []
@@ -231,8 +234,9 @@ async def test_rmwhub_adapter_process_rmw_upload_update_success(
         "super_secret_token",
         "er.destination.com",
     )
-
     start_datetime_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    mock_log_activity = AsyncMock()
+    mocker.patch("app.actions.rmwhub.log_action_activity", mock_log_activity)
 
     # Test handle ER upload success with updates
     data = mock_er_subjects_update
@@ -271,6 +275,8 @@ async def test_rmwhub_adapter_process_rmw_upload_failure(
         "er.destination.com",
     )
     start_datetime_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    mock_log_activity = AsyncMock()
+    mocker.patch("app.actions.rmwhub.log_action_activity", mock_log_activity)
 
     # Test handle ER upload failure
     data = []

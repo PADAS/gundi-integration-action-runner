@@ -43,7 +43,7 @@ async def test_handler_action_pull_observations(
     )
     mocker.patch(
         "app.actions.rmwhub.RmwHubAdapter.process_rmw_upload",
-        return_value=[],
+        return_value=([], {}),
     )
     mocker.patch(
         "app.actions.rmwhub.RmwHubAdapter.push_status_updates",

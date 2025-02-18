@@ -99,23 +99,47 @@ async def action_pull_observations(
             config_data=action_config.dict(),
         )
 
-        if len(rmwSets.sets) == 0:
-            logger.info("No gearsets returned from RMW Hub API.")
-            return {"observations_extracted": 0}
-
-        logger.info(
-            f"Processing updates from RMW Hub API...Number of gearsets returned: {len(rmwSets.sets)}"
-        )
-        observations = await rmw_adapter.process_rmw_download(
-            rmwSets, start_datetime_str, sync_interval_minutes
-        )
-        total_observations.extend(observations)
+        observations = []
+        if len(rmwSets.sets) != 0:
+            logger.info(
+                f"Processing updates from RMW Hub API...Number of gearsets returned: {len(rmwSets.sets)}"
+            )
+            observations = await rmw_adapter.process_rmw_download(
+                rmwSets, start_datetime_str, sync_interval_minutes
+            )
+            total_observations.extend(observations)
+        else:
+            await log_activity(
+                integration_id=integration.id,
+                action_id="pull_observations",
+                level=LogLevel.INFO,
+                title="No gearsets returned from RMW Hub API.",
+                data={
+                    "start_date_time": start_datetime_str,
+                    "end_date_time": end_datetime_str,
+                    "environment": str(environment),
+                },
+                config_data=action_config.dict(),
+            )
 
         # Upload changes from ER to RMW Hub
-        put_set_id_observations = await rmw_adapter.process_rmw_upload(
+        put_set_id_observations, rmw_response = await rmw_adapter.process_rmw_upload(
             rmwSets, start_datetime_str
         )
         total_observations.extend(put_set_id_observations)
+        observations.extend(put_set_id_observations)
+
+        # TODO: Handle failed response
+        await log_activity(
+            integration_id=integration.id,
+            action_id="pull_observations",
+            level=LogLevel.INFO,
+            title="Process upload to rmwHub completed.",
+            data={
+                "rmw_response": str(rmw_response),
+            },
+            config_data=action_config.dict(),
+        )
 
         # Send the extracted data to Gundi in batches
         for batch in generate_batches(observations):

@@ -408,6 +408,16 @@ class RmwHubAdapter:
 
         # Get updates from the last interval_minutes in ER
         er_subjects = await self.er_client.get_er_subjects(start_datetime_str)
+        if not er_subjects:
+            msg = "No subjects found in ER."
+            await log_action_activity(
+                integration_id=self.integration_id,
+                action_id="pull_observations",
+                title=msg,
+                level=LogLevel.WARNING,
+            )
+            return [], {}
+
         id_to_er_subject_mapping = dict(
             (subject["additional"]["display_id"], subject) for subject in er_subjects
         )
