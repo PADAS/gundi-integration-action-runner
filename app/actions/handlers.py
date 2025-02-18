@@ -53,7 +53,7 @@ async def action_pull_observations(
     integration, action_config: PullRmwHubObservationsConfiguration
 ):
     current_datetime = datetime.now()
-    sync_interval_minutes = 20000
+    sync_interval_minutes = 5
     start_datetime = current_datetime - timedelta(minutes=sync_interval_minutes)
     start_datetime_str = start_datetime.strftime("%Y-%m-%d %H:%M:%S")
     end_datetime = current_datetime + timedelta(minutes=sync_interval_minutes)
@@ -65,10 +65,14 @@ async def action_pull_observations(
     connection_details = await _client.get_connection_details(integration.id)
     for destination in connection_details.destinations:
         environment = Environment(destination.name)
-
         er_token, er_destination = await get_er_token_and_site(integration, environment)
 
+        logger.info(
+            f"Downloading data from rmwHub to the Earthranger destination: {str(environment)}..."
+        )
+
         rmw_adapter = RmwHubAdapter(
+            integration.id,
             action_config.api_key.get_secret_value(),
             action_config.rmw_url,
             er_token,
@@ -90,21 +94,52 @@ async def action_pull_observations(
             data={
                 "start_date_time": start_datetime_str,
                 "end_date_time": end_datetime_str,
+                "environment": str(environment),
             },
             config_data=action_config.dict(),
         )
 
-        if len(rmwSets.sets) == 0:
-            logger.info("No gearsets returned from RMW Hub API.")
-            return {"observations_extracted": 0}
+        observations = []
+        if len(rmwSets.sets) != 0:
+            logger.info(
+                f"Processing updates from RMW Hub API...Number of gearsets returned: {len(rmwSets.sets)}"
+            )
+            observations = await rmw_adapter.process_rmw_download(
+                rmwSets, start_datetime_str, sync_interval_minutes
+            )
+            total_observations.extend(observations)
+        else:
+            await log_activity(
+                integration_id=integration.id,
+                action_id="pull_observations",
+                level=LogLevel.INFO,
+                title="No gearsets returned from RMW Hub API.",
+                data={
+                    "start_date_time": start_datetime_str,
+                    "end_date_time": end_datetime_str,
+                    "environment": str(environment),
+                },
+                config_data=action_config.dict(),
+            )
 
-        logger.info(
-            f"Processing updates from RMW Hub API...Number of gearsets returned: {len(rmwSets.sets)}"
+        # Upload changes from ER to RMW Hub
+        put_set_id_observations, rmw_response = await rmw_adapter.process_rmw_upload(
+            rmwSets, start_datetime_str
         )
-        observations = await rmw_adapter.process_rmw_download(
-            rmwSets, start_datetime_str, sync_interval_minutes
+        total_observations.extend(put_set_id_observations)
+        observations.extend(put_set_id_observations)
+
+        # TODO: Handle failed response
+        await log_activity(
+            integration_id=integration.id,
+            action_id="pull_observations",
+            level=LogLevel.INFO,
+            title="Process upload to rmwHub completed.",
+            data={
+                "rmw_response": str(rmw_response),
+            },
+            config_data=action_config.dict(),
         )
-        total_observations.extend(observations)
 
         # Send the extracted data to Gundi in batches
         for batch in generate_batches(observations):
@@ -124,7 +159,7 @@ async def action_pull_observations(
 
 
 @activity_logger()
-@crontab_schedule("0 0 * * *")  # Run every 24 hours at midnight
+@crontab_schedule("10 0 * * *")  # Run every 24 hours at 12:10 AM
 async def action_pull_observations_24_hour_sync(
     integration, action_config: PullRmwHubObservationsConfiguration
 ):
@@ -142,7 +177,12 @@ async def action_pull_observations_24_hour_sync(
         environment = Environment(destination.name)
         er_token, er_destination = await get_er_token_and_site(integration, environment)
 
+        logger.info(
+            f"Downloading data from rmwHub to the Earthranger destination: {str(environment)}..."
+        )
+
         rmw_adapter = RmwHubAdapter(
+            integration.id,
             action_config.api_key.get_secret_value(),
             action_config.rmw_url,
             er_token,
@@ -165,6 +205,7 @@ async def action_pull_observations_24_hour_sync(
             data={
                 "start_date_time": start_datetime_str,
                 "end_date_time": end_datetime_str,
+                "environment": str(environment),
             },
             config_data=action_config.dict(),
         )
@@ -180,6 +221,12 @@ async def action_pull_observations_24_hour_sync(
             rmwSets, start_datetime_str, sync_interval_minutes
         )
         total_observations.extend(observations)
+
+        # Upload changes from ER to RMW Hub
+        put_set_id_observations = await rmw_adapter.process_rmw_upload(
+            rmwSets, start_datetime_str
+        )
+        total_observations.extend(put_set_id_observations)
 
         # Send the extracted data to Gundi in batches
         for batch in generate_batches(observations):

@@ -2,7 +2,7 @@ import json
 from typing import List
 import logging
 
-import requests
+import httpx
 
 
 logger = logging.getLogger(__name__)
@@ -25,10 +25,12 @@ class BuoyClient:
         if updated_since:
             url += f"&updated_since={updated_since}"
         BuoyClient.headers["Authorization"] = f"Bearer {self.er_token}"
-        response = requests.get(url, headers=BuoyClient.headers)
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, headers=BuoyClient.headers)
 
         if response.status_code == 200:
-            print("Request to get ER subjects was successful")
+            logger.info("Request to get ER subjects was successful")
             data = json.loads(response.text)
             if len(data["data"]) == 0:
                 logger.error(f"No subjects found")
@@ -46,7 +48,9 @@ class BuoyClient:
             + f"/subjects/?name={name}&include_details=True&include_inactive=True"
         )
         BuoyClient.headers["Authorization"] = f"Bearer {self.er_token}"
-        response = requests.get(url, headers=BuoyClient.headers)
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, headers=BuoyClient.headers)
 
         if response.status_code == 200:
             print(f"Request to get ER subject with name: {name} was successful")
@@ -77,7 +81,10 @@ class BuoyClient:
         url = self.er_site + f"/subject/{subject.get('id')}/"
 
         dict = {"is_active": state}
-        response = requests.patch(url, headers=BuoyClient.headers, json=dict)
+
+        async with httpx.AsyncClient() as client:
+            response = await client.patch(url, headers=BuoyClient.headers, json=dict)
+
         if response.status_code != 200:
             logger.exception(
                 "Failed to update subject state for %s. Error: %s",
