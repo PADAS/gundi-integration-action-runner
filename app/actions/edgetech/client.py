@@ -15,7 +15,6 @@ from app.actions.edgetech.types import Buoy
 logger = logging.getLogger(__name__)
 
 
-# TODO: Verify how will the token update behave
 class EdgeTechClient:
     """
     Client for interacting with the EdgeTech API.
