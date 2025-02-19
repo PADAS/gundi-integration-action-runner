@@ -128,12 +128,12 @@ class GearSet(BaseModel):
 
         return devices
 
-    def create_observations(self) -> List:
+    async def create_observations(self) -> List:
         """
         Create observations for the gear set.
         """
 
-        devices = self.get_devices()
+        devices = await self.get_devices()
 
         observations = []
 
@@ -594,7 +594,7 @@ class RmwHubAdapter:
         """
 
         # Create observations for the gear set
-        observations = rmw_set.create_observations()
+        observations = await rmw_set.create_observations()
 
         return observations
 
