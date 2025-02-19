@@ -34,19 +34,9 @@ services:
         pubsub_emulator:
           condition: service_healthy
       entrypoint: ["sh", "-c"]
-      command: ["until curl -X PUT http://pubsub_emulator:8085/v1/projects/local-project/topics/integration-events; do sleep 2; done"]
-
-  pubsub_action_topic_subscriber:
-      image: curlimages/curl:latest
-      container_name: pubsub_action_topic_subscriber
-      depends_on:
-        pubsub_topic_initializer:
-          condition: service_completed_successfully
-      entrypoint: ["sh", "-c"]
       command: ["source /helpers/create_subscriptions.sh"]
       volumes:
         - ./helpers:/helpers
-
   fastapi:
     build:
       context: ..
