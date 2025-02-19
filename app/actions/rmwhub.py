@@ -107,7 +107,7 @@ class GearSet(BaseModel):
     def __hash__(self):
         return hash((self.id, self.deployment_type, tuple(self.traps)))
 
-    async def get_devices(self) -> List:
+    def get_devices(self) -> List:
         """
         Get the devices info for the gear set.
         """
@@ -116,7 +116,10 @@ class GearSet(BaseModel):
         for trap in self.traps:
             devices.append(
                 {
-                    "device_id": "rmwhub_" + str(await self.clean_id_str(trap.id)),
+                    "device_id": "rmwhub_"
+                    + trap.id.replace("e_", "")
+                    .replace("rmwhub_", "")
+                    .replace("device_", ""),
                     "label": "a" if trap.sequence == 1 else "b",
                     "location": {
                         "latitude": trap.latitude,
@@ -128,12 +131,12 @@ class GearSet(BaseModel):
 
         return devices
 
-    async def create_observations(self) -> List:
+    def create_observations(self) -> List:
         """
         Create observations for the gear set.
         """
 
-        devices = await self.get_devices()
+        devices = self.get_devices()
 
         observations = []
 
@@ -335,7 +338,7 @@ class RmwHubAdapter:
                 logger.info(f"Processing trap ID {trap.id} for insert to ER.")
 
                 # Create observations for the gear set from RmwHub
-                new_observations = await self._create_observations(gearset)
+                new_observations = self._create_observations(gearset)
 
                 observations.extend(new_observations)
                 logger.info(
@@ -380,7 +383,7 @@ class RmwHubAdapter:
                     er_subject = None
 
                 # Create observations for the gear set from RmwHub
-                new_observations = await self._create_observations(gearset)
+                new_observations = self._create_observations(gearset)
 
                 observations.extend(new_observations)
                 logger.info(
@@ -586,7 +589,7 @@ class RmwHubAdapter:
                 f"Failed to compare gear set for trap ID {trap.id}. RMW latest update time: {trap_latest_update_time.isoformat()}"
             )
 
-    async def _create_observations(self, rmw_set: GearSet) -> List:
+    def _create_observations(self, rmw_set: GearSet) -> List:
         """
         Create new observations for ER from RmwHub data.
 
@@ -594,7 +597,7 @@ class RmwHubAdapter:
         """
 
         # Create observations for the gear set
-        observations = await rmw_set.create_observations()
+        observations = rmw_set.create_observations()
 
         return observations
 
