@@ -1,5 +1,6 @@
 import asyncio
 import gzip
+import io
 import json
 import logging
 import re
@@ -33,7 +34,7 @@ class EdgeTechClient:
             *args: Additional positional arguments.
             **kwargs: Additional keyword arguments.
         """
-        self._token_json = config.token_json.get_secret_value()
+        self._token_json = json.loads(config.token_json.get_secret_value())
         self._config = config
 
     def _set_token(self, token_response, refresh_token=None, *args, **kwargs):
@@ -72,9 +73,10 @@ class EdgeTechClient:
             "refresh_token": refresh_token,
             "redirect_uri": self._config.redirect_uri,
             "scope": self._config.scope,
+            "grant_type": "refresh_token",
         }
 
-        with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession() as session:
             async with session.post(
                 self._config.token_url, data=refresh_params
             ) as response:
@@ -96,7 +98,7 @@ class EdgeTechClient:
         now = time.time()
 
         if now >= self._token_json["expires_at"]:
-            self._token_json = await self._update_token(self._token_json)
+            self._token_json = await self._update_token()
 
         return self._token_json
 
@@ -125,7 +127,7 @@ class EdgeTechClient:
 
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                self._config.database_dump_url, headers=headers
+                self._config.database_dump_url, headers=headers, allow_redirects=False
             ) as start_response:
                 if start_response.status != 303:
                     raise ValueError(f"Invalid response: {start_response.status}")
@@ -140,9 +142,10 @@ class EdgeTechClient:
                 logger.debug(
                     f"Get Dump Attempt {attempt + 1}/{self._config.num_get_retry}"
                 )
-                async with session.get(dump_url, headers=headers) as get_response:
+                async with session.get(
+                    dump_url, headers=headers, allow_redirects=False
+                ) as get_response:
                     if get_response.status == 200:
-                        logger.info(await get_response.text())
                         await asyncio.sleep(1)
                     elif get_response.status == 303:
                         logger.debug("Success - downloading")
@@ -168,7 +171,9 @@ class EdgeTechClient:
                             logger.info(f"Downloaded file: {fname}")
 
                             compressed_data = await download_response.read()
-                            with gzip.GzipFile(fileobj=compressed_data) as fo:
+                            with gzip.GzipFile(
+                                fileobj=io.BytesIO(compressed_data)
+                            ) as fo:
                                 data = json.load(fo)
                         break
 

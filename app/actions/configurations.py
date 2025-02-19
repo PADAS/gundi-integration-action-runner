@@ -32,12 +32,15 @@ class EdgeTechConfiguration(PullActionConfiguration):
     )
 
     num_get_retry: int = 60
-    scope: str = "offline_access database:dump openid profile email"
 
     @property
     def v1_url(self):
-        return self.api_base_url + "v1/"
+        return self.api_base_url + "/v1"
 
     @property
     def database_dump_url(self):
         return self.v1_url + "/database-dump/tasks"
+
+    @property
+    def scope(self):
+        return "offline_access database:dump openid profile email"

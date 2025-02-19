@@ -4,6 +4,8 @@ from typing import List
 
 import aiohttp
 
+from app.actions.buoy.types import ObservationSubject
+
 logger = logging.getLogger(__name__)
 
 
@@ -17,15 +19,15 @@ class BuoyClient:
 
     async def get_er_subjects(self, start_datetime: str = None) -> List:
         query_params = {
-            "include_details": True,
-            "include_inactive": True,
+            "include_details": "true",
+            "include_inactive": "true",
         }
         if start_datetime:
             query_params["updated_since"] = start_datetime
 
-        url = f"{self.er_site}/subjects/"
+        url = f"{self.er_site}api/v1.0/subjects/"
 
-        with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession() as session:
             async with session.get(
                 url, headers=self.headers, params=query_params
             ) as response:
@@ -38,4 +40,5 @@ class BuoyClient:
                 if len(data["data"]) == 0:
                     logger.error("No subjects found")
                     return []
-                return data["data"]
+                data = data["data"]
+                return [ObservationSubject.parse_obj(item) for item in data]

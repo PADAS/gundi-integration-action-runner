@@ -54,7 +54,7 @@ class Buoy(pydantic.BaseModel):
         return self.currentState.isDeployed or not self.currentState.isDeleted
 
     def create_observation(self, prefix: str) -> Dict[str, Any]:
-        subject_name = f"edgetech_{self.serialNumber}"
+        subject_name = f"{prefix}{self.serialNumber}"
         current_state = self.currentState
         observation = {
             "name": subject_name,
@@ -62,7 +62,7 @@ class Buoy(pydantic.BaseModel):
             "type": SOURCE_TYPE,
             "subject_type": SUBJECT_SUBTYPE,
             "is_active": self.deployed,
-            "recorded_at": current_state.dateStatus.replace("Z", "+00:00"),
+            "recorded_at": current_state.lastUpdated.isoformat().replace("Z", "+00:00"),
             "location": {"lat": current_state.latDeg, "lon": current_state.lonDeg},
             "additional": {
                 "subject_name": subject_name,

@@ -10,7 +10,11 @@ from gundi_core.schemas.v2 import Integration
 from app.actions.configurations import EdgeTechConfiguration
 from app.actions.edgetech import EdgeTechClient
 from app.actions.edgetech.processor import EdgetTechProcessor
-from app.services.activity_logger import activity_logger, log_activity
+from app.services.activity_logger import (
+    activity_logger,
+    log_action_activity,
+    log_activity,
+)
 from app.services.gundi import send_observations_to_gundi
 from app.services.utils import find_config_for_action
 
@@ -38,6 +42,10 @@ async def action_pull_edgetech_observations(
     for destination in connection_details.destinations:
         environment = Environment(destination.name)
 
+        logging.info(
+            f"Executing pull action for integration {integration} and environment {environment}..."
+        )
+
         er_token, er_destination = await get_er_token_and_site(integration, environment)
 
         processor = EdgetTechProcessor(data, er_token, er_destination)
@@ -49,15 +57,11 @@ async def action_pull_edgetech_observations(
                 observations=batch, integration_id=str(integration.id)
             )
 
-        logging.info(
-            f"Executing pull action for integration {integration} and environment {environment}..."
-        )
-
-        await log_activity(
+        await log_action_activity(
             integration_id=integration.id,
             action_id="pull_edgetech",
             level=LogLevel.INFO,
-            title="Pulling data from EdgeTech API",
+            title="Pulled data from EdgeTech API",
         )
 
         logger.info(

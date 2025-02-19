@@ -31,7 +31,7 @@ class EdgetTechProcessor:
         self._data = [Buoy.parse_obj(record) for record in data]
         self._er_client = BuoyClient(er_token, er_url)
         self._filters = filters or self._get_default_filters()
-
+        self._prefix = "edgetech_"
     def _get_default_filters(self) -> Dict[str, any]:
         """
         Generate default filter criteria for processing buoy data.
@@ -60,9 +60,9 @@ class EdgetTechProcessor:
         for record in self._data:
             record_current_state = record.currentState.lastUpdated
             if (
-                self._filters["start_date"]
-                <= record_current_state.timestamp
-                <= self._filters["end_date"]
+                self._filters["start_date"].timestamp()
+                <= record_current_state.timestamp()
+                <= self._filters["end_date"].timestamp()
             ):
                 filtered_data.append(record)
         return filtered_data
@@ -84,8 +84,8 @@ class EdgetTechProcessor:
             current_state = buoy.currentState
             current_newest = newest_by_serial.get(serial)
             if (
-                serial not in newest_by_serial
-            ) or current_state.lastUpdated > current_newest.lastUpdated:
+                current_newest is None
+            ) or current_state.lastUpdated > current_newest.currentState.lastUpdated:
                 newest_by_serial[serial] = buoy
         return newest_by_serial
 
@@ -97,8 +97,6 @@ class EdgetTechProcessor:
             1. Matching serial numbers (handling an 'edgetech_' prefix if present).
             2. Matching active state versus deletion status.
             3. Matching geographic location if available.
-            4. Matching update timestamps.
-
         Args:
             er_subject (ObservationSubject): The ER system's subject representing a device observation.
             buoy (Buoy): The buoy object containing current state information.
@@ -107,9 +105,9 @@ class EdgetTechProcessor:
             bool: True if the ER subject and the buoy record are equivalent; otherwise, False.
         """
         # (1) Serial Number:
-        prefix = "edgetech_"
-        if er_subject.name.startswith(prefix):
-            obs_serial = er_subject.name[len(prefix) :]
+
+        if er_subject.name.startswith(self._prefix):
+            obs_serial = er_subject.name[len(self._prefix) :]
         else:
             obs_serial = er_subject.name
 
@@ -120,7 +118,9 @@ class EdgetTechProcessor:
             return False
 
         # (2) Active state vs. deletion:
-        if er_subject.is_active != (not buoy.currentState.isDeleted):
+        if er_subject.is_active != (
+            not buoy.currentState.isDeleted or buoy.currentState.isDeployed
+        ):
             return False
 
         # (3) Compare location:
@@ -134,9 +134,10 @@ class EdgetTechProcessor:
             if buoy.currentState.latDeg is None or buoy.currentState.lonDeg is None:
                 return False
 
+            tolerance = 0.0001
             if (
-                obs_lat != buoy.currentState.latDeg
-                or obs_lon != buoy.currentState.lonDeg
+                abs(obs_lat - buoy.currentState.latDeg) > tolerance
+                or abs(obs_lon - buoy.currentState.lonDeg) > tolerance
             ):
                 return False
         else:
@@ -146,9 +147,6 @@ class EdgetTechProcessor:
             ):
                 return False
 
-        # (4) Compare update timestamps.
-        if er_subject.updated_at != buoy.currentState.lastUpdated:
-            return False
 
         return True
 
@@ -174,10 +172,10 @@ class EdgetTechProcessor:
         """
         buoy_states = self._get_newest_buoy_states()
 
-        er_subjects = self._er_client.get_er_subjects()
+        er_subjects = await self._er_client.get_er_subjects()
 
         # Create maps of ER subjects by serial number
-        er_subject_mapping = {subject.get("name"): subject for subject in er_subjects}
+        er_subject_mapping = {subject.name: subject for subject in er_subjects}
         er_subject_names = set(er_subject_mapping.keys())
 
         # Categorize buoys into insert, update, and no-op
@@ -188,7 +186,15 @@ class EdgetTechProcessor:
         observations = []
 
         for serial_number, buoy_state in buoy_states.items():
-            if serial_number in er_subject_names:
+            if (
+                buoy_state.currentState.latDeg is None
+                or buoy_state.currentState.lonDeg is None
+            ):
+                logger.warning(
+                    f"Skipping buoy {serial_number} with missing location data"
+                )
+                continue
+            if f"{self._prefix}{serial_number}" in er_subject_names:
                 # Buoy exists in ER, so update it
                 update_buoys.add(serial_number)
             else:
@@ -200,8 +206,8 @@ class EdgetTechProcessor:
             buoy_state = buoy_states[serial_number]
             logger.info(f"Inserting new buoy: {serial_number}")
             try:
-                new_observations = buoy_state.create_observation()
-                observations.extend(new_observations)
+                new_observations = buoy_state.create_observation(self._prefix)
+                observations.append(new_observations)
             except pydantic.ValidationError as ve:
                 logger.exception(
                     "Failed making BuoyEvent for %s. Error: %s",
@@ -212,9 +218,9 @@ class EdgetTechProcessor:
         # Process updates
         for serial_number in update_buoys:
             buoy_state = buoy_states[serial_number]
-            er_subject = er_subject_mapping.get(serial_number)
-
-            if self.are_equivalent(er_subject, buoy_state):
+            buoy_subject_name = f"{self._prefix}{serial_number}"
+            er_subject = er_subject_mapping.get(buoy_subject_name)
+            if self._are_equivalent(er_subject, buoy_state):
                 # No-op, data is already up to date
                 noop_buoys.add(serial_number)
                 logger.info(f"No changes needed for buoy: {serial_number}")
@@ -222,8 +228,8 @@ class EdgetTechProcessor:
                 # Update ER subject
                 logger.info(f"Updating buoy: {serial_number}")
                 try:
-                    new_observations = buoy_state.create_observation()
-                    observations.extend(new_observations)
+                    new_observations = buoy_state.create_observation(self._prefix)
+                    observations.append(new_observations)
                 except pydantic.ValidationError as ve:
                     logger.exception(
                         "Failed updating BuoyEvent for %s. Error: %s",
