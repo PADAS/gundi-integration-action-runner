@@ -4,7 +4,7 @@ from typing import List
 
 import aiohttp
 
-from app.actions.buoy import ObservationSubject
+from .types import ObservationSubject
 
 logger = logging.getLogger(__name__)
 

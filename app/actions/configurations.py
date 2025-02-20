@@ -13,25 +13,12 @@ class EdgeTechAuthConfiguration(AuthActionConfiguration, ExecutableActionMixin):
         title="Token JSON",
         description="Token JSON for the Edge Tech API.",
     )
-    token_url: pydantic.AnyHttpUrl = pydantic.Field(
-        ...,
-        title="Token URL",
-        description="URL to get the Edge Tech API key.",
-    )
-    redirect_uri: pydantic.AnyHttpUrl = pydantic.Field(
-        ...,
-        title="Redirect URI",
-        description="Redirect URI for the Edge Tech API key.",
-    )
     client_id: str = pydantic.Field(
         ...,
         title="Client ID",
         description="Client ID for the Edge Tech API.",
     )
 
-    @property
-    def scope(self):
-        return "offline_access database:dump openid profile email"
 
 
 class EdgeTechConfiguration(PullActionConfiguration):

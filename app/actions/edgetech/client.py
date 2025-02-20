@@ -10,9 +10,15 @@ from typing import List
 import aiohttp
 
 from app.actions.configurations import EdgeTechAuthConfiguration, EdgeTechConfiguration
+from app.actions.edgetech.exceptions import InvalidCredentials
 from app.actions.edgetech.types import Buoy
 
 logger = logging.getLogger(__name__)
+
+
+TOKEN_URL = "https://trap-tracker.auth0.com/oauth/token"
+REDIRECT_URI = "https://app.local"
+SCOPE = "offline_access database:dump openid profile email"
 
 
 class EdgeTechClient:
@@ -77,17 +83,18 @@ class EdgeTechClient:
         refresh_params = {
             "client_id": self._auth_config.client_id,
             "refresh_token": refresh_token,
-            "redirect_uri": self._auth_config.redirect_uri,
-            "scope": self._auth_config.scope,
+            "redirect_uri": REDIRECT_URI,
+            "scope": SCOPE,
             "grant_type": "refresh_token",
         }
 
         async with aiohttp.ClientSession() as session:
-            async with session.post(
-                self._auth_config.token_url, data=refresh_params
-            ) as response:
-                token_response = await response.json()
-                self._set_token(token_response, self._token_json["refresh_token"])
+            async with session.post(TOKEN_URL, data=refresh_params) as response:
+                response_json = await response.json()
+                if response.status != 200:
+                    raise InvalidCredentials(response_json)
+
+                self._set_token(response_json, self._token_json["refresh_token"])
 
         return self._token_json
 

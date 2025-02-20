@@ -9,6 +9,7 @@ from gundi_core.schemas.v2 import ConnectionIntegration, Integration
 
 from app.actions.configurations import EdgeTechAuthConfiguration, EdgeTechConfiguration
 from app.actions.edgetech import EdgeTechClient
+from app.actions.edgetech.exceptions import InvalidCredentials
 from app.actions.edgetech.processor import EdgetTechProcessor
 from app.services.activity_logger import activity_logger, log_action_activity
 from app.services.gundi import send_observations_to_gundi
@@ -103,12 +104,15 @@ async def action_auth(
     )
     try:
         edgetech_client = EdgeTechClient(auth_config=action_config, pull_config=None)
-        edgetech_client.get_token()
+        await edgetech_client.get_token()
         return {"valid_credentials": True}
-    except Exception as e:
+    except InvalidCredentials as e:
         logger.info(
-            f"An error occurred while fetching token for integration '{integration.id}': {e}"
+            f"Invalid credentials for integration {integration}: {e.response_data}"
         )
+        return {"valid_credentials": False, "error": str(e)}
+    except Exception as e:
+        logger.error(f"Error authenticating with EdgeTech: {e}")
         return {"valid_credentials": None, "error": str(e)}
 
 
