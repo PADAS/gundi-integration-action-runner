@@ -11,6 +11,10 @@ COPY ./app app/
 
 FROM baseimage AS devimage
 
+COPY requirements-dev.in .
+RUN pip install -r /code/requirements-dev.in
+
+# Install debugpy for debugging
 RUN pip install debugpy
 
 # Expose debugpy port too
@@ -19,4 +23,3 @@ CMD ["python", "-m", "debugpy", "--listen", "0.0.0.0:5678", "-m", "uvicorn", "ap
 
 FROM baseimage AS prodimage
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
-
