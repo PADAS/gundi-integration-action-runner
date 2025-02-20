@@ -467,16 +467,25 @@ class RmwHubAdapter:
 
             # Create new updates from ER data for upload to RMWHub, and collect set ID to update ER.
             updated_gearset = await self._create_rmw_update_from_er_subject(subject)
-            new_observations.extend(
-                await self._create_put_er_set_id_observation(
-                    subject, updated_gearset.id
-                )
-            )
 
-            updates.append(updated_gearset)
-            logger.info(
-                f"Processed new gear set for set ID {updated_gearset.id} from ER subject ID: {subject.get('id')}."
-            )
+            if not updated_gearset.traps:
+                await log_action_activity(
+                    integration_id=self.integration_id,
+                    action_id="pull_observations",
+                    title=f"No devices found for ER subject ID: {subject.get('id')}.",
+                    level=LogLevel.ERROR,
+                )
+            else:
+                new_observations.extend(
+                    await self._create_put_er_set_id_observation(
+                        subject, updated_gearset.id
+                    )
+                )
+                updates.append(updated_gearset)
+
+                logger.info(
+                    f"Processed new gear set for set ID {updated_gearset.id} from ER subject ID: {subject.get('id')}."
+                )
 
         # Handle updates to RMW
         for display_id in er_updates:
@@ -497,10 +506,18 @@ class RmwHubAdapter:
                 subject, rmw_gearset
             )
 
-            updates.append(updated_gearset)
-            logger.info(
-                f"Processed update for gear set with set ID {updated_gearset.id} from ER subject ID: {subject['id']}."
-            )
+            if not updated_gearset.traps:
+                await log_action_activity(
+                    integration_id=self.integration_id,
+                    action_id="pull_observations",
+                    title=f"No devices found for ER subject ID: {subject.get('id')}.",
+                    level=LogLevel.ERROR,
+                )
+            else:
+                updates.append(updated_gearset)
+                logger.info(
+                    f"Processed update for gear set with set ID {updated_gearset.id} from ER subject ID: {subject['id']}."
+                )
 
         response = await self._upload_data(updates)
 
@@ -662,7 +679,7 @@ class RmwHubAdapter:
 
         if response.status_code == 200:
             logger.info("Upload to RMW Hub API was successful.")
-            result = json.loads(response.text)
+            result = json.loads(response.content)
             if len(result["result"]):
                 logger.info(
                     f"Number of traps uploaded: {result['result']['trap_count']}"
@@ -694,7 +711,15 @@ class RmwHubAdapter:
             "devices"
         ):
             logger.error(f"No traps found for trap ID {er_subject.get('name')}.")
-            return {}
+            return GearSet(
+                vessel_id="",
+                id="",
+                deployment_type="",
+                traps_in_set=-1,
+                trawl_path="",
+                share_with=[],
+                traps=traps,
+            )
 
         deployed = er_subject.get("is_active")
 
@@ -873,13 +898,13 @@ class RmwHubClient:
 
         return response.text
 
-    async def upload_data(self, updates: List) -> str:
+    async def upload_data(self, updates: List) -> httpx.Response:
         """
         Upload data to the RMWHub API using the upload_data endpoint.
         ref: https://ropeless.network/api/docs
         """
 
-        url = self.rmw_url + "/upload_data/"
+        url = self.rmw_url + "/upload_deployments/"
 
         upload_data = {
             "format_version": 0,
@@ -887,14 +912,14 @@ class RmwHubClient:
             "sets": updates,
         }
 
-        with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient() as client:
             response = await client.post(
                 url, headers=RmwHubClient.HEADERS, json=upload_data
             )
 
         if response.status_code != 200:
             logger.error(
-                f"Failed to upload data to RMW Hub API. Error: {response.status_code} - {response.text}"
+                f"Failed to upload data to RMW Hub API. Error: {response.status_code} - {response.content}"
             )
 
-        return response.text
+        return response
