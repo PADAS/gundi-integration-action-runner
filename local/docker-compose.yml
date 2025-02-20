@@ -1,5 +1,3 @@
-version: '3.9'
-
 
 services:
 
@@ -36,8 +34,9 @@ services:
         pubsub_emulator:
           condition: service_healthy
       entrypoint: ["sh", "-c"]
-      command: ["until curl -X PUT http://pubsub_emulator:8085/v1/projects/local-project/topics/integration-events; do sleep 2; done"]
-
+      command: ["source /helpers/create_subscriptions.sh"]
+      volumes:
+        - ./helpers:/helpers
   fastapi:
     build:
       context: ..
