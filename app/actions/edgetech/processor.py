@@ -4,8 +4,7 @@ from typing import Dict, List
 
 import pydantic
 
-from app.actions.buoy import BuoyClient
-from app.actions.buoy.types import ObservationSubject
+from app.actions.buoy import BuoyClient, ObservationSubject
 from app.actions.edgetech.types import Buoy
 
 logger = logging.getLogger(__name__)
