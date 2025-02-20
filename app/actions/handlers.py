@@ -1,4 +1,5 @@
 import logging
+from timeit import default_timer as timer
 from typing import Dict, List, Tuple
 
 from gundi_client_v2 import GundiClient
@@ -10,6 +11,7 @@ from app.actions.configurations import EdgeTechAuthConfiguration, EdgeTechConfig
 from app.actions.edgetech import EdgeTechClient
 from app.actions.edgetech.exceptions import InvalidCredentials
 from app.actions.edgetech.processor import EdgetTechProcessor
+from app.services.action_scheduler import crontab_schedule
 from app.services.activity_logger import activity_logger, log_action_activity
 from app.services.gundi import send_observations_to_gundi
 from app.services.utils import find_config_for_action
@@ -119,6 +121,7 @@ async def action_auth(
 
 
 @activity_logger()
+@crontab_schedule("*/5 * * * *")  # Run every 5 minutes
 async def action_pull_edgetech_observations(
     integration: Integration, action_config: EdgeTechConfiguration
 ):
