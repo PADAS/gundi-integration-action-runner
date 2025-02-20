@@ -1,6 +1,5 @@
 # conftest.py
 import json
-import time
 
 import pytest
 from gundi_core.schemas import IntegrationInformation

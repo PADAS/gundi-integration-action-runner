@@ -1,5 +1,4 @@
 import logging
-from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Tuple
 
 from gundi_client_v2 import GundiClient
@@ -20,6 +19,7 @@ LOAD_BATCH_SIZE = 100
 
 
 # --- Helper Functions ---
+
 
 def generate_batches(iterable: List, n: int = LOAD_BATCH_SIZE):
     """Yield successive n-sized batches from iterable."""
@@ -89,6 +89,7 @@ async def process_destination(
 
 
 # --- Main Handler Functions ---
+
 
 async def action_auth(
     integration: Integration, action_config: EdgeTechAuthConfiguration

@@ -1,6 +1,4 @@
-import asyncio
 import gzip
-import io
 import json
 import re
 import time
@@ -8,7 +6,6 @@ import time
 import pytest
 
 from app.actions.edgetech.client import EdgeTechClient
-from app.actions.edgetech.types import Buoy
 
 
 @pytest.mark.asyncio
