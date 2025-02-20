@@ -63,6 +63,7 @@ async def process_destination(
     :param integration: Integration object.
     :param data: Raw data from EdgeTechClient.
     :param destination: Destination object.
+    :return: Length of the observations list.
     """
     logger.info(
         f"Executing pull action for integration {integration} and destination {destination}..."
@@ -86,7 +87,7 @@ async def process_destination(
     logger.info(
         f"Downloaded {len(data)} records from EdgeTech API for integration {integration}"
     )
-
+    return len(observations)
 
 # --- Main Handler Functions ---
 
@@ -138,5 +139,13 @@ async def action_pull_edgetech_observations(
     edgetech_client = EdgeTechClient(auth_config=auth_config, pull_config=action_config)
     data = await edgetech_client.download_data()
 
+    total_observations = 0
     for destination in connection_details.destinations:
-        await process_destination(gundi_client, integration, data, destination)
+        total_observations += await process_destination(
+            gundi_client, integration, data, destination
+        )
+
+    return {
+        "observations_extracted": len(data),
+        "observations_sent": total_observations,
+    }
