@@ -56,7 +56,7 @@ async def action_pull_observations(
     sync_interval_minutes = 5
     start_datetime = current_datetime - timedelta(minutes=sync_interval_minutes)
     start_datetime_str = start_datetime.strftime("%Y-%m-%d %H:%M:%S")
-    end_datetime = current_datetime + timedelta(minutes=sync_interval_minutes)
+    end_datetime = current_datetime
     end_datetime_str = end_datetime.strftime("%Y-%m-%d %H:%M:%S")
 
     # TODO: Create sub-actions for each destination
@@ -168,12 +168,14 @@ async def action_pull_observations_24_hour_sync(
     current_datetime = datetime.now()
     start_datetime = current_datetime - timedelta(minutes=sync_interval_minutes)
     start_datetime_str = start_datetime.strftime("%Y-%m-%d %H:%M:%S")
-    end_datetime = current_datetime + timedelta(minutes=sync_interval_minutes)
+    end_datetime = current_datetime
     end_datetime_str = end_datetime.strftime("%Y-%m-%d %H:%M:%S")
 
     # TODO: Create sub-actions for each destination
     total_observations = []
-    for destination in integration.destinations:
+    _client = GundiClient()
+    connection_details = await _client.get_connection_details(integration.id)
+    for destination in connection_details.destinations:
         environment = Environment(destination.name)
         er_token, er_destination = await get_er_token_and_site(integration, environment)
 

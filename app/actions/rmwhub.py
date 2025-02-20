@@ -776,7 +776,9 @@ class RmwHubAdapter:
         name_to_subject_mapping = {}
         for subject in er_subjects:
             if subject.get("name"):
-                name_to_subject_mapping[self.clean_id_str(subject.get("id"))] = subject
+                name_to_subject_mapping[
+                    await self.clean_id_str(subject.get("id"))
+                ] = subject
             else:
                 msg = "Cannot clean string. Subject name is empty."
                 await log_action_activity(
@@ -806,6 +808,8 @@ class RmwHubAdapter:
             .replace("rmwhub_", "")
             .replace("rmw_", "")
             .replace("e_", "")
+            .replace("edgetech_", "")
+            .lower()
         )
         return cleaned_str
 
