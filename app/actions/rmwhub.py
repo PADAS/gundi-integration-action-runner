@@ -467,16 +467,25 @@ class RmwHubAdapter:
 
             # Create new updates from ER data for upload to RMWHub, and collect set ID to update ER.
             updated_gearset = await self._create_rmw_update_from_er_subject(subject)
-            new_observations.extend(
-                await self._create_put_er_set_id_observation(
-                    subject, updated_gearset.id
-                )
-            )
 
-            updates.append(updated_gearset)
-            logger.info(
-                f"Processed new gear set for set ID {updated_gearset.id} from ER subject ID: {subject.get('id')}."
-            )
+            if not updated_gearset.traps:
+                await log_action_activity(
+                    integration_id=self.integration_id,
+                    action_id="pull_observations",
+                    title=f"No devices found for ER subject ID: {subject.get('id')}.",
+                    level=LogLevel.ERROR,
+                )
+            else:
+                new_observations.extend(
+                    await self._create_put_er_set_id_observation(
+                        subject, updated_gearset.id
+                    )
+                )
+                updates.append(updated_gearset)
+
+                logger.info(
+                    f"Processed new gear set for set ID {updated_gearset.id} from ER subject ID: {subject.get('id')}."
+                )
 
         # Handle updates to RMW
         for display_id in er_updates:
@@ -497,10 +506,18 @@ class RmwHubAdapter:
                 subject, rmw_gearset
             )
 
-            updates.append(updated_gearset)
-            logger.info(
-                f"Processed update for gear set with set ID {updated_gearset.id} from ER subject ID: {subject['id']}."
-            )
+            if not updated_gearset.traps:
+                await log_action_activity(
+                    integration_id=self.integration_id,
+                    action_id="pull_observations",
+                    title=f"No devices found for ER subject ID: {subject.get('id')}.",
+                    level=LogLevel.ERROR,
+                )
+            else:
+                updates.append(updated_gearset)
+                logger.info(
+                    f"Processed update for gear set with set ID {updated_gearset.id} from ER subject ID: {subject['id']}."
+                )
 
         response = await self._upload_data(updates)
 
@@ -694,7 +711,15 @@ class RmwHubAdapter:
             "devices"
         ):
             logger.error(f"No traps found for trap ID {er_subject.get('name')}.")
-            return {}
+            return GearSet(
+                vessel_id="",
+                id="",
+                deployment_type="",
+                traps_in_set=-1,
+                trawl_path="",
+                share_with=[],
+                traps=traps,
+            )
 
         deployed = er_subject.get("is_active")
 
