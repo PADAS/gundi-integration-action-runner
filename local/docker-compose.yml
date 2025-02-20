@@ -1,0 +1,65 @@
+
+services:
+
+  redis:
+    image: redis:latest
+    container_name: redis_server
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping"]
+      interval: 15s
+      timeout: 15s
+      retries: 10
+
+  pubsub_emulator:
+    image: google/cloud-sdk:latest
+    container_name: pubsub_emulator
+    entrypoint: ["gcloud", "beta", "emulators", "pubsub", "start", "--project=local-project", "--host-port=0.0.0.0:8085"]
+    environment:
+      PUBSUB_PROJECT_ID: local-project
+      PUBSUB_EMULATOR_HOST: pubsub_emulator:8085
+    ports:
+      - "8085:8085"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://0.0.0.0:8085/"]
+      interval: 15s
+      timeout: 15s
+      retries: 10
+
+  pubsub_topic_initializer:
+      image: curlimages/curl:latest
+      container_name: pubsub_topic_initializer
+      depends_on:
+        pubsub_emulator:
+          condition: service_healthy
+      entrypoint: ["sh", "-c"]
+      command: ["source /helpers/create_subscriptions.sh"]
+      volumes:
+        - ./helpers:/helpers
+  fastapi:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: devimage
+    container_name: fastapi_server
+    ports:
+      - "8080:8080"
+      - "5678:5678"
+    volumes:
+      - ../app:/code/app
+    env_file:
+      - path: ".env.local"
+        required: true
+    depends_on:
+      redis:
+        condition: service_healthy
+      pubsub_emulator:
+        condition: service_healthy
+      pubsub_topic_initializer:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://0.0.0.0:8080/"]
+      interval: 15s
+      timeout: 15s
+      retries: 10
