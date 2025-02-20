@@ -9,7 +9,7 @@ from typing import List
 
 import aiohttp
 
-from app.actions.configurations import EdgeTechConfiguration
+from app.actions.configurations import EdgeTechAuthConfiguration, EdgeTechConfiguration
 from app.actions.edgetech.types import Buoy
 
 logger = logging.getLogger(__name__)
@@ -24,7 +24,13 @@ class EdgeTechClient:
     and other parameters.
     """
 
-    def __init__(self, config: EdgeTechConfiguration, *args, **kwargs):
+    def __init__(
+        self,
+        auth_config: EdgeTechAuthConfiguration,
+        pull_config: EdgeTechConfiguration,
+        *args,
+        **kwargs,
+    ):
         """
         Initialize an EdgeTechClient instance with the given configuration.
 
@@ -33,8 +39,9 @@ class EdgeTechClient:
             *args: Additional positional arguments.
             **kwargs: Additional keyword arguments.
         """
-        self._token_json = json.loads(config.token_json.get_secret_value())
-        self._config = config
+        self._token_json = json.loads(auth_config.token_json.get_secret_value())
+        self._auth_config = auth_config
+        self._pull_config = pull_config
 
     def _set_token(self, token_response, refresh_token=None, *args, **kwargs):
         """
@@ -68,23 +75,23 @@ class EdgeTechClient:
         refresh_token = self._token_json.get("refresh_token")
 
         refresh_params = {
-            "client_id": self._config.client_id,
+            "client_id": self._auth_config.client_id,
             "refresh_token": refresh_token,
-            "redirect_uri": self._config.redirect_uri,
-            "scope": self._config.scope,
+            "redirect_uri": self._auth_config.redirect_uri,
+            "scope": self._auth_config.scope,
             "grant_type": "refresh_token",
         }
 
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                self._config.token_url, data=refresh_params
+                self._auth_config.token_url, data=refresh_params
             ) as response:
                 token_response = await response.json()
                 self._set_token(token_response, self._token_json["refresh_token"])
 
         return self._token_json
 
-    async def _get_token(self) -> dict:
+    async def get_token(self) -> dict:
         """
         Retrieve a valid authentication token, refreshing it if expired.
 
@@ -118,7 +125,7 @@ class EdgeTechClient:
         Raises:
             ValueError: If the API responses are invalid or missing required headers.
         """
-        token = await self._get_token()
+        token = await self.get_token()
 
         access_token = token["access_token"]
 
@@ -126,7 +133,9 @@ class EdgeTechClient:
 
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                self._config.database_dump_url, headers=headers, allow_redirects=False
+                self._pull_config.database_dump_url,
+                headers=headers,
+                allow_redirects=False,
             ) as start_response:
                 if start_response.status != 303:
                     raise ValueError(f"Invalid response: {start_response.status}")
@@ -135,11 +144,11 @@ class EdgeTechClient:
                 if not dump_location:
                     raise ValueError("Missing Location header in response")
 
-            dump_url = f"{self._config.api_base_url}{dump_location}"
+            dump_url = f"{self._pull_config.api_base_url}{dump_location}"
 
-            for attempt in range(self._config.num_get_retry):
+            for attempt in range(self._pull_config.num_get_retry):
                 logger.debug(
-                    f"Get Dump Attempt {attempt + 1}/{self._config.num_get_retry}"
+                    f"Get Dump Attempt {attempt + 1}/{self._pull_config.num_get_retry}"
                 )
                 async with session.get(
                     dump_url, headers=headers, allow_redirects=False

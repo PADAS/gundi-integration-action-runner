@@ -13,16 +13,16 @@ from app.actions.edgetech.types import Buoy
 
 @pytest.mark.asyncio
 async def test_download_data_success(
-    mocker, a_good_configuration, get_mock_edgetech_data
+    mocker, a_good_pull_configuration, a_good_auth_configuration, get_mock_edgetech_data
 ):
     """
     Verify that EdgeTechClient.download_data returns a list of Buoy objects
     when the HTTP interactions complete successfully.
     """
     # Ensure the token is valid by updating its expiry.
-    token_data = json.loads(a_good_configuration.token_json.get_secret_value())
+    token_data = json.loads(a_good_auth_configuration.token_json.get_secret_value())
     token_data["expires_at"] = time.time() + 3600  # valid for one hour
-    a_good_configuration.token_json = type(a_good_configuration.token_json)(
+    a_good_auth_configuration.token_json = type(a_good_auth_configuration.token_json)(
         json.dumps(token_data)
     )
 
@@ -61,7 +61,7 @@ async def test_download_data_success(
 
         def post(self, url, **kwargs):
             # The client uses the database_dump_url property.
-            if url == a_good_configuration.database_dump_url:
+            if url == a_good_pull_configuration.database_dump_url:
                 # Simulate a 303 redirect with a dump location.
                 return FakeResponse(303, {"Location": "/dump/location"})
             return FakeResponse(200, {})
@@ -90,12 +90,14 @@ async def test_download_data_success(
 
     # Patch ClientSession and asyncio.sleep.
     fake_session = FakeSession(
-        a_good_configuration.api_base_url, get_mock_edgetech_data
+        a_good_pull_configuration.api_base_url, get_mock_edgetech_data
     )
     mocker.patch("aiohttp.ClientSession", return_value=fake_session)
     mocker.patch("asyncio.sleep", return_value=None)
 
-    client = EdgeTechClient(a_good_configuration)
+    client = EdgeTechClient(
+        pull_config=a_good_pull_configuration, auth_config=a_good_auth_configuration
+    )
     buoys = await client.download_data()
 
     # Validate that we received Buoy objects and that one key property matches.
@@ -105,15 +107,17 @@ async def test_download_data_success(
 
 
 @pytest.mark.asyncio
-async def test_download_data_invalid_initial_response(mocker, a_good_configuration):
+async def test_download_data_invalid_initial_response(
+    mocker, a_good_pull_configuration, a_good_auth_configuration
+):
     """
     Verify that EdgeTechClient.download_data raises a ValueError if the initial POST
     does not return a 303 status.
     """
-    a_good_configuration.num_get_retry = 1
-    token_data = json.loads(a_good_configuration.token_json.get_secret_value())
+    a_good_pull_configuration.num_get_retry = 1
+    token_data = json.loads(a_good_auth_configuration.token_json.get_secret_value())
     token_data["expires_at"] = time.time() + 3600  # token valid
-    a_good_configuration.token_json = type(a_good_configuration.token_json)(
+    a_good_auth_configuration.token_json = type(a_good_auth_configuration.token_json)(
         json.dumps(token_data)
     )
 
@@ -143,7 +147,9 @@ async def test_download_data_invalid_initial_response(mocker, a_good_configurati
             return FakeResponse(200, {})
 
     mocker.patch("aiohttp.ClientSession", return_value=FakeSession())
-    client = EdgeTechClient(a_good_configuration)
+    client = EdgeTechClient(
+        pull_config=a_good_pull_configuration, auth_config=a_good_auth_configuration
+    )
     with pytest.raises(ValueError, match="Invalid response: 400"):
         await client.download_data()
 

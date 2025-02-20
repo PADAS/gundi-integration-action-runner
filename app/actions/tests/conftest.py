@@ -7,7 +7,7 @@ from gundi_core.schemas import IntegrationInformation
 from gundi_core.schemas.v2 import Connection, ConnectionIntegration
 from pydantic import SecretStr
 
-from app.actions.configurations import EdgeTechConfiguration
+from app.actions.configurations import EdgeTechAuthConfiguration, EdgeTechConfiguration
 from app.actions.edgetech.types import Buoy
 from ropeless_utils import State
 
@@ -43,19 +43,25 @@ def a_good_integration(a_good_state):
 
 
 @pytest.fixture
-def a_good_configuration():
+def a_good_auth_configuration():
     token_data = {
         "access_token": "dummy_token",
         "refresh_token": "dummy_refresh",
         "expires_in": 86400,
         "expires_at": 1739552948.0993779,
     }
-    return EdgeTechConfiguration(
+    return EdgeTechAuthConfiguration(
         token_json=SecretStr(json.dumps(token_data)),
         api_base_url="https://edgetech.api/",
         client_id="client123",
         redirect_uri="https://redirect.uri/",
         token_url="https://edgetech.api/token",
+    )
+
+@pytest.fixture
+def a_good_pull_configuration():
+    return EdgeTechConfiguration(
+        api_base_url="https://edgetech.api/",
     )
 
 
