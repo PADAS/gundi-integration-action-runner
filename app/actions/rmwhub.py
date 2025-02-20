@@ -679,7 +679,7 @@ class RmwHubAdapter:
 
         if response.status_code == 200:
             logger.info("Upload to RMW Hub API was successful.")
-            result = json.loads(response.text)
+            result = json.loads(response.content)
             if len(result["result"]):
                 logger.info(
                     f"Number of traps uploaded: {result['result']['trap_count']}"
@@ -898,13 +898,13 @@ class RmwHubClient:
 
         return response.text
 
-    async def upload_data(self, updates: List) -> str:
+    async def upload_data(self, updates: List) -> httpx.Response:
         """
         Upload data to the RMWHub API using the upload_data endpoint.
         ref: https://ropeless.network/api/docs
         """
 
-        url = self.rmw_url + "/upload_data/"
+        url = self.rmw_url + "/upload_deployments/"
 
         upload_data = {
             "format_version": 0,
@@ -912,14 +912,14 @@ class RmwHubClient:
             "sets": updates,
         }
 
-        with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient() as client:
             response = await client.post(
                 url, headers=RmwHubClient.HEADERS, json=upload_data
             )
 
         if response.status_code != 200:
             logger.error(
-                f"Failed to upload data to RMW Hub API. Error: {response.status_code} - {response.text}"
+                f"Failed to upload data to RMW Hub API. Error: {response.status_code} - {response.content}"
             )
 
-        return response.text
+        return response
