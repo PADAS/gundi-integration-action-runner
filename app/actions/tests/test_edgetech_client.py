@@ -151,24 +151,93 @@ async def test_download_data_invalid_initial_response(
         await client.download_data()
 
 
-@pytest.mark.asyncio
-async def test_buoy_create_observation(mock_edgetech_items):
-    """
-    Verify that a Buoy instance correctly builds an observation dictionary using
-    the create_observation method.
-    """
-    buoy = mock_edgetech_items[0]
-    prefix = "TEST-"
-    observation = buoy.create_observation(prefix)
+import re
 
-    expected_name = f"{prefix}{buoy.serialNumber}"
-    assert observation["name"] == expected_name
-    assert observation["source"] == expected_name
-    assert observation["type"] == "ropeless_buoy"
-    assert observation["subject_type"] == "ropeless_buoy_device"
+import pytest
+
+
+@pytest.mark.asyncio
+async def test_buoy_create_observations_single(mock_edgetech_items):
+    """
+    Verify that a Buoy instance correctly builds a list with a single observation
+    when end coordinates are not provided.
+    """
+    buoy = mock_edgetech_items[0]  # Buoy without endLatDeg and endLonDeg
+    prefix = "TEST-"
+    observations = buoy.create_observations(prefix)
+
+    # There should be only one observation (_A)
+    assert len(observations) == 1
+    obs_a = observations[0]
+    expected_name = f"{prefix}{buoy.serialNumber}_A"
+    assert obs_a["name"] == expected_name
+    assert obs_a["source"] == expected_name
+    assert obs_a["type"] == "ropeless_buoy"
+    assert obs_a["subject_type"] == "ropeless_buoy_device"
+    # Validate that recorded_at follows ISO format
     assert re.match(
         r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?$",
-        observation["recorded_at"],
+        obs_a["recorded_at"],
     )
-    assert observation["location"]["lat"] == buoy.currentState.latDeg
-    assert observation["location"]["lon"] == buoy.currentState.lonDeg
+    # Validate location from currentState (latDeg and lonDeg)
+    assert obs_a["location"]["lat"] == buoy.currentState.latDeg
+    assert obs_a["location"]["lon"] == buoy.currentState.lonDeg
+    # Validate additional.devices list
+    devices = obs_a["additional"]["devices"]
+    assert isinstance(devices, list)
+    assert len(devices) == 1
+    device_a = devices[0]
+    assert device_a["label"] == "a"
+    assert device_a["location"]["latitude"] == buoy.currentState.latDeg
+    assert device_a["location"]["longitude"] == buoy.currentState.lonDeg
+    assert device_a["device_id"] == expected_name
+
+
+@pytest.mark.asyncio
+async def test_buoy_create_observations_trawl(mock_edgetech_items):
+    """
+    Verify that a Buoy instance correctly builds a list with two observations
+    when end coordinates are provided.
+    """
+    buoy = mock_edgetech_items[1]  # Buoy with endLatDeg and endLonDeg provided
+    prefix = "TEST-"
+    observations = buoy.create_observations(prefix)
+
+    # There should be two observations: one for device A and one for device B
+    assert len(observations) == 2
+
+    # Observation for device A
+    obs_a = observations[0]
+    expected_name_a = f"{prefix}{buoy.serialNumber}_A"
+    assert obs_a["name"] == expected_name_a
+    assert obs_a["source"] == expected_name_a
+    assert obs_a["location"]["lat"] == buoy.currentState.latDeg
+    assert obs_a["location"]["lon"] == buoy.currentState.lonDeg
+
+    # Observation for device B
+    obs_b = observations[1]
+    expected_name_b = f"{prefix}{buoy.serialNumber}_B"
+    assert obs_b["name"] == expected_name_b
+    assert obs_b["source"] == expected_name_b
+    assert obs_b["location"]["lat"] == buoy.currentState.endLatDeg
+    assert obs_b["location"]["lon"] == buoy.currentState.endLonDeg
+
+    # Both observations should share the same devices list containing two devices
+    devices_a = obs_a["additional"]["devices"]
+    devices_b = obs_b["additional"]["devices"]
+    assert devices_a == devices_b
+    assert len(devices_a) == 2
+
+    # Validate device A details
+    device_a = devices_a[0]
+    assert device_a["label"] == "a"
+    assert device_a["location"]["latitude"] == buoy.currentState.latDeg
+    assert device_a["location"]["longitude"] == buoy.currentState.lonDeg
+    assert device_a["device_id"] == expected_name_a
+
+    # Validate device B details
+    device_b = devices_a[1]
+    assert device_b["label"] == "b"
+    assert device_b["location"]["latitude"] == buoy.currentState.endLatDeg
+    assert device_b["location"]["longitude"] == buoy.currentState.endLonDeg
+    assert device_b["device_id"] == expected_name_b

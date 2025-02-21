@@ -49,13 +49,13 @@ class DummyERSubject:
 # Patch the Buoy.create_observation method on the class to return a predictable value.
 @pytest.fixture(autouse=True)
 def patch_create_observation():
-    original_method = Buoy.create_observation
-    Buoy.create_observation = lambda self, prefix: {
-        "name": f"{prefix}{self.serialNumber}"
-    }
+    original_method = Buoy.create_observations
+    Buoy.create_observations = lambda self, prefix: [
+        {"name": f"{prefix}{self.serialNumber}"}
+    ]
     yield
     # Restore the original method after the test runs.
-    Buoy.create_observation = original_method
+    Buoy.create_observations = original_method
 
 
 @pytest.mark.asyncio

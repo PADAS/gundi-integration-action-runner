@@ -143,7 +143,6 @@ def mock_edgetech_items():
             currentState={
                 "etag": '"1669654965656"',
                 "isDeleted": False,
-                "positionSetByCapri": False,
                 "serialNumber": "88CE99B3CC",
                 "releaseCommand": "88CE99B3CD",
                 "statusCommand": "88CE99B3CC",
@@ -153,6 +152,8 @@ def mock_edgetech_items():
                 "isDeployed": False,
                 "dateRecovered": "2022-10-12T14:51:56.561Z",
                 "lastUpdated": "2022-11-28T17:02:45.656Z",
+                "latDeg": 0.0,
+                "lonDeg": 0.0,
             },
             changeRecords=[],
         ),
@@ -161,7 +162,6 @@ def mock_edgetech_items():
             currentState={
                 "etag": '"1718360079500"',
                 "isDeleted": False,
-                "positionSetByCapri": False,
                 "serialNumber": "88CE99C8AB",
                 "releaseCommand": "C8AB8CCBAB",
                 "statusCommand": "88CE99C8AB",

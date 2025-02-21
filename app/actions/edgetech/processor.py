@@ -205,8 +205,8 @@ class EdgetTechProcessor:
             buoy_state = buoy_states[serial_number]
             logger.info(f"Inserting new buoy: {serial_number}")
             try:
-                new_observations = buoy_state.create_observation(self._prefix)
-                observations.append(new_observations)
+                new_observations = buoy_state.create_observations(self._prefix)
+                observations.extend(new_observations)
             except pydantic.ValidationError as ve:
                 logger.exception(
                     "Failed making BuoyEvent for %s. Error: %s",
@@ -227,8 +227,8 @@ class EdgetTechProcessor:
                 # Update ER subject
                 logger.info(f"Updating buoy: {serial_number}")
                 try:
-                    new_observations = buoy_state.create_observation(self._prefix)
-                    observations.append(new_observations)
+                    new_observations = buoy_state.create_observations(self._prefix)
+                    observations.extend(new_observations)
                 except pydantic.ValidationError as ve:
                     logger.exception(
                         "Failed updating BuoyEvent for %s. Error: %s",
