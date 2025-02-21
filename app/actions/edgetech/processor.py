@@ -93,9 +93,10 @@ class EdgetTechProcessor:
         Determine whether an ER subject and a Buoy record represent equivalent device states.
 
         The comparison checks the following:
-            1. Matching serial numbers (handling an 'edgetech_' prefix if present).
+            1. Matching serial numbers (handling a '_A' or '_B' suffix if present).
             2. Matching active state versus deletion status.
             3. Matching geographic location if available.
+
         Args:
             er_subject (ObservationSubject): The ER system's subject representing a device observation.
             buoy (Buoy): The buoy object containing current state information.
@@ -104,11 +105,14 @@ class EdgetTechProcessor:
             bool: True if the ER subject and the buoy record are equivalent; otherwise, False.
         """
         # (1) Serial Number:
-
         if er_subject.name.startswith(self._prefix):
             obs_serial = er_subject.name[len(self._prefix) :]
         else:
             obs_serial = er_subject.name
+
+        # Remove potential suffix "_A" or "_B" if present
+        if obs_serial.endswith("_A") or obs_serial.endswith("_B"):
+            obs_serial = obs_serial[:-2]
 
         if obs_serial != buoy.serialNumber:
             return False
@@ -130,22 +134,30 @@ class EdgetTechProcessor:
         ):
             obs_lon, obs_lat = er_subject.last_position.geometry.coordinates
 
-            if buoy.currentState.latDeg is None or buoy.currentState.lonDeg is None:
+            # Determine which buoy coordinates to compare based on the subject suffix.
+            if er_subject.name.endswith("_B"):
+                buoy_lat = buoy.currentState.endLatDeg
+                buoy_lon = buoy.currentState.endLonDeg
+            else:
+                buoy_lat = buoy.currentState.latDeg
+                buoy_lon = buoy.currentState.lonDeg
+
+            if buoy_lat is None or buoy_lon is None:
                 return False
 
             tolerance = 0.0001
             if (
-                abs(obs_lat - buoy.currentState.latDeg) > tolerance
-                or abs(obs_lon - buoy.currentState.lonDeg) > tolerance
+                abs(obs_lat - buoy_lat) > tolerance
+                or abs(obs_lon - buoy_lon) > tolerance
             ):
                 return False
         else:
+            # If ER subject has no location, then the buoy should also have no primary location.
             if (
                 buoy.currentState.latDeg is not None
                 or buoy.currentState.lonDeg is not None
             ):
                 return False
-
 
         return True
 
@@ -156,7 +168,7 @@ class EdgetTechProcessor:
         This asynchronous method performs the following steps:
             1. Retrieves the latest buoy states grouped by serial number.
             2. Fetches existing ER subjects from the ER client.
-            3. Maps ER subjects by serial number and categorizes buoy states into:
+            3. Maps ER subjects by name and categorizes buoy states into:
                 - Inserts: Buoys not present in ER.
                 - Updates: Buoys present in ER that require updating.
                 - No-ops: Buoys present in ER with equivalent data.
@@ -170,10 +182,9 @@ class EdgetTechProcessor:
             pydantic.ValidationError: If validation fails when creating buoy observation events.
         """
         buoy_states = self._get_newest_buoy_states()
-
         er_subjects = await self._er_client.get_er_subjects()
 
-        # Create maps of ER subjects by serial number
+        # Create a map of ER subjects by name.
         er_subject_mapping = {subject.name: subject for subject in er_subjects}
         er_subject_names = set(er_subject_mapping.keys())
 
@@ -193,14 +204,16 @@ class EdgetTechProcessor:
                     f"Skipping buoy {serial_number} with missing location data"
                 )
                 continue
-            if f"{self._prefix}{serial_number}" in er_subject_names:
-                # Buoy exists in ER, so update it
+
+            primary_subject_name = f"{self._prefix}{serial_number}_A"
+            if primary_subject_name in er_subject_names:
+                # Buoy exists in ER, so update it.
                 update_buoys.add(serial_number)
             else:
-                # Buoy does not exist in ER, insert it
+                # Buoy does not exist in ER, insert it.
                 insert_buoys.add(serial_number)
 
-        # Process inserts
+        # Process inserts.
         for serial_number in insert_buoys:
             buoy_state = buoy_states[serial_number]
             logger.info(f"Inserting new buoy: {serial_number}")
@@ -214,17 +227,17 @@ class EdgetTechProcessor:
                     ve.json(),
                 )
 
-        # Process updates
+        # Process updates.
         for serial_number in update_buoys:
             buoy_state = buoy_states[serial_number]
-            buoy_subject_name = f"{self._prefix}{serial_number}"
-            er_subject = er_subject_mapping.get(buoy_subject_name)
+            primary_subject_name = f"{self._prefix}{serial_number}_A"
+            er_subject = er_subject_mapping.get(primary_subject_name)
             if self._are_equivalent(er_subject, buoy_state):
-                # No-op, data is already up to date
+                # No-op: data is already up to date.
                 noop_buoys.add(serial_number)
                 logger.info(f"No changes needed for buoy: {serial_number}")
             else:
-                # Update ER subject
+                # Update ER subject.
                 logger.info(f"Updating buoy: {serial_number}")
                 try:
                     new_observations = buoy_state.create_observations(self._prefix)
