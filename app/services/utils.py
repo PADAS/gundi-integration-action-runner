@@ -1,9 +1,8 @@
 import struct
-from typing import Annotated
 import typing
 from pydantic import create_model, BaseModel
 from pydantic.fields import Field, FieldInfo, Undefined, NoArgAnyCallable
-from typing import Any, Dict, Optional, Union, List
+from typing import Any, Dict, Optional, Union, List, Annotated
 
 
 def find_config_for_action(configurations, action_id):
@@ -373,3 +372,8 @@ class UISchemaModelMixin:
             definitions.pop(field, None)
         json_schema_dict['definitions'] = definitions
         return json_schema_dict
+
+
+def generate_batches(iterable, batch_size):
+    for i in range(0, len(iterable), batch_size):
+        yield iterable[i: i + batch_size]

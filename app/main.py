@@ -7,7 +7,7 @@ from fastapi import FastAPI, Request, status, BackgroundTasks
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from app.routers import actions, webhooks
+from app.routers import actions, webhooks, config_events
 import app.settings as settings
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -101,6 +101,9 @@ app.include_router(
 )
 app.include_router(
     webhooks.router, prefix="/webhooks", tags=["webhooks"], responses={}
+)
+app.include_router(
+    config_events.router, prefix="/config-events", tags=["configurations"], responses={}
 )
 
 
