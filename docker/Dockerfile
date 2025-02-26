@@ -11,6 +11,10 @@ COPY ./app app/
 
 FROM baseimage AS devimage
 
+COPY requirements-dev.in .
+RUN pip install -r /code/requirements-dev.in
+
+# Install debugpy for debugging
 RUN pip install debugpy
 
 # Expose debugpy port too
