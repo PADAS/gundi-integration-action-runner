@@ -1,19 +1,20 @@
 # actions/handlers.py
-from enum import Enum
 import logging
 from datetime import datetime, timedelta
+from enum import Enum
 from typing import Tuple
+
+from gundi_client_v2 import GundiClient
+from gundi_core import schemas
+from gundi_core.events import LogLevel
+from gundi_core.schemas.v2 import Integration
 
 from app.services.action_scheduler import crontab_schedule
 from app.services.activity_logger import activity_logger, log_activity
 from app.services.gundi import send_observations_to_gundi
 from app.services.utils import find_config_for_action
-from gundi_core import schemas
-from gundi_core.events import LogLevel
-from gundi_core.schemas.v2 import Integration
-from gundi_client_v2 import GundiClient
 
-from .configurations import PullRmwHubObservationsConfiguration, AuthenticateConfig
+from .configurations import AuthenticateConfig, PullRmwHubObservationsConfiguration
 from .rmwhub import RmwHubAdapter
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,7 @@ async def action_auth(integration: Integration, action_config: AuthenticateConfi
 async def action_pull_observations(
     integration, action_config: PullRmwHubObservationsConfiguration
 ):
+    action_config.rmw_url = "https://test.ropeless.network/api"
     current_datetime = datetime.now()
     sync_interval_minutes = 5
     start_datetime = current_datetime - timedelta(minutes=sync_interval_minutes)
@@ -123,11 +125,21 @@ async def action_pull_observations(
             )
 
         # Upload changes from ER to RMW Hub
-        put_set_id_observations, rmw_response = await rmw_adapter.process_rmw_upload(
-            rmwSets, start_datetime_str
-        )
+        try:
+            (
+                put_set_id_observations,
+                rmw_response,
+            ) = await rmw_adapter.process_rmw_upload(rmwSets, start_datetime_str)
+        except ValueError as e:
+            logger.error(f"Failed to upload changes to RMW Hub: {str(e)}")
+            put_set_id_observations = []
+            rmw_response = {}
+
         total_observations.extend(put_set_id_observations)
-        observations.extend(put_set_id_observations)
+        # TODO: Check if the uploaded observations to rmwhub should be added to the observations
+        # TODO: since when push_status_updates is called it won't find it in rmwSets
+        # TODO: (because it is an "own" gear, not "hub" gear)
+        # observations.extend(put_set_id_observations)
 
         # TODO: Handle failed response
         await log_activity(

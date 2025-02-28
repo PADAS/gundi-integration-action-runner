@@ -1,21 +1,21 @@
-from datetime import datetime, timedelta
-from enum import Enum
 import hashlib
-from typing import List, Optional, Tuple
-
 import json
 import logging
-import pytz
 import uuid
+from datetime import datetime, timedelta
+from enum import Enum
+from os import device_encoding
+from typing import List, Optional, Tuple
+
 import httpx
-import json
-from pydantic import NoneStr, validator, BaseModel
+import pytz
 import stamina
+from fastapi.encoders import jsonable_encoder
+from gundi_core.schemas.v2.gundi import LogLevel
+from pydantic import BaseModel, NoneStr, validator
 
 from app.actions.buoy import BuoyClient
 from app.services.activity_logger import log_action_activity
-from gundi_core.schemas.v2.gundi import LogLevel
-
 
 logger = logging.getLogger(__name__)
 
@@ -326,7 +326,6 @@ class RmwHubAdapter:
 
             # Process each trap individually
             for trap in gearset.traps:
-
                 if await gearset.is_visited(visited_inserts):
                     logger.info(
                         f"Skipping insert for trap ID {trap.id}. Already processed."
@@ -355,7 +354,6 @@ class RmwHubAdapter:
             logger.info(f"Rmw Set ID {gearset.id} found in ER subjects. Updating.")
 
             for trap in gearset.traps:
-
                 # Process each trap individually
                 if await gearset.is_visited(visited_updates):
                     logger.info(
@@ -723,8 +721,16 @@ class RmwHubAdapter:
 
         deployed = er_subject.get("is_active")
 
-        for device in er_subject.get("additional").get("devices"):
+        for device in er_subject.get("additional", {}).get("devices", []):
             # Use just the ID for the Trap ID if the gearset is originally from RMW
+            last_updated = device.get("last_updated")
+
+            if not last_updated:
+                logger.error(
+                    f"Device {device.get('device_id')} has no last updated time, skipping."
+                )
+                continue
+
             subject_name = er_subject.get("name")
             cleaned_id = await self.clean_id_str(subject_name)
             trap_id = (
@@ -732,6 +738,15 @@ class RmwHubAdapter:
                 if rmw_gearset and subject_name.startswith("rmw")
                 else "e_" + cleaned_id
             )
+            last_updated = self.convert_datetime_to_utc(device.get("last_updated"))
+            if deployed:
+                deploy_datetime_utc = last_updated
+                surface_datetime_utc = last_updated
+                retrieved_datetime_utc = None
+            else:
+                deploy_datetime_utc = None
+                surface_datetime_utc = None
+                retrieved_datetime_utc = last_updated
 
             traps.append(
                 Trap(
@@ -741,21 +756,9 @@ class RmwHubAdapter:
                     longitude=device.get("location").get("longitude"),
                     # TODO: Need workaround for using is_active status which will not be correct in ER for RMW data
                     # Solution: Use get latest observation for a subject by subject name.
-                    deploy_datetime_utc=self.convert_datetime_to_utc(
-                        device.get("last_updated")
-                    )
-                    if deployed
-                    else None,
-                    surface_datetime_utc=self.convert_datetime_to_utc(
-                        device.get("last_updated")
-                    )
-                    if deployed
-                    else None,
-                    retrieved_datetime_utc=self.convert_datetime_to_utc(
-                        device.get("last_updated")
-                    )
-                    if not deployed
-                    else None,
+                    deploy_datetime_utc=deploy_datetime_utc,
+                    surface_datetime_utc=surface_datetime_utc,
+                    retrieved_datetime_utc=retrieved_datetime_utc,
                     status="deployed" if deployed else "retrieved",
                     accuracy="",
                     is_on_end=True,
@@ -898,7 +901,7 @@ class RmwHubClient:
 
         return response.text
 
-    async def upload_data(self, updates: List) -> httpx.Response:
+    async def upload_data(self, updates: List[GearSet]) -> httpx.Response:
         """
         Upload data to the RMWHub API using the upload_data endpoint.
         ref: https://ropeless.network/api/docs
@@ -906,11 +909,15 @@ class RmwHubClient:
 
         url = self.rmw_url + "/upload_deployments/"
 
-        upload_data = {
-            "format_version": 0,
-            "api_key": self.api_key,
-            "sets": updates,
-        }
+        sets = [jsonable_encoder(updates) for updates in updates]
+
+        for set_entry in sets:
+            set_entry["set_id"] = set_entry.pop("id")
+            for trap in set_entry["traps"]:
+                trap["trap_id"] = trap.pop("id")
+                trap["release_type"] = trap.get("release_type") or ""
+
+        upload_data = {"format_version": 0, "api_key": self.api_key, "sets": sets}
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
