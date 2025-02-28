@@ -118,7 +118,8 @@ class GearSet(BaseModel):
                     "device_id": "rmwhub_"
                     + trap.id.replace("e_", "")
                     .replace("rmwhub_", "")
-                    .replace("device_", ""),
+                    .replace("device_", "")
+                    .replace("edgetech_", ""),
                     "label": "a" if trap.sequence == 1 else "b",
                     "location": {
                         "latitude": trap.latitude,
@@ -242,6 +243,19 @@ class RmwHubAdapter:
         response = await self.rmw_client.search_hub(
             start_datetime_str, minute_interval, status
         )
+
+        return self.convert_to_sets(response)
+
+    async def search_own(self):
+        """
+        Downloads data from the RMW Hub API using the search_own endpoint.
+        ref: https://ropeless.network/api/docs#/Download
+        """
+
+        response = await self.rmw_client.search_own()
+        return self.convert_to_sets(response)
+
+    def convert_to_sets(self, response: dict) -> RmwSets:
         response_json = json.loads(response)
 
         if "sets" not in response_json:
@@ -393,9 +407,7 @@ class RmwHubAdapter:
 
         return observations
 
-    async def process_rmw_upload(
-        self, rmw_sets: RmwSets, start_datetime_str
-    ) -> Tuple[List, dict]:
+    async def process_rmw_upload(self, start_datetime_str) -> Tuple[List, dict]:
         """
         Process the sets from the Buoy API and upload to RMWHub.
         Returns a list of new observations for Earthranger with the new RmwHub set IDs.
@@ -403,8 +415,14 @@ class RmwHubAdapter:
 
         logger.info("Processing updates to RMW Hub from ER...")
 
+        # Download data from search_own endpoint in RMWHub
+        rmw_sets = await self.search_own()
+
         # Normalize the extracted data into a list of updates following to the RMWHub schema:
         updates = []
+
+        # RF-755: Tech debt. Get gear to update is_active status
+        await self.er_client.get_gear()
 
         # Get updates from the last interval_minutes in ER
         er_subjects = await self.er_client.get_er_subjects(start_datetime_str)
@@ -504,16 +522,20 @@ class RmwHubAdapter:
             subject = id_to_er_subject_mapping.get(display_id)
             logger.info(f"Subject ID {subject.get('name')} found in RMW traps.")
 
-            if not subject.get("additional") and not subject.get("additional").get(
-                "rmwhub_set_id"
-            ):
+            # Get the latest observation for the subject
+            latest_observation = await self.er_client.get_latest_observation(
+                subject.get("id")
+            )
+
+            # TODO: fix
+            if not latest_observation["observation_details"]["rmwhub_set_id"]:
                 logger.error(f"Subject ID {subject.get('id')} has no RMWHub set ID.")
                 continue
 
+            rmwhub_set_id = latest_observation["observation_details"]["rmwhub_set_id"]
+
             # Create new updates from ER data for upload to RMWHub
-            rmw_gearset = rmw_set_id_to_gearset_mapping[
-                subject.get("additional").get("rmwhub_set_id")
-            ]
+            rmw_gearset = rmw_set_id_to_gearset_mapping[rmwhub_set_id]
             updated_gearset = await self._create_rmw_update_from_er_subject(
                 subject, rmw_gearset
             )
@@ -754,30 +776,32 @@ class RmwHubAdapter:
             )
             last_updated = self.convert_datetime_to_utc(device.get("last_updated"))
             if deployed:
-                deploy_datetime_utc = last_updated
-                surface_datetime_utc = last_updated
-                retrieved_datetime_utc = None
-            else:
-                deploy_datetime_utc = None
-                surface_datetime_utc = None
-                retrieved_datetime_utc = last_updated
-
-            traps.append(
-                Trap(
-                    id=trap_id,
-                    sequence=1 if device.get("label") == "a" else 2,
-                    latitude=device.get("location").get("latitude"),
-                    longitude=device.get("location").get("longitude"),
-                    # TODO: Need workaround for using is_active status which will not be correct in ER for RMW data
-                    # Solution: Use get latest observation for a subject by subject name.
-                    deploy_datetime_utc=deploy_datetime_utc,
-                    surface_datetime_utc=surface_datetime_utc,
-                    retrieved_datetime_utc=retrieved_datetime_utc,
-                    status="deployed" if deployed else "retrieved",
-                    accuracy="",
-                    is_on_end=True,
+                traps.append(
+                    Trap(
+                        id=trap_id,
+                        sequence=1 if device.get("label") == "a" else 2,
+                        latitude=device.get("location").get("latitude"),
+                        longitude=device.get("location").get("longitude"),
+                        deploy_datetime_utc=last_updated,
+                        surface_datetime_utc=last_updated,
+                        status="deployed",
+                        accuracy="",
+                        is_on_end=True,
+                    )
                 )
-            )
+            else:
+                traps.append(
+                    Trap(
+                        id=trap_id,
+                        sequence=1 if device.get("label") == "a" else 2,
+                        latitude=device.get("location").get("latitude"),
+                        longitude=device.get("location").get("longitude"),
+                        retrieved_datetime_utc=last_updated,
+                        status="retrieved",
+                        accuracy="",
+                        is_on_end=True,
+                    )
+                )
 
         # Create gear set:
         if not rmw_gearset:
@@ -915,6 +939,26 @@ class RmwHubClient:
 
         return response.text
 
+    async def search_own(self) -> dict:
+        """
+        Downloads data from the RMWHub API using the search_own endpoint.
+        ref: https://ropeless.network/api/docs#/Download
+        """
+
+        url = self.rmw_url + "/search_own/"
+
+        data = {"format_version": 0.1, "api_key": self.api_key}
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, headers=RmwHubClient.HEADERS, json=data)
+
+        if response.status_code != 200:
+            logger.error(
+                f"Failed to download data from RMW Hub API. Error: {response.status_code} - {response.text}"
+            )
+
+        return response.text
+
     async def upload_data(self, updates: List[GearSet]) -> httpx.Response:
         """
         Upload data to the RMWHub API using the upload_data endpoint.
@@ -935,7 +979,7 @@ class RmwHubClient:
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                url, headers=RmwHubClient.HEADERS, json=json.dumps(upload_data)
+                url, headers=RmwHubClient.HEADERS, json=upload_data
             )
 
         if response.status_code != 200:

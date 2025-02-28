@@ -128,7 +128,7 @@ async def action_pull_observations(
             (
                 put_set_id_observations,
                 rmw_response,
-            ) = await rmw_adapter.process_rmw_upload(rmwSets, start_datetime_str)
+            ) = await rmw_adapter.process_rmw_upload(start_datetime_str)
         except ValueError as e:
             logger.error(f"Failed to upload changes to RMW Hub: {str(e)}")
             put_set_id_observations = []
