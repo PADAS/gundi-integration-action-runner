@@ -4,7 +4,6 @@ import logging
 import uuid
 from datetime import datetime, timedelta
 from enum import Enum
-from os import device_encoding
 from typing import List, Optional, Tuple
 
 import httpx
@@ -420,7 +419,8 @@ class RmwHubAdapter:
             return [], {}
 
         id_to_er_subject_mapping = dict(
-            (subject["additional"]["display_id"], subject) for subject in er_subjects
+            (subject["additional"].get("display_id"), subject)
+            for subject in er_subjects
         )
 
         # Get rmw trap IDs
@@ -448,9 +448,23 @@ class RmwHubAdapter:
                 continue
             # Use display_id for ER subjects to ensure uniqueness among gear sets
             elif await self.clean_id_str(subject_name) in rmw_trap_ids:
-                er_updates.add(subject["additional"]["display_id"])
+                if not subject.get("additional") or not subject.get("additional").get(
+                    "devices"
+                ):
+                    logger.error(
+                        f"Buoy does not have additional information: {subject.get('name')}."
+                    )
+                    continue
+                er_updates.add(subject["additional"].get("display_id"))
             else:
-                er_inserts.add(subject["additional"]["display_id"])
+                if not subject.get("additional") or not subject.get("additional").get(
+                    "devices"
+                ):
+                    logger.error(
+                        f"Buoy does not have additional information: {subject.get('name')}."
+                    )
+                    continue
+                er_inserts.add(subject["additional"].get("display_id"))
 
         logger.info(f"{len(er_inserts)} Inserts to rmwHub.")
         logger.info(f"{len(er_updates)} Updates to rmwHub.")
@@ -848,7 +862,7 @@ class RmwHubAdapter:
 
         datetime_obj = datetime.fromisoformat(datetime_str)
         datetime_obj = datetime_obj.astimezone(pytz.utc)
-        formatted_datetime = datetime_obj.strftime("%Y-%m-%dT%H:%M:%SZ")
+        formatted_datetime = datetime_obj.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
         return formatted_datetime
 
 
@@ -921,7 +935,7 @@ class RmwHubClient:
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                url, headers=RmwHubClient.HEADERS, json=upload_data
+                url, headers=RmwHubClient.HEADERS, json=json.dumps(upload_data)
             )
 
         if response.status_code != 200:
