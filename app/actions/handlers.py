@@ -248,7 +248,7 @@ async def action_pull_observations_24_hour_sync(
 
         # Upload changes from ER to RMW Hub
         put_set_id_observations, rmw_response = await rmw_adapter.process_rmw_upload(
-            rmwSets, start_datetime_str
+            start_datetime_str
         )
         total_observations.extend(put_set_id_observations)
         observations.extend(put_set_id_observations)
