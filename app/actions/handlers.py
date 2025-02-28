@@ -53,7 +53,6 @@ async def action_auth(integration: Integration, action_config: AuthenticateConfi
 async def action_pull_observations(
     integration, action_config: PullRmwHubObservationsConfiguration
 ):
-    action_config.rmw_url = "https://test.ropeless.network/api"
     current_datetime = datetime.now()
     sync_interval_minutes = 5
     start_datetime = current_datetime - timedelta(minutes=sync_interval_minutes)
