@@ -2,7 +2,7 @@ import hashlib
 import json
 import logging
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import List, Optional, Tuple
 
@@ -113,11 +113,12 @@ class GearSet(BaseModel):
 
         devices = []
         for trap in self.traps:
-            current_last_deployed = trap.deploy_datetime_utc
-            last_update = trap.get_latest_update_time().isoformat()
             last_deployed = (
-                last_update if trap.status == "deployed" else current_last_deployed
+                trap.get_latest_update_time().isoformat()
+                if trap.status == "deployed"
+                else trap.deploy_datetime_utc
             )
+
             devices.append(
                 {
                     "device_id": "rmwhub_"
@@ -222,13 +223,6 @@ class GearSet(BaseModel):
 
 class RmwSets(BaseModel):
     sets: List[GearSet]
-
-
-class MissingFieldsError(Exception):
-    fields: List[str]
-
-    def __init__(self, fields: List[str]):
-        self.fields = fields
 
 
 class RmwHubAdapter:
@@ -509,13 +503,8 @@ class RmwHubAdapter:
             logger.info(f"Subject ID {subject.get('name')} not found in RMW traps.")
 
             # Create new updates from ER data for upload to RMWHub, and collect set ID to update ER.
-            try:
-                updated_gearset = await self._create_rmw_update_from_er_subject(subject)
-            except MissingFieldsError as e:
-                logger.error(
-                    f"Subject ID {subject.get('id')} has missing fields: {e.fields}"
-                )
-                continue
+            updated_gearset = await self._create_rmw_update_from_er_subject(subject)
+
             if not updated_gearset.traps:
                 await log_action_activity(
                     integration_id=self.integration_id,
@@ -541,8 +530,8 @@ class RmwHubAdapter:
             logger.info(f"Subject ID {subject.get('name')} found in RMW traps.")
 
             # Get the latest observation for the subject
-            latest_observation = await self.er_client.get_latest_observation(
-                subject.get("id")
+            latest_observation = await self.er_client.get_latest_observations(
+                subject.get("id"), 1
             )
 
             # TODO: fix
@@ -554,16 +543,9 @@ class RmwHubAdapter:
 
             # Create new updates from ER data for upload to RMWHub
             rmw_gearset = rmw_set_id_to_gearset_mapping[rmwhub_set_id]
-
-            try:
-                updated_gearset = await self._create_rmw_update_from_er_subject(
-                    subject, rmw_gearset
-                )
-            except MissingFieldsError as e:
-                logger.error(
-                    f"Subject ID {subject.get('id')} has missing fields: {e.fields}"
-                )
-                continue
+            updated_gearset = await self._create_rmw_update_from_er_subject(
+                subject, rmw_gearset
+            )
 
             if not updated_gearset.traps:
                 await log_action_activity(
@@ -766,6 +748,25 @@ class RmwHubAdapter:
         Create new updates from ER data for upload to RMWHub.
         """
 
+        async def get_last_deployed_time():
+            observations = await self.er_client.get_latest_observations(
+                er_subject.get("id"), 10
+            )
+
+            if observations[0].get("observation_details") and observations[0].get(
+                "observation_details"
+            ).get("last_deployed"):
+                return observations[0].observation_details.last_deployed
+
+            for observation in observations:
+                details = observation.get("observation_details")
+                if "deploy" in details.get("event_type"):
+                    return observation.get("recorded_at")
+
+            logger.error("No deployment events found. Use null datetime.")
+            # Initialize a datetime object representing the Unix epoch
+            return datetime(1970, 1, 1, 0, 0, 0, tzinfo=timezone.utc).isoformat()
+
         # Create traps list:
         traps = []
         if not er_subject.get("additional") or not er_subject.get("additional").get(
@@ -787,17 +788,6 @@ class RmwHubAdapter:
 
         for device in additional_data.get("devices", []):
             # Use just the ID for the Trap ID if the gearset is originally from RMW
-            last_updated = device.get("last_updated")
-            last_deployed = device.get("last_deployed")
-            if not last_deployed:
-                raise MissingFieldsError(["additional.devices.last_deployed"])
-
-            if not last_updated:
-                logger.error(
-                    f"Device {device.get('device_id')} has no last updated time, skipping."
-                )
-                continue
-
             subject_name = er_subject.get("name")
             cleaned_id = await self.clean_id_str(subject_name)
             trap_id = (
@@ -805,7 +795,11 @@ class RmwHubAdapter:
                 if rmw_gearset and subject_name.startswith("rmw")
                 else "e_" + cleaned_id
             )
-            last_updated = self.convert_datetime_to_utc(device.get("last_updated"))
+
+            # TODO: This should use the subjects latest observation recorded at value
+            last_updated_utc = self.convert_datetime_to_utc(
+                er_subject.get("last_position_date")
+            )
             if deployed:
                 traps.append(
                     Trap(
@@ -813,22 +807,26 @@ class RmwHubAdapter:
                         sequence=1 if device.get("label") == "a" else 2,
                         latitude=device.get("location").get("latitude"),
                         longitude=device.get("location").get("longitude"),
-                        deploy_datetime_utc=last_deployed,
-                        surface_datetime_utc=last_updated,
+                        deploy_datetime_utc=last_updated_utc,
+                        surface_datetime_utc=last_updated_utc,
                         status="deployed",
                         accuracy="",
                         is_on_end=True,
                     )
                 )
             else:
+                last_deployed_utc = self.convert_datetime_to_utc(
+                    await get_last_deployed_time()
+                )
                 traps.append(
                     Trap(
                         id=trap_id,
                         sequence=1 if device.get("label") == "a" else 2,
                         latitude=device.get("location").get("latitude"),
                         longitude=device.get("location").get("longitude"),
-                        deploy_datetime_utc=last_deployed,
-                        retrieved_datetime_utc=last_updated,
+                        deploy_datetime_utc=last_deployed_utc,
+                        surface_datetime_utc=last_deployed_utc,
+                        retrieved_datetime_utc=last_updated_utc,
                         status="retrieved",
                         accuracy="",
                         is_on_end=True,
@@ -874,9 +872,9 @@ class RmwHubAdapter:
         name_to_subject_mapping = {}
         for subject in er_subjects:
             if subject.get("name"):
-                name_to_subject_mapping[await self.clean_id_str(subject.get("id"))] = (
-                    subject
-                )
+                name_to_subject_mapping[
+                    await self.clean_id_str(subject.get("id"))
+                ] = subject
             else:
                 msg = "Cannot clean string. Subject name is empty."
                 await log_action_activity(
@@ -998,8 +996,7 @@ class RmwHubClient:
         """
 
         url = self.rmw_url + "/upload_deployments/"
-
-        sets = [jsonable_encoder(updates) for updates in updates]
+        sets = [jsonable_encoder(update) for update in updates]
 
         for set_entry in sets:
             set_entry["set_id"] = set_entry.pop("id")
