@@ -541,6 +541,18 @@ class RmwHubAdapter:
 
             rmwhub_set_id = latest_observation["observation_details"]["rmwhub_set_id"]
 
+            if rmwhub_set_id not in rmw_set_id_to_gearset_mapping.keys():
+                logger.error(
+                    f"RMW Set ID {rmwhub_set_id} not found in RMW sets. No action."
+                )
+                log_action_activity(
+                    integration_id=self.integration_id,
+                    action_id="pull_observations",
+                    title=f"RMW Set ID {rmwhub_set_id} not found in RMW sets. No action.",
+                    level=LogLevel.ERROR,
+                )
+                continue
+
             # Create new updates from ER data for upload to RMWHub
             rmw_gearset = rmw_set_id_to_gearset_mapping[rmwhub_set_id]
             updated_gearset = await self._create_rmw_update_from_er_subject(
