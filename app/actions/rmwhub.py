@@ -535,7 +535,7 @@ class RmwHubAdapter:
             )
 
             # TODO: fix
-            if not latest_observation["observation_details"]["rmwhub_set_id"]:
+            if not latest_observation["observation_details"].get("rmwhub_set_id"):
                 logger.error(f"Subject ID {subject.get('id')} has no RMWHub set ID.")
                 continue
 
@@ -768,7 +768,7 @@ class RmwHubAdapter:
             if observations[0].get("observation_details") and observations[0].get(
                 "observation_details"
             ).get("last_deployed"):
-                return observations[0].observation_details.last_deployed
+                return observations[0].get("observation_details").get("last_deployed")
 
             for observation in observations:
                 details = observation.get("observation_details")
@@ -778,6 +778,16 @@ class RmwHubAdapter:
             logger.error("No deployment events found. Use null datetime.")
             # Initialize a datetime object representing the Unix epoch
             return datetime(1970, 1, 1, 0, 0, 0, tzinfo=timezone.utc).isoformat()
+
+        # Trap IDs must be atleast 32 characters and no more than 38 characters
+        async def validate_id_length(id_str: str):
+            target_length = 32
+            if len(id_str) < target_length:
+                logger.error(
+                    f"ID {id_str} is too short. Adding '#' to meet Trap ID length requirements."
+                )
+                return id_str.ljust(target_length, "#")
+            return id_str
 
         # Create traps list:
         traps = []
@@ -800,8 +810,10 @@ class RmwHubAdapter:
 
         for device in additional_data.get("devices", []):
             # Use just the ID for the Trap ID if the gearset is originally from RMW
+            # TODO: Use subject.id instead of subject.name for the trap ID
+            # TODO: Determine the effects of this^ change on the download/upload process
             subject_name = er_subject.get("name")
-            cleaned_id = await self.clean_id_str(subject_name)
+            cleaned_id = validate_id_length(await self.clean_id_str(subject_name))
             trap_id = (
                 cleaned_id
                 if rmw_gearset and subject_name.startswith("rmw")
@@ -917,6 +929,7 @@ class RmwHubAdapter:
             .replace("rmw_", "")
             .replace("e_", "")
             .replace("edgetech_", "")
+            .replace("#", "")
             .lower()
         )
         return cleaned_str
