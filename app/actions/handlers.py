@@ -123,23 +123,23 @@ async def action_pull_observations(
             )
 
         # Upload changes from ER to RMW Hub
-        put_set_id_observations, rmw_response = await rmw_adapter.process_rmw_upload(
-            rmwSets, start_datetime_str
-        )
-        total_observations.extend(put_set_id_observations)
-        observations.extend(put_set_id_observations)
+        # put_set_id_observations, rmw_response = await rmw_adapter.process_rmw_upload(
+        #     rmwSets, start_datetime_str
+        # )
+        # total_observations.extend(put_set_id_observations)
+        # observations.extend(put_set_id_observations)
 
-        # TODO: Handle failed response
-        await log_activity(
-            integration_id=integration.id,
-            action_id="pull_observations",
-            level=LogLevel.INFO,
-            title="Process upload to rmwHub completed.",
-            data={
-                "rmw_response": str(rmw_response),
-            },
-            config_data=action_config.dict(),
-        )
+        # # TODO: Handle failed response
+        # await log_activity(
+        #     integration_id=integration.id,
+        #     action_id="pull_observations",
+        #     level=LogLevel.INFO,
+        #     title="Process upload to rmwHub completed.",
+        #     data={
+        #         "rmw_response": str(rmw_response),
+        #     },
+        #     config_data=action_config.dict(),
+        # )
 
         # Send the extracted data to Gundi in batches
         for batch in generate_batches(observations):
@@ -236,23 +236,23 @@ async def action_pull_observations_24_hour_sync(
             )
 
         # Upload changes from ER to RMW Hub
-        put_set_id_observations, rmw_response = await rmw_adapter.process_rmw_upload(
-            rmwSets, start_datetime_str
-        )
-        total_observations.extend(put_set_id_observations)
-        observations.extend(put_set_id_observations)
+        # put_set_id_observations, rmw_response = await rmw_adapter.process_rmw_upload(
+        #     rmwSets, start_datetime_str
+        # )
+        # total_observations.extend(put_set_id_observations)
+        # observations.extend(put_set_id_observations)
 
-        # TODO: Handle failed response
-        await log_activity(
-            integration_id=integration.id,
-            action_id="pull_observations",
-            level=LogLevel.INFO,
-            title="Process upload to rmwHub completed.",
-            data={
-                "rmw_response": str(rmw_response),
-            },
-            config_data=action_config.dict(),
-        )
+        # # TODO: Handle failed response
+        # await log_activity(
+        #     integration_id=integration.id,
+        #     action_id="pull_observations",
+        #     level=LogLevel.INFO,
+        #     title="Process upload to rmwHub completed.",
+        #     data={
+        #         "rmw_response": str(rmw_response),
+        #     },
+        #     config_data=action_config.dict(),
+        # )
 
         # Send the extracted data to Gundi in batches
         for batch in generate_batches(observations):
