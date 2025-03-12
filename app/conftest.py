@@ -33,7 +33,7 @@ from app.actions import (
     AuthActionConfiguration,
     ExecutableActionMixin, InternalActionConfiguration,
 )
-from app.services.utils import GlobalUISchemaOptions, FieldWithUIOptions, UIOptions
+from app.services.utils import GlobalUISchemaOptions, FieldWithUIOptions, UIOptions, OptionalStringType
 from app.services.action_scheduler import CrontabSchedule
 from app.webhooks import (
     GenericJsonTransformConfig,
@@ -928,8 +928,10 @@ class MockPullActionConfiguration(PullActionConfiguration):
             widget="select",
         ),
     )
+    region_code: OptionalStringType = pydantic.Field(None, title="Region Code")
     ui_global_options = GlobalUISchemaOptions(
         order=[
+            "region_code",
             "lookback_days",
             "force_fetch",
         ],
