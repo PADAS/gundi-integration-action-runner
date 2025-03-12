@@ -51,7 +51,7 @@ class Buoy(pydantic.BaseModel):
 
     @property
     def deployed(self) -> bool:
-        return self.currentState.isDeployed or not self.currentState.isDeleted
+        return self.currentState.isDeployed and not self.currentState.isDeleted
 
     def _create_device_record(
         self,
