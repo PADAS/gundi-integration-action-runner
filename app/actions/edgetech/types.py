@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import pydantic
 
@@ -111,6 +111,20 @@ class Buoy(pydantic.BaseModel):
             },
         }
 
+    def get_start_location(self) -> Tuple[float, float]:
+        """
+        Returns the start location of the buoy (latitude, longitude).
+        """
+        if (
+            self.currentState.recoveredLatDeg is not None
+            and self.currentState.recoveredLonDeg is not None
+        ):
+            return self.currentState.recoveredLatDeg, self.currentState.recoveredLonDeg
+        return self.currentState.latDeg, self.currentState.lonDeg
+
+    def get_end_location(self) -> Tuple[Optional[float], Optional[float]]:
+        return self.currentState.endLatDeg, self.currentState.endLonDeg
+
     def create_observations(self, prefix: str) -> List[Dict[str, Any]]:
         """
         Creates a list of observations:
@@ -124,18 +138,21 @@ class Buoy(pydantic.BaseModel):
 
         # Create record and observation for device A (always exists)
         subject_name_a = f"{prefix}{self.serialNumber}_A"
+
+        start_lat, start_lon = self.get_start_location()
+
         device_a = self._create_device_record(
             "a",
-            current_state.latDeg,
-            current_state.lonDeg,
+            start_lat,
+            start_lon,
             subject_name_a,
             last_updated,
         )
         devices = [device_a]
         observation_a = self._create_observation_record(
             subject_name_a,
-            current_state.latDeg,
-            current_state.lonDeg,
+            start_lat,
+            start_lon,
             devices,
             last_updated,
         )
@@ -143,20 +160,21 @@ class Buoy(pydantic.BaseModel):
         observations = [observation_a]
 
         # Create record and observation for device B, if final coordinates exist
-        if current_state.endLatDeg is not None and current_state.endLonDeg is not None:
+        end_lat, end_lon = self.get_end_location()
+        if end_lat is not None and end_lon is not None:
             subject_name_b = f"{prefix}{self.serialNumber}_B"
             device_b = self._create_device_record(
                 "b",
-                current_state.endLatDeg,
-                current_state.endLonDeg,
+                end_lat,
+                end_lon,
                 subject_name_b,
                 last_updated,
             )
             devices.append(device_b)
             observation_b = self._create_observation_record(
                 subject_name_b,
-                current_state.endLatDeg,
-                current_state.endLonDeg,
+                end_lat,
+                end_lon,
                 devices,
                 last_updated,
             )

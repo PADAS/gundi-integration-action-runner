@@ -144,8 +144,12 @@ class EdgetTechProcessor:
                 buoy_lat = buoy.currentState.endLatDeg
                 buoy_lon = buoy.currentState.endLonDeg
             else:
-                buoy_lat = buoy.currentState.latDeg
-                buoy_lon = buoy.currentState.lonDeg
+                if buoy.currentState.recoveredLatDeg is not None:
+                    buoy_lat = buoy.currentState.recoveredLatDeg
+                    buoy_lon = buoy.currentState.recoveredLonDeg
+                else:
+                    buoy_lat = buoy.currentState.latDeg
+                    buoy_lon = buoy.currentState.lonDeg
 
             if buoy_lat is None or buoy_lon is None:
                 return False
@@ -204,6 +208,9 @@ class EdgetTechProcessor:
             if (
                 buoy_state.currentState.latDeg is None
                 or buoy_state.currentState.lonDeg is None
+            ) and (
+                buoy_state.currentState.recoveredLatDeg is None
+                or buoy_state.currentState.recoveredLonDeg is None
             ):
                 logger.warning(
                     f"Skipping buoy {serial_number} with missing location data"
