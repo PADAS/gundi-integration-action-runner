@@ -533,9 +533,10 @@ class RmwHubAdapter:
             logger.info(f"Subject ID {subject.get('name')} found in RMW traps.")
 
             # Get the latest observation for the subject
-            latest_observation = await self.er_client.get_latest_observations(
+            latest_observations = await self.er_client.get_latest_observations(
                 subject.get("id"), 1
             )
+            latest_observation = latest_observations[0]
 
             # TODO: fix
             if not latest_observation["observation_details"].get("rmwhub_set_id"):
@@ -816,7 +817,7 @@ class RmwHubAdapter:
             # TODO: Use subject.id instead of subject.name for the trap ID
             # TODO: Determine the effects of this^ change on the download/upload process
             subject_name = er_subject.get("name")
-            cleaned_id = validate_id_length(await self.clean_id_str(subject_name))
+            cleaned_id = await validate_id_length(await self.clean_id_str(subject_name))
             trap_id = (
                 cleaned_id
                 if rmw_gearset and subject_name.startswith("rmw")

@@ -60,10 +60,8 @@ class BuoyClient:
             if len(data["data"]) == 0:
                 logger.error(f"No observations found")
                 return {}
-            if page_size == 1:
-                return data["data"]["results"][0]
-            else:
-                return data["data"]["results"]
+
+            return data["data"]["results"]
         else:
             logger.error(
                 f"Failed to get latest observation. Status code: {response.status_code}"
