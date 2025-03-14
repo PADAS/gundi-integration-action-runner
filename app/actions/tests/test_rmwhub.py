@@ -108,8 +108,7 @@ async def test_rmwhub_search_hub(mocker, a_good_configuration):
         a_good_configuration.api_key, a_good_configuration.rmw_url
     )
     start_datetime_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    minute_interval = 5
-    response = await rmw_client.search_hub(start_datetime_str, minute_interval)
+    response = await rmw_client.search_hub(start_datetime_str)
 
     assert response == mock_response_text
 
@@ -130,7 +129,7 @@ async def test_rmwhub_search_hub_failure(mocker, a_good_configuration):
     )
     start_datetime_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     minute_interval = 60
-    response = await rmw_client.search_hub(start_datetime_str, minute_interval)
+    response = await rmw_client.search_hub(start_datetime_str)
 
     assert response == "Internal Server Error"
 

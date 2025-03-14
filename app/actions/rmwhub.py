@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 from enum import Enum
 import hashlib
 from typing import List, Optional, Tuple
@@ -8,6 +8,10 @@ import logging
 from fastapi.encoders import jsonable_encoder
 import pytz
 import uuid
+from datetime import datetime, timezone
+from enum import Enum
+from typing import List, Optional, Tuple
+
 import httpx
 import json
 from pydantic import NoneStr, validator, BaseModel
@@ -92,6 +96,7 @@ class GearSet(BaseModel):
     trawl_path: str
     share_with: List[str]
     traps: List[Trap]
+    when_updated_utc: str
 
     @validator("trawl_path", pre=True)
     def none_to_empty(cls, v: object) -> object:
@@ -234,16 +239,14 @@ class RmwHubAdapter:
         self.er_subject_name_to_subject_mapping = {}
 
     async def download_data(
-        self, start_datetime_str: str, minute_interval: int, status: bool = None
+        self, start_datetime_str: str, status: bool = None
     ) -> RmwSets:
         """
         Downloads data from the RMW Hub API using the search_hub endpoint.
         ref: https://ropeless.network/api/docs#/Download
         """
 
-        response = await self.rmw_client.search_hub(
-            start_datetime_str, minute_interval, status
-        )
+        response = await self.rmw_client.search_hub(start_datetime_str, status)
         response_json = json.loads(response)
 
         if "sets" not in response_json:
@@ -278,6 +281,7 @@ class RmwHubAdapter:
                 trawl_path=set["trawl_path"],
                 share_with=set["share_with"],
                 traps=traps,
+                when_updated_utc=set["when_updated_utc"],
             )
 
             gearsets.append(gearset)
@@ -493,10 +497,30 @@ class RmwHubAdapter:
             subject = id_to_er_subject_mapping.get(display_id)
             logger.info(f"Subject ID {subject.get('name')} found in RMW traps.")
 
-            if not subject.get("additional") and not subject.get("additional").get(
-                "rmwhub_set_id"
-            ):
+            # Get the latest observation for the subject
+            latest_observations = await self.er_client.get_latest_observations(
+                subject.get("id"), 1
+            )
+            latest_observation = latest_observations[0]
+
+            if not latest_observation["observation_details"].get("rmwhub_set_id"):
                 logger.error(f"Subject ID {subject.get('id')} has no RMWHub set ID.")
+                continue
+
+            rmwhub_set_id = latest_observation["observation_details"].get(
+                "rmwhub_set_id"
+            )
+
+            if rmwhub_set_id not in rmw_set_id_to_gearset_mapping.keys():
+                logger.error(
+                    f"RMW Set ID {rmwhub_set_id} not found in RMW sets. No action."
+                )
+                log_action_activity(
+                    integration_id=self.integration_id,
+                    action_id="pull_observations",
+                    title=f"RMW Set ID {rmwhub_set_id} not found in RMW sets. No action.",
+                    level=LogLevel.ERROR,
+                )
                 continue
 
             # Create new updates from ER data for upload to RMWHub
@@ -540,6 +564,16 @@ class RmwHubAdapter:
             rmw_set_id = await self.clean_id_str(
                 observation.get("additional").get("rmwhub_set_id")
             )
+
+            if rmw_set_id not in rmw_set_id_to_gearset_mapping.keys():
+                await log_action_activity(
+                    integration_id=self.integration_id,
+                    action_id="pull_observations",
+                    title=f"RMW Set ID {rmw_set_id} not found in RMW sets. No action.",
+                    level=LogLevel.ERROR,
+                )
+                continue
+
             rmw_set = rmw_set_id_to_gearset_mapping[rmw_set_id]
 
             for trap in rmw_set.traps:
@@ -780,6 +814,9 @@ class RmwHubAdapter:
             # we don't want our data back in the download step
             share_with=[],
             traps=traps,
+            when_updated_utc=datetime(
+                1970, 1, 1, 0, 0, 0, tzinfo=timezone.utc
+            ).isoformat(),
         )
 
         return gear_set
@@ -857,31 +894,18 @@ class RmwHubClient:
         self.api_key = api_key
         self.rmw_url = rmw_url
 
-    async def search_hub(
-        self, start_datetime_str: str, minute_interval: int, status: bool = None
-    ) -> dict:
+    async def search_hub(self, start_datetime_str: str, status: bool = None) -> dict:
         """
         Downloads data from the RMWHub API using the search_hub endpoint.
         ref: https://ropeless.network/api/docs#/Download
         """
-
-        start_datetime = datetime.strptime(start_datetime_str, "%Y-%m-%d %H:%M:%S")
-        end_datetime = start_datetime + timedelta(minutes=minute_interval)
-        end_datetime_str = end_datetime.strftime("%Y-%m-%d %H:%M:%S")
 
         data = {
             "format_version": 0.1,
             "api_key": self.api_key,
             "max_sets": 1000,
             # "status": "deployed", // Pull all data not just deployed gear
-            "from_latitude": -90,
-            "to_latitude": 90,
-            "from_longitude": -180,
-            "to_longitude": 180,
-            "start_deploy_utc": start_datetime_str,
-            "end_deploy_utc": end_datetime_str,
-            "start_retrieve_utc": start_datetime_str,
-            "end_retrieve_utc": end_datetime_str,
+            "start_datetime_utc": start_datetime_str,
         }
 
         if status:

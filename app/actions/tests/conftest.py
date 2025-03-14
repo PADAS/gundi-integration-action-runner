@@ -79,6 +79,7 @@ def get_mock_rmwhub_data():
                 "traps_in_set": 2,
                 "trawl_path": None,
                 "share_with": ["Earth_Ranger"],
+                "when_updated_utc": "2025-03-14T16:38:12Z",
                 "traps": [
                     {
                         "trap_id": "test_trap_id_0",
@@ -115,6 +116,7 @@ def get_mock_rmwhub_data():
                 "traps_in_set": 2,
                 "trawl_path": None,
                 "share_with": ["Earth_Ranger"],
+                "when_updated_utc": "2025-03-14T16:38:12Z",
                 "traps": [
                     {
                         "trap_id": "test_trap_id_2",
@@ -151,6 +153,7 @@ def get_mock_rmwhub_data():
                 "traps_in_set": 2,
                 "trawl_path": None,
                 "share_with": ["Earth_Ranger"],
+                "when_updated_utc": "2025-03-14T16:38:12Z",
                 "traps": [
                     {
                         "trap_id": "test_trap_id_4",
@@ -187,6 +190,7 @@ def get_mock_rmwhub_data():
                 "traps_in_set": 2,
                 "trawl_path": None,
                 "share_with": ["Earth_Ranger"],
+                "when_updated_utc": "2025-03-14T16:38:12Z",
                 "traps": [
                     {
                         "trap_id": "test_trap_id_6",
@@ -223,6 +227,7 @@ def get_mock_rmwhub_data():
                 "traps_in_set": 1,
                 "trawl_path": None,
                 "share_with": ["Earth_Ranger"],
+                "when_updated_utc": "2025-03-14T16:38:12Z",
                 "traps": [
                     {
                         "trap_id": "test_trap_id_8",
@@ -253,6 +258,7 @@ def mock_rmwhub_items():
             share_with=["Earth_Ranger"],
             id="test_set_id_0",
             deployment_type="trawl",
+            when_updated_utc="2025-03-14T16:38:12Z",
             traps=[
                 Trap(
                     id="test_trap_id_0",
@@ -289,6 +295,7 @@ def mock_rmwhub_items():
             share_with=["Earth_Ranger"],
             id="test_set_id_1",
             deployment_type="trawl",
+            when_updated_utc="2025-03-14T16:38:12Z",
             traps=[
                 Trap(
                     id="test_trap_id_2",
@@ -325,6 +332,7 @@ def mock_rmwhub_items():
             share_with=["Earth_Ranger"],
             id="test_set_id_2",
             deployment_type="trawl",
+            when_updated_utc="2025-03-14T16:38:12Z",
             traps=[
                 Trap(
                     id="test_trap_id_4",
@@ -361,6 +369,7 @@ def mock_rmwhub_items():
             share_with=["Earth_Ranger"],
             id="test_set_id_3",
             deployment_type="trawl",
+            when_updated_utc="2025-03-14T16:38:12Z",
             traps=[
                 Trap(
                     id="test_trap_id_6",
@@ -397,6 +406,7 @@ def mock_rmwhub_items():
             share_with=["Earth_Ranger"],
             id="test_set_id_4",
             deployment_type="single",
+            when_updated_utc="2025-03-14T16:38:12Z",
             traps=[
                 Trap(
                     id="test_trap_id_8",
@@ -426,6 +436,7 @@ def mock_rmwhub_items_update():
             share_with=["Earth_Ranger"],
             id="test_set_id_0",
             deployment_type="trawl",
+            when_updated_utc="2025-03-14T16:38:12Z",
             traps=[
                 Trap(
                     id="test_trap_id_0",
@@ -449,6 +460,7 @@ def mock_rmwhub_items_update():
             share_with=["Earth_Ranger"],
             id="test_set_id_1",
             deployment_type="trawl",
+            when_updated_utc="2025-03-14T16:38:12Z",
             traps=[
                 Trap(
                     id="test_trap_id_1",
