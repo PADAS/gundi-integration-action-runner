@@ -41,6 +41,57 @@ class BuoyClient:
 
         return []
 
+    async def get_latest_observations(self, subject_id: str, page_size: int) -> dict:
+        """
+        Get the latest observations for a subject. Return only the latest observation when page_size = 1.
+        """
+        url = (
+            self.er_site
+            + f"/observations/?sort_by=-recorded_at&subject_id={subject_id}&include_details=true&page_size={page_size}"
+        )
+        BuoyClient.headers["Authorization"] = f"Bearer {self.er_token}"
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, headers=BuoyClient.headers)
+
+        if response.status_code == 200:
+            logger.info("Request to get latest observation was successful")
+            data = json.loads(response.text)
+            if len(data["data"]) == 0:
+                logger.error(f"No observations found")
+                return {}
+
+            return data["data"]["results"]
+        else:
+            logger.error(
+                f"Failed to get latest observation. Status code: {response.status_code}"
+            )
+
+        return {}
+
+    async def get_gear(self) -> List:
+        """
+        Get all gear
+        """
+
+        url = self.er_site + f"/gear/"
+        BuoyClient.headers["Authorization"] = f"Bearer {self.er_token}"
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, headers=BuoyClient.headers)
+
+        if response.status_code == 200:
+            logger.info("Request to get ER gear was successful")
+            data = json.loads(response.text)
+            if len(data["data"]) == 0:
+                logger.error(f"No gear found")
+                return []
+            return data["data"]
+        else:
+            logger.error(f"Failed to make request. Status code: {response.status_code}")
+
+        return []
+
     async def get_er_subject_by_name(self, name: str) -> dict:
 
         url = (

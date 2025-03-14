@@ -286,6 +286,53 @@ class RmwHubAdapter:
 
             gearsets.append(gearset)
 
+        return self.convert_to_sets(response)
+
+    async def search_own(self):
+        """
+        Downloads data from the RMW Hub API using the search_own endpoint.
+        ref: https://ropeless.network/api/docs#/Download
+        """
+
+        response = await self.rmw_client.search_own()
+        return self.convert_to_sets(response)
+
+    def convert_to_sets(self, response: dict) -> RmwSets:
+        response_json = json.loads(response)
+
+        if "sets" not in response_json:
+            logger.error(f"Failed to download data from RMW Hub API. Error: {response}")
+            return RmwSets(sets=[])
+        sets = response_json["sets"]
+        gearsets = []
+        for set in sets:
+            traps = []
+            for trap in set["traps"]:
+                trap_obj = Trap(
+                    id=trap["trap_id"],
+                    sequence=trap["sequence"],
+                    latitude=trap["latitude"],
+                    longitude=trap["longitude"],
+                    deploy_datetime_utc=trap["deploy_datetime_utc"],
+                    surface_datetime_utc=trap["surface_datetime_utc"],
+                    retrieved_datetime_utc=trap["retrieved_datetime_utc"],
+                    status=trap["status"],
+                    accuracy=trap["accuracy"],
+                    release_type=trap["release_type"],
+                    is_on_end=trap["is_on_end"],
+                )
+                traps.append(trap_obj)
+            gearset = GearSet(
+                vessel_id=set["vessel_id"],
+                id=set["set_id"],
+                deployment_type=set["deployment_type"],
+                traps_in_set=set["traps_in_set"],
+                trawl_path=set["trawl_path"],
+                share_with=set["share_with"],
+                when_updated_utc=set["when_updated_utc"],
+                traps=traps,
+            )
+            gearsets.append(gearset)
         return RmwSets(sets=gearsets)
 
     async def process_rmw_download(
@@ -923,7 +970,27 @@ class RmwHubClient:
 
         return response.text
 
-    async def upload_data(self, updates: List) -> httpx.Response:
+    async def search_own(self) -> dict:
+        """
+        Downloads data from the RMWHub API using the search_own endpoint.
+        ref: https://ropeless.network/api/docs#/Download
+        """
+
+        url = self.rmw_url + "/search_own/"
+
+        data = {"format_version": 0.1, "api_key": self.api_key}
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, headers=RmwHubClient.HEADERS, json=data)
+
+        if response.status_code != 200:
+            logger.error(
+                f"Failed to download data from RMW Hub API. Error: {response.status_code} - {response.text}"
+            )
+
+        return response.text
+
+    async def upload_data(self, updates: List[GearSet]) -> httpx.Response:
         """
         Upload data to the RMWHub API using the upload_data endpoint.
         ref: https://ropeless.network/api/docs

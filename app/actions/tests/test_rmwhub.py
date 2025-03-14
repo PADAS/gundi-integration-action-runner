@@ -248,6 +248,17 @@ async def test_rmwhub_adapter_process_rmw_upload_update_success(
         "app.actions.rmwhub.RmwHubAdapter._upload_data",
         return_value=mock_rmw_upload_response,
     )
+    mocker.patch(
+        "app.actions.rmwhub.RmwHubAdapter.search_own",
+        return_value=RmwSets(sets=mock_rmwhub_items_update),
+    )
+    mocker.patch(
+        "app.actions.buoy.BuoyClient.get_gear",
+        return_value=[],
+    )
+    mocker.patch(
+        "app.actions.buoy.BuoyClient.get_latest_observations",
+    )
 
     observations, rmw_response = await rmw_adapter.process_rmw_upload(
         RmwSets(sets=mock_rmwhub_items_update), start_datetime_str
