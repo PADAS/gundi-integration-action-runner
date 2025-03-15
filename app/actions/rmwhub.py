@@ -448,15 +448,16 @@ class RmwHubAdapter:
 
         return observations
 
-    async def process_rmw_upload(
-        self, rmw_sets: RmwSets, start_datetime_str
-    ) -> Tuple[List, dict]:
+    async def process_rmw_upload(self, start_datetime_str) -> Tuple[List, dict]:
         """
         Process the sets from the Buoy API and upload to RMWHub.
         Returns a list of new observations for Earthranger with the new RmwHub set IDs.
         """
 
         logger.info("Processing updates to RMW Hub from ER...")
+
+        # Download data from search_own endpoint in RMWHub
+        rmw_sets = await self.search_own()
 
         # Normalize the extracted data into a list of updates following to the RMWHub schema:
         updates = []
