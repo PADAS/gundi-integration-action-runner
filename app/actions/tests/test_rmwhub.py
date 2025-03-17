@@ -338,3 +338,44 @@ async def test_rmwhub_adapter_process_rmw_upload_failure(
     )
     assert len(observations) == 0
     assert rmw_response == {}
+
+
+@pytest.mark.asyncio
+async def test_create_rmw_update_from_er_subject(
+    mocker,
+    a_good_integration,
+    a_good_configuration,
+    mock_er_subjects,
+    mock_rmwhub_items,
+    mock_latest_observations,
+):
+    rmwadapter = RmwHubAdapter(
+        a_good_integration.id,
+        a_good_configuration.api_key,
+        a_good_configuration.rmw_url,
+        "super_secret_token",
+        "er.destination.com",
+    )
+
+    mocker.patch(
+        "app.actions.buoy.BuoyClient.get_latest_observations",
+        return_value=mock_latest_observations,
+    )
+
+    # Test create INSERT update (no existing rmwHub gearset)
+    gearset_insert = await rmwadapter._create_rmw_update_from_er_subject(
+        mock_er_subjects[0]
+    )
+
+    assert gearset_insert
+    assert gearset_insert.traps[0].id
+    assert len(gearset_insert.traps[0].id) >= 32
+
+    # Test create UPDATE update (existing rmwHub gearset)
+    gearset_update = await rmwadapter._create_rmw_update_from_er_subject(
+        mock_er_subjects[0], mock_rmwhub_items[0]
+    )
+
+    assert gearset_update
+    assert gearset_update.traps[0].id
+    assert len(gearset_update.traps[0].id) >= 32

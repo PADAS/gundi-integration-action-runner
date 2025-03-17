@@ -668,7 +668,7 @@ def mock_er_subjects():
         {
             "content_type": "observations.subject",
             "id": "0302a774-1971-4a64-8264-1d7f17969442",
-            "name": "FBB01895-0BC3-4498-ACAC-BCBCE12F1363",
+            "name": "short_name",
             "subject_type": "ropeless_buoy",
             "subject_subtype": "ropeless_buoy_device",
             "common_name": None,
