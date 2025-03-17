@@ -80,7 +80,7 @@ class Trap(BaseModel):
         Convert the datetime string to UTC.
         """
 
-        datetime_obj = datetime.strptime(datetime_str, "%Y-%m-%dT%H:%M:%S")
+        datetime_obj = datetime.strptime(datetime_str, "%Y-%m-%dT%H:%M:%S.%f")
         datetime_obj = datetime_obj.astimezone(pytz.utc)
         return datetime_obj
 
@@ -826,7 +826,7 @@ class RmwHubAdapter:
 
             # TODO: This should use the subjects latest observation recorded at value
             last_updated_utc = self.convert_datetime_to_utc(
-                er_subject.get("last_position_date")
+                er_subject.get("updated_at")
             )
             if deployed:
                 traps.append(
