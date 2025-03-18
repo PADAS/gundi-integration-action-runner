@@ -145,7 +145,7 @@ async def test_rmwhub_adapter_process_upload_insert_success(
     mock_er_subjects_from_rmw,
 ):
     """
-    Test RmwHubAdapter.process_rmw_upload insert operations
+    Test RmwHubAdapter.process_upload insert operations
     """
 
     rmw_adapter = RmwHubAdapter(
@@ -250,7 +250,7 @@ async def test_rmwhub_adapter_process_upload_update_success(
     mock_latest_observations,
 ):
     """
-    Test RmwHubAdapter.process_rmw_upload update operations
+    Test RmwHubAdapter.process_upload update operations
     """
 
     rmw_adapter = RmwHubAdapter(

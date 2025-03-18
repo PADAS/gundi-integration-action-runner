@@ -38,11 +38,11 @@ async def test_handler_action_pull_observations(
         return_value=(RmwSets(sets=items)),
     )
     mocker.patch(
-        "app.actions.rmwhub.RmwHubAdapter.process_rmw_download",
+        "app.actions.rmwhub.RmwHubAdapter.process_download",
         return_value=mock_rmw_observations,
     )
     mocker.patch(
-        "app.actions.rmwhub.RmwHubAdapter.process_rmw_upload",
+        "app.actions.rmwhub.RmwHubAdapter.process_upload",
         return_value=(0, {}),
     )
     mocker.patch(
