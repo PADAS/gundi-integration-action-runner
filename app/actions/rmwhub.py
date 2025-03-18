@@ -303,7 +303,7 @@ class RmwHubAdapter:
             gearsets.append(gearset)
         return RmwSets(sets=gearsets)
 
-    async def process_rmw_download(
+    async def process_download(
         self, rmw_sets: RmwSets, start_datetime_str: str, minute_interval: int
     ) -> List:
         """
@@ -416,7 +416,7 @@ class RmwHubAdapter:
 
         return observations
 
-    async def process_rmw_upload(self, start_datetime_str) -> Tuple[int, dict]:
+    async def process_upload(self, start_datetime_str) -> Tuple[int, dict]:
         """
         Process the sets from the Buoy API and upload to RMWHub.
         Returns a list of new observations for Earthranger with the new RmwHub set IDs.
