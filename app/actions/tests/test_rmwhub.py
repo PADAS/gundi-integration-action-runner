@@ -178,12 +178,20 @@ async def test_rmwhub_adapter_process_rmw_upload_insert_success(
         "app.actions.buoy.BuoyClient.get_gear",
         return_value=[],
     )
+    mocker.patch(
+        "app.actions.buoy.BuoyClient.get_source_provider",
+        return_value="rmw",
+    )
+    mocker.patch(
+        "app.actions.buoy.BuoyClient.create_v1_observation",
+        return_value=1,
+    )
 
     observations, rmw_response = await rmw_adapter.process_rmw_upload(
         start_datetime_str
     )
 
-    assert len(observations) == 0
+    assert observations == 0
 
     # Test handle ER upload success
     data = mock_er_subjects
@@ -207,7 +215,7 @@ async def test_rmwhub_adapter_process_rmw_upload_insert_success(
     observations, rmw_response = await rmw_adapter.process_rmw_upload(
         start_datetime_str
     )
-    assert len(observations) == 5
+    assert observations == 5
     assert rmw_response["trap_count"] == 5
 
     # Test handle ER upload success with ER Subjects from RMW
@@ -233,7 +241,7 @@ async def test_rmwhub_adapter_process_rmw_upload_insert_success(
     observations, rmw_response = await rmw_adapter.process_rmw_upload(
         start_datetime_str
     )
-    assert len(observations) == 0
+    assert observations == 0
     assert rmw_response["trap_count"] == 0
 
 
@@ -290,7 +298,7 @@ async def test_rmwhub_adapter_process_rmw_upload_update_success(
     )
     # There will be no new observsation for items originally from RMW
     # because the set ID has already been added.
-    assert len(observations) == 0
+    assert observations == 0
     assert rmw_response
 
 
@@ -335,5 +343,5 @@ async def test_rmwhub_adapter_process_rmw_upload_failure(
     observations, rmw_response = await rmw_adapter.process_rmw_upload(
         start_datetime_str
     )
-    assert len(observations) == 0
+    assert observations == 0
     assert rmw_response == {}

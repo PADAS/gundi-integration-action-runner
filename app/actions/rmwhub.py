@@ -29,6 +29,7 @@ SOURCE_TYPE = "ropeless_buoy"
 SUBJECT_SUBTYPE = "ropeless_buoy_device"
 GEAR_DEPLOYED_EVENT = "gear_deployed"
 GEAR_RETRIEVED_EVENT = "gear_retrieved"
+EPOCH = datetime(1970, 1, 1, 0, 0, 0, tzinfo=timezone.utc).isoformat()
 
 
 class Status(Enum):
@@ -253,39 +254,6 @@ class RmwHubAdapter:
             logger.error(f"Failed to download data from RMW Hub API. Error: {response}")
             return RmwSets(sets=[])
 
-        sets = response_json["sets"]
-        gearsets = []
-        for set in sets:
-            traps = []
-            for trap in set["traps"]:
-                trap_obj = Trap(
-                    id=trap["trap_id"],
-                    sequence=trap["sequence"],
-                    latitude=trap["latitude"],
-                    longitude=trap["longitude"],
-                    deploy_datetime_utc=trap["deploy_datetime_utc"],
-                    surface_datetime_utc=trap["surface_datetime_utc"],
-                    retrieved_datetime_utc=trap["retrieved_datetime_utc"],
-                    status=trap["status"],
-                    accuracy=trap["accuracy"],
-                    release_type=trap["release_type"],
-                    is_on_end=trap["is_on_end"],
-                )
-                traps.append(trap_obj)
-
-            gearset = GearSet(
-                vessel_id=set["vessel_id"],
-                id=set["set_id"],
-                deployment_type=set["deployment_type"],
-                traps_in_set=set["traps_in_set"],
-                trawl_path=set["trawl_path"],
-                share_with=set["share_with"],
-                traps=traps,
-                when_updated_utc=set["when_updated_utc"],
-            )
-
-            gearsets.append(gearset)
-
         return self.convert_to_sets(response)
 
     async def search_own(self):
@@ -448,7 +416,7 @@ class RmwHubAdapter:
 
         return observations
 
-    async def process_rmw_upload(self, start_datetime_str) -> Tuple[List, dict]:
+    async def process_rmw_upload(self, start_datetime_str) -> Tuple[int, dict]:
         """
         Process the sets from the Buoy API and upload to RMWHub.
         Returns a list of new observations for Earthranger with the new RmwHub set IDs.
@@ -472,7 +440,7 @@ class RmwHubAdapter:
                 title=msg,
                 level=LogLevel.WARNING,
             )
-            return [], {}
+            return 0, {}
 
         id_to_er_subject_mapping = dict(
             (subject["additional"]["display_id"], subject) for subject in er_subjects
@@ -511,7 +479,7 @@ class RmwHubAdapter:
         logger.info(f"{len(er_updates)} Updates to rmwHub.")
 
         # Collect set ID updates for Earthranger subjects from RMW inserts
-        new_observations = []
+        num_new_observations = 0
 
         # Handle inserts to RMW
         for display_id in er_inserts:
@@ -529,10 +497,8 @@ class RmwHubAdapter:
                     level=LogLevel.ERROR,
                 )
             else:
-                new_observations.extend(
-                    await self._create_put_er_set_id_observation(
-                        subject, updated_gearset.id
-                    )
+                num_new_observations += await self._create_put_er_set_id_observation(
+                    subject, updated_gearset.id
                 )
                 updates.append(updated_gearset)
 
@@ -594,7 +560,7 @@ class RmwHubAdapter:
 
         response = await self._upload_data(updates)
 
-        return new_observations, response
+        return num_new_observations, response
 
     # TODO RF-752: Remove unecessary code when status updates are verified to be working through event
     # type in API instead of is_active status on observation.
@@ -703,10 +669,10 @@ class RmwHubAdapter:
 
     async def _create_put_er_set_id_observation(
         self, er_subject: dict, set_id: str
-    ) -> dict:
+    ) -> int:
         """
         Update the set ID for the ER subject based on the provided set ID.
-        Returns the new observation for the ER subject.
+        Returns 1 if the observation was created for the ER subject, 0 otherwise.
         """
 
         if not er_subject.get("additional") or not er_subject.get("additional").get(
@@ -717,9 +683,9 @@ class RmwHubAdapter:
 
         display_id_hash = hashlib.sha256(str(set_id).encode()).hexdigest()[:12]
         is_active = er_subject.get("is_active")
+        source_provider = await self.er_client.get_source_provider(er_subject.get("id"))
 
         observations = []
-
         for device in er_subject.get("additional").get("devices"):
             observations.append(
                 {
@@ -729,7 +695,7 @@ class RmwHubAdapter:
                     "subject_type": SUBJECT_SUBTYPE,
                     "is_active": is_active,
                     # TODO: SPIKE to determine if this should be device["last_updated"]
-                    "recorded_at": er_subject["updated_at"],
+                    "recorded_at": datetime.now().isoformat(),
                     "location": {
                         "lat": device["location"]["latitude"],
                         "lon": device["location"]["longitude"],
@@ -746,7 +712,14 @@ class RmwHubAdapter:
                 }
             )
 
-        return observations
+        # Send observations to Gundi v1 Sensors API
+        created = 0
+        for observation in observations:
+            created += await self.er_client.create_v1_observation(
+                source_provider, observation
+            )
+
+        return created
 
     async def _upload_data(
         self,
@@ -858,13 +831,11 @@ class RmwHubAdapter:
             deployment_type="trawl" if len(traps) > 1 else "single",
             traps_in_set=len(traps),
             trawl_path="",
-            # Share with is not set to ER because
+            # Share with is NOT set to ER because
             # we don't want our data back in the download step
             share_with=[],
             traps=traps,
-            when_updated_utc=datetime(
-                1970, 1, 1, 0, 0, 0, tzinfo=timezone.utc
-            ).isoformat(),
+            when_updated_utc=EPOCH,
         )
 
         return gear_set
