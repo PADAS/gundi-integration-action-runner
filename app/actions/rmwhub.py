@@ -79,8 +79,11 @@ class Trap(BaseModel):
         """
         Convert the datetime string to UTC.
         """
+        try:
+            datetime_obj = datetime.strptime(datetime_str, "%Y-%m-%dT%H:%M:%S.%f")
+        except ValueError:
+            datetime_obj = datetime.strptime(datetime_str, "%Y-%m-%dT%H:%M:%S")
 
-        datetime_obj = datetime.strptime(datetime_str, "%Y-%m-%dT%H:%M:%S.%f")
         datetime_obj = datetime_obj.astimezone(pytz.utc)
         return datetime_obj
 
