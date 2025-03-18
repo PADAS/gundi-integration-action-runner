@@ -1,5 +1,4 @@
 import logging
-from timeit import default_timer as timer
 from typing import Dict, List, Tuple
 
 from gundi_client_v2 import GundiClient
@@ -75,11 +74,14 @@ async def process_destination(
     )
     processor = EdgetTechProcessor(data, er_destination_token, er_destination_url)
     observations = await processor.process()
+    observations.sort(key=lambda x: x["recorded_at"])
+
     for batch in generate_batches(observations):
         logger.info(f"Sending {len(batch)} observations to Gundi...")
         await send_observations_to_gundi(
             observations=batch, integration_id=str(integration.id)
         )
+
     await log_action_activity(
         integration_id=integration.id,
         action_id="pull_edgetech",
@@ -87,9 +89,10 @@ async def process_destination(
         title="Pulled data from EdgeTech API",
     )
     logger.info(
-        f"Downloaded {len(data)} records from EdgeTech API for integration {integration}"
+        f"Downloaded {len(data)} records from EdgeTech API and sent {len(observations)} observations to ({destination.name})."
     )
     return len(observations)
+
 
 # --- Main Handler Functions ---
 
@@ -149,6 +152,6 @@ async def action_pull_edgetech_observations(
         )
 
     return {
-        "observations_extracted": len(data),
+        "records_extracteds": len(data),
         "observations_sent": total_observations,
     }
