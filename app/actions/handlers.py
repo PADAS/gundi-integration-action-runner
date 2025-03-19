@@ -73,11 +73,10 @@ async def process_destination(
         gundi_client, destination
     )
     processor = EdgetTechProcessor(data, er_destination_token, er_destination_url)
-    observations = await processor.process()
+    observations, inserted_buoys, updated_buoys = await processor.process()
     observations.sort(key=lambda x: x["recorded_at"])
 
     for batch in generate_batches(observations):
-        logger.info(f"Sending {len(batch)} observations to Gundi...")
         await send_observations_to_gundi(
             observations=batch, integration_id=str(integration.id)
         )
@@ -88,10 +87,7 @@ async def process_destination(
         level=LogLevel.INFO,
         title="Pulled data from EdgeTech API",
     )
-    logger.info(
-        f"Downloaded {len(data)} records from EdgeTech API and sent {len(observations)} observations to ({destination.name})."
-    )
-    return len(observations)
+    return len(observations), len(inserted_buoys), len(updated_buoys)
 
 
 # --- Main Handler Functions ---
@@ -145,13 +141,17 @@ async def action_pull_edgetech_observations(
     edgetech_client = EdgeTechClient(auth_config=auth_config, pull_config=action_config)
     data = await edgetech_client.download_data()
 
-    total_observations = 0
+    destination_result = {}
     for destination in connection_details.destinations:
-        total_observations += await process_destination(
+        observations, inserted_buoys, updated_buoys = await process_destination(
             gundi_client, integration, data, destination
         )
+        destination_key = f"{destination.id}_{destination.name}"
+        destination_result[destination_key] = {
+            "records_extracted": len(data),
+            "observations_sent": observations,
+            "subjects_inserted": inserted_buoys,
+            "subjects_updated": updated_buoys,
+        }
 
-    return {
-        "records_extracteds": len(data),
-        "observations_sent": total_observations,
-    }
+    return destination_result

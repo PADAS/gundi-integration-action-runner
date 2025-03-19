@@ -245,8 +245,9 @@ class Buoy(pydantic.BaseModel):
         Return observations from the current state or from changeRecords if available.
         Skips if the event is older than or equal to last_observation_timestamp when provided.
         """
+        observations = []
         if self.changeRecords:
-            return self.generate_observations_from_change_records(
+            observations += self.generate_observations_from_change_records(
                 prefix, last_observation_timestamp
             )
 
@@ -258,7 +259,7 @@ class Buoy(pydantic.BaseModel):
         ).replace(microsecond=0)
 
         if last_observation_timestamp and recorded_at <= last_observation_timestamp:
-            return []
+            return observations
 
         start_lat = current.latDeg or current.recoveredLatDeg
         start_lon = current.lonDeg or current.recoveredLonDeg
@@ -266,17 +267,17 @@ class Buoy(pydantic.BaseModel):
         end_lon = current.endLonDeg
 
         if start_lat is None or start_lon is None:
-            logger.warning(
-                "Skipping buoy %s due to missing location data", self.serialNumber
-            )
-            return []
+            return observations
 
-        return self._build_observations(
-            is_deployed=is_deployed,
-            recorded_at=recorded_at,
-            prefix=prefix,
-            start_lat=start_lat,
-            start_lon=start_lon,
-            end_lat=end_lat,
-            end_lon=end_lon,
+        observations.extend(
+            self._build_observations(
+                is_deployed=is_deployed,
+                recorded_at=recorded_at,
+                prefix=prefix,
+                start_lat=start_lat,
+                start_lon=start_lon,
+                end_lat=end_lat,
+                end_lon=end_lon,
+            )
         )
+        return observations

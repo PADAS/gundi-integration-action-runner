@@ -113,7 +113,8 @@ class EdgetTechProcessor:
 
         Returns:
             List[dict]: A list of dictionaries representing the observation events generated during processing.
-
+            int: The number of buoys inserted into the ER system.
+            int: The number of buoys updated in the ER system
         Raises:
             pydantic.ValidationError: If validation fails while creating buoy observation events.
         """
@@ -124,29 +125,42 @@ class EdgetTechProcessor:
         er_subject_mapping = {subject.name: subject for subject in er_subjects}
         er_subject_names = set(er_subject_mapping.keys())
 
-        # Identify buoys for insertion or update
+        # Identify buoys for insertion or update (or no-op)
         insert_buoys = set()
         update_buoys = set()
+        noop_buoys = set()
 
         observations = []
 
+        serial_numbers_without_location = set()
         for serial_number, buoy_states in buoy_states_by_serial_number.items():
-            newest_buoy_state = buoy_states[0]
-            # If the newest state has no location info and no changeRecords, skip
-            if (
-                (
-                    newest_buoy_state.currentState.latDeg is None
-                    or newest_buoy_state.currentState.lonDeg is None
-                )
-                and (
-                    newest_buoy_state.currentState.recoveredLatDeg is None
-                    or newest_buoy_state.currentState.recoveredLonDeg is None
-                )
-                and (len(newest_buoy_state.changeRecords) == 0)
-            ):
-                logger.warning(
-                    f"Skipping buoy {serial_number} due to missing location data"
-                )
+            has_state_with_location = False
+            for buoy_sate in buoy_states:
+                if (
+                    buoy_sate.currentState.latDeg is not None
+                    or buoy_sate.currentState.lonDeg is not None
+                ) or (
+                    buoy_sate.currentState.recoveredLatDeg is not None
+                    or buoy_sate.currentState.recoveredLonDeg is not None
+                ):
+                    has_state_with_location = True
+                    break
+                for changeRecord in buoy_sate.changeRecords:
+                    if changeRecord.type == "MODIFY":
+                        for change in changeRecord.changes:
+                            if change.key in [
+                                "latDeg",
+                                "lonDeg",
+                                "endLatDeg",
+                                "endLonDeg",
+                                "recoveredLatDeg",
+                                "recoveredLonDeg",
+                            ]:
+                                has_state_with_location = True
+                                break
+
+            if not has_state_with_location:
+                serial_numbers_without_location.add(serial_number)
                 continue
 
             primary_subject_name = f"{self._prefix}{serial_number}_A"
@@ -156,6 +170,10 @@ class EdgetTechProcessor:
             else:
                 # Buoy does not exist in ER -> insert
                 insert_buoys.add(serial_number)
+
+        logger.warning(
+            f"Skkiping {len(serial_numbers_without_location)} serial numbers without location data: {serial_numbers_without_location}"
+        )
 
         # Process inserts
         for serial_number in insert_buoys:
@@ -181,7 +199,7 @@ class EdgetTechProcessor:
                     f"Primary ER subject not found for buoy {serial_number}. Skipping update."
                 )
                 continue
-
+            buoys_observations = []
             for buoy_record in buoy_records:
                 try:
                     # Use the last_position_date as the threshold
@@ -189,15 +207,20 @@ class EdgetTechProcessor:
                         self._prefix,
                         er_subject.last_position_date,
                     )
-                    observations.extend(new_observations)
+                    buoys_observations.extend(new_observations)
                 except pydantic.ValidationError as ve:
                     logger.exception(
                         "Failed to update BuoyEvent for %s. Error: %s",
                         serial_number,
                         ve.json(),
                     )
+            if len(buoys_observations) == 0:
+                noop_buoys.add(serial_number)
+            observations.extend(buoys_observations)
+
+        update_buoys -= noop_buoys
 
         logger.info(f"Inserts: {insert_buoys}")
         logger.info(f"Updates: {update_buoys}")
 
-        return observations
+        return observations, insert_buoys, update_buoys
