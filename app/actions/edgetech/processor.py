@@ -172,7 +172,7 @@ class EdgetTechProcessor:
                 insert_buoys.add(serial_number)
 
         logger.warning(
-            f"Skkiping {len(serial_numbers_without_location)} serial numbers without location data: {serial_numbers_without_location}"
+            f"Skiping {len(serial_numbers_without_location)} serial numbers without location data: {serial_numbers_without_location}"
         )
 
         # Process inserts
