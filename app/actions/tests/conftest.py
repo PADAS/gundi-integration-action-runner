@@ -79,6 +79,7 @@ def get_mock_rmwhub_data():
                 "traps_in_set": 2,
                 "trawl_path": None,
                 "share_with": ["Earth_Ranger"],
+                "when_updated_utc": "2025-03-14T16:38:12Z",
                 "traps": [
                     {
                         "trap_id": "test_trap_id_0",
@@ -115,6 +116,7 @@ def get_mock_rmwhub_data():
                 "traps_in_set": 2,
                 "trawl_path": None,
                 "share_with": ["Earth_Ranger"],
+                "when_updated_utc": "2025-03-14T16:38:12Z",
                 "traps": [
                     {
                         "trap_id": "test_trap_id_2",
@@ -151,6 +153,7 @@ def get_mock_rmwhub_data():
                 "traps_in_set": 2,
                 "trawl_path": None,
                 "share_with": ["Earth_Ranger"],
+                "when_updated_utc": "2025-03-14T16:38:12Z",
                 "traps": [
                     {
                         "trap_id": "test_trap_id_4",
@@ -187,6 +190,7 @@ def get_mock_rmwhub_data():
                 "traps_in_set": 2,
                 "trawl_path": None,
                 "share_with": ["Earth_Ranger"],
+                "when_updated_utc": "2025-03-14T16:38:12Z",
                 "traps": [
                     {
                         "trap_id": "test_trap_id_6",
@@ -223,6 +227,7 @@ def get_mock_rmwhub_data():
                 "traps_in_set": 1,
                 "trawl_path": None,
                 "share_with": ["Earth_Ranger"],
+                "when_updated_utc": "2025-03-14T16:38:12Z",
                 "traps": [
                     {
                         "trap_id": "test_trap_id_8",
@@ -253,6 +258,7 @@ def mock_rmwhub_items():
             share_with=["Earth_Ranger"],
             id="test_set_id_0",
             deployment_type="trawl",
+            when_updated_utc="2025-03-14T16:38:12Z",
             traps=[
                 Trap(
                     id="test_trap_id_0",
@@ -289,6 +295,7 @@ def mock_rmwhub_items():
             share_with=["Earth_Ranger"],
             id="test_set_id_1",
             deployment_type="trawl",
+            when_updated_utc="2025-03-14T16:38:12Z",
             traps=[
                 Trap(
                     id="test_trap_id_2",
@@ -325,6 +332,7 @@ def mock_rmwhub_items():
             share_with=["Earth_Ranger"],
             id="test_set_id_2",
             deployment_type="trawl",
+            when_updated_utc="2025-03-14T16:38:12Z",
             traps=[
                 Trap(
                     id="test_trap_id_4",
@@ -361,6 +369,7 @@ def mock_rmwhub_items():
             share_with=["Earth_Ranger"],
             id="test_set_id_3",
             deployment_type="trawl",
+            when_updated_utc="2025-03-14T16:38:12Z",
             traps=[
                 Trap(
                     id="test_trap_id_6",
@@ -397,6 +406,7 @@ def mock_rmwhub_items():
             share_with=["Earth_Ranger"],
             id="test_set_id_4",
             deployment_type="single",
+            when_updated_utc="2025-03-14T16:38:12Z",
             traps=[
                 Trap(
                     id="test_trap_id_8",
@@ -426,6 +436,7 @@ def mock_rmwhub_items_update():
             share_with=["Earth_Ranger"],
             id="test_set_id_0",
             deployment_type="trawl",
+            when_updated_utc="2025-03-14T16:38:12Z",
             traps=[
                 Trap(
                     id="test_trap_id_0",
@@ -449,6 +460,7 @@ def mock_rmwhub_items_update():
             share_with=["Earth_Ranger"],
             id="test_set_id_1",
             deployment_type="trawl",
+            when_updated_utc="2025-03-14T16:38:12Z",
             traps=[
                 Trap(
                     id="test_trap_id_1",
@@ -969,5 +981,95 @@ def mock_er_subjects_from_rmw():
             "tracks_available": False,
             "image_url": "/static/pin-black.svg",
             "url": "https://buoy.dev.pamdas.org/api/v1.0/subject/0931ddaa-770c-4bb4-9d66-b8106c17e043",
+        },
+    ]
+
+
+@pytest.fixture
+def mock_latest_observations():
+    return [
+        {
+            "id": "82d599d7-62f1-4620-bab4-0415fa8e6b4b",
+            "location": {"latitude": 34.472032, "longitude": -123.10975},
+            "created_at": "2024-10-09T17:00:54.182801-07:00",
+            "recorded_at": "2020-07-31T11:58:33-07:00",
+            "source": "7107445c-d883-423b-84d9-3525e7a37c8c",
+            "exclusion_flags": 0,
+            "observation_details": {
+                "devices": [
+                    {
+                        "label": "a",
+                        "location": {"latitude": 34.472032, "longitude": -123.10975},
+                        "device_id": "100",
+                        "last_updated": "2020-07-31T18:58:33+00:00",
+                    }
+                ],
+                "display_id": "9f9a88df5fbc",
+                "event_type": "smelts_buoy_deployment",
+                "radio_state": "online-gps",
+            },
+        },
+        {
+            "id": "207b5901-b3d7-4a04-8b2a-e3121b452ad3",
+            "location": {"latitude": 34.472032, "longitude": -123.10975},
+            "created_at": "2024-10-14T20:55:11.392267-07:00",
+            "recorded_at": "2020-07-31T11:58:33-07:00",
+            "source": "34ba3be1-b25e-411a-8d39-2a4b777bcbb1",
+            "exclusion_flags": 0,
+            "observation_details": {
+                "devices": [
+                    {
+                        "label": "a",
+                        "location": {"latitude": 34.472032, "longitude": -123.10975},
+                        "device_id": "device_100",
+                        "last_updated": "2020-07-31T18:58:33+00:00",
+                    }
+                ],
+                "display_id": "c242b9e4c9d9",
+                "event_type": "smelts_buoy_deployment",
+                "radio_state": "online-gps",
+            },
+        },
+        {
+            "id": "b404c5b9-bdd2-49f9-a036-80fab8393b6c",
+            "location": {"latitude": 41.876497, "longitude": -70.273052},
+            "created_at": "2024-10-14T20:55:00.331752-07:00",
+            "recorded_at": "2022-05-20T11:18:17-07:00",
+            "source": "a8db9e65-280b-4c5c-8d1d-caf568761e28",
+            "exclusion_flags": 0,
+            "observation_details": {
+                "devices": [
+                    {
+                        "label": "a",
+                        "location": {"latitude": 41.876497, "longitude": -70.273052},
+                        "device_id": "device_9909",
+                        "last_updated": "2022-05-20T18:18:17+00:00",
+                    }
+                ],
+                "display_id": "28d27646abdf",
+                "event_type": "smelts_buoy_subsea_data",
+                "radio_state": "online-gps",
+            },
+        },
+        {
+            "id": "112c4f7e-c17b-4e5a-8e3d-de576d1ad121",
+            "location": {"latitude": 41.876497, "longitude": -70.273052},
+            "created_at": "2024-10-09T17:00:50.031504-07:00",
+            "recorded_at": "2022-05-20T11:18:17-07:00",
+            "source": "823baa3b-47ea-4b08-bc55-cb6b666d220f",
+            "exclusion_flags": 0,
+            "observation_details": {
+                "devices": [
+                    {
+                        "label": "a",
+                        "location": {"latitude": 41.876497, "longitude": -70.273052},
+                        "device_id": "9909",
+                        "last_updated": "2022-05-20T18:18:17+00:00",
+                    }
+                ],
+                "display_id": "394f4fc71b46",
+                "event_type": "smelts_buoy_subsea_data",
+                "radio_state": "online-gps",
+            },
         },
     ]
