@@ -83,7 +83,11 @@ class Trap(BaseModel):
         Convert the datetime string to UTC.
         """
 
-        datetime_obj = datetime.strptime(datetime_str, "%Y-%m-%dT%H:%M:%S")
+        try:
+            datetime_obj = datetime.strptime(datetime_str, "%Y-%m-%dT%H:%M:%S.%f")
+        except ValueError:
+            datetime_obj = datetime.strptime(datetime_str, "%Y-%m-%dT%H:%M:%S")
+
         datetime_obj = datetime_obj.astimezone(pytz.utc)
         return datetime_obj
 
@@ -931,7 +935,7 @@ class RmwHubAdapter:
 
         datetime_obj = datetime.fromisoformat(datetime_str)
         datetime_obj = datetime_obj.astimezone(pytz.utc)
-        formatted_datetime = datetime_obj.strftime("%Y-%m-%dT%H:%M:%SZ")
+        formatted_datetime = datetime_obj.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
         return formatted_datetime
 
 
