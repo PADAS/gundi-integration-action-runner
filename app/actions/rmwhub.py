@@ -5,7 +5,7 @@ import logging
 from fastapi.encoders import jsonable_encoder
 import pytz
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from enum import Enum
 from typing import List, Optional, Tuple
@@ -255,9 +255,7 @@ class RmwHubAdapter:
         ref: https://ropeless.network/api/docs#/Download
         """
 
-        response = await self.rmw_client.search_hub(
-            start_datetime_str, minute_interval, status
-        )
+        response = await self.rmw_client.search_hub(start_datetime_str, status)
 
         return self.convert_to_sets(response)
 
@@ -309,7 +307,7 @@ class RmwHubAdapter:
             )
 
             gearsets.append(gearset)
-        
+
         return RmwSets(sets=gearsets)
 
     async def process_rmw_download(

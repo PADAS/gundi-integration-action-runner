@@ -144,7 +144,7 @@ async def action_pull_observations(
         # observations.extend(put_set_id_observations)
 
         # TODO: Handle failed response
-        await log_activity(
+        await log_action_activity(
             integration_id=integration.id,
             action_id="pull_observations",
             level=LogLevel.INFO,
