@@ -1,3 +1,4 @@
+import json
 import logging
 from typing import Dict, List, Tuple
 
@@ -9,7 +10,7 @@ from gundi_core.schemas.v2 import ConnectionIntegration, Integration
 from app.actions.configurations import EdgeTechAuthConfiguration, EdgeTechConfiguration
 from app.actions.edgetech import EdgeTechClient
 from app.actions.edgetech.exceptions import InvalidCredentials
-from app.actions.edgetech.processor import EdgetTechProcessor
+from app.actions.edgetech.processor import EdgeTechProcessor
 from app.services.action_scheduler import crontab_schedule
 from app.services.activity_logger import activity_logger, log_action_activity
 from app.services.gundi import send_observations_to_gundi
@@ -72,15 +73,13 @@ async def process_destination(
     er_destination_token, er_destination_url = await get_destination_credentials(
         gundi_client, destination
     )
-    processor = EdgetTechProcessor(data, er_destination_token, er_destination_url)
+    processor = EdgeTechProcessor(data, er_destination_token, er_destination_url)
     observations, inserted_buoys, updated_buoys = await processor.process()
-    observations.sort(key=lambda x: x["recorded_at"])
 
-    for batch in generate_batches(observations):
-        await send_observations_to_gundi(
-            observations=batch, integration_id=str(integration.id)
-        )
-
+    # for batch in generate_batches(observations):
+    # result = await send_observations_to_gundi(
+    #     observations=batch, integration_id=str(integration.id)
+    # )
     await log_action_activity(
         integration_id=integration.id,
         action_id="pull_edgetech",

@@ -12,6 +12,11 @@ GEAR_DEPLOYED_EVENT = "gear_deployed"
 GEAR_RETRIEVED_EVENT = "gear_retrieved"
 
 
+class GeoLocation(pydantic.BaseModel):
+    latitude: float
+    longitude: float
+
+
 class ChangeRecordEntry(pydantic.BaseModel):
     key: str
     oldValue: Any
@@ -177,8 +182,10 @@ class Buoy(pydantic.BaseModel):
         Skips records that are older than or equal to last_observation_timestamp if provided.
         """
         observations = []
-
-        for record in self.changeRecords:
+        change_records = sorted(self.changeRecords, key=lambda x: x.timestamp)
+        last_know_position = None
+        last_know_end_position = None
+        for record in change_records:
             if record.type != "MODIFY":
                 logger.debug(
                     "Skipping change record of type %s (Serial %s)",
@@ -225,6 +232,12 @@ class Buoy(pydantic.BaseModel):
             if lat is None or lon is None:
                 continue
 
+            last_know_position = GeoLocation(latitude=lat, longitude=lon)
+            if end_lat is not None and end_lon is not None:
+                last_know_end_position = GeoLocation(
+                    latitude=end_lat, longitude=end_lon
+                )
+
             event_observations = self._build_observations(
                 is_deployed=is_deployed,
                 recorded_at=recorded_at,
@@ -236,19 +249,27 @@ class Buoy(pydantic.BaseModel):
             )
             observations.extend(event_observations)
 
-        return observations
+        return observations, last_know_position, last_know_end_position
 
     def create_observations(
-        self, prefix: str, last_observation_timestamp: Optional[datetime] = None
+        self,
+        prefix: str,
+        last_observation_timestamp: Optional[datetime] = None,
+        last_know_position_previous_states: Optional[GeoLocation] = None,
+        last_know_end_position_previous_states: Optional[GeoLocation] = None,
     ) -> List[Dict[str, Any]]:
         """
         Return observations from the current state or from changeRecords if available.
         Skips if the event is older than or equal to last_observation_timestamp when provided.
         """
         observations = []
+        last_known_position = last_know_position_previous_states
+        last_known_end_position = last_know_end_position_previous_states
         if self.changeRecords:
-            observations += self.generate_observations_from_change_records(
-                prefix, last_observation_timestamp
+            observations, last_known_position, last_known_end_position = (
+                self.generate_observations_from_change_records(
+                    prefix, last_observation_timestamp
+                )
             )
 
         current = self.currentState
@@ -259,15 +280,32 @@ class Buoy(pydantic.BaseModel):
         ).replace(microsecond=0)
 
         if last_observation_timestamp and recorded_at <= last_observation_timestamp:
-            return observations
+            return observations, last_known_position, last_known_end_position
 
         start_lat = current.latDeg or current.recoveredLatDeg
         start_lon = current.lonDeg or current.recoveredLonDeg
         end_lat = current.endLatDeg
         end_lon = current.endLonDeg
 
+        if last_know_position_previous_states is not None:
+            start_lat = start_lat or last_know_position_previous_states.latitude
+            start_lon = start_lon or last_know_position_previous_states.longitude
+
         if start_lat is None or start_lon is None:
-            return observations
+            return observations, last_known_position, last_known_end_position
+
+        last_known_position = GeoLocation(latitude=start_lat, longitude=start_lon)
+
+        if (
+            end_lat is not None
+            and end_lon is not None
+            and last_known_end_position is None
+        ):
+            last_known_end_position = GeoLocation(latitude=end_lat, longitude=end_lon)
+        elif (
+            end_lat is None and end_lon is None and last_known_end_position is not None
+        ):
+            last_known_end_position = None
 
         observations.extend(
             self._build_observations(
@@ -280,4 +318,5 @@ class Buoy(pydantic.BaseModel):
                 end_lon=end_lon,
             )
         )
-        return observations
+
+        return observations, last_known_position, last_known_end_position
