@@ -69,9 +69,10 @@ async def test_handler_action_pull_observations(
         len(mock_rmw_observations) * len(a_good_connection.destinations)
     )
 
-    expected_start_datetime_str = (fixed_now - timedelta(minutes=5)).isoformat(
-        timespec="seconds"
-    )
+    sync_interval_minutes = 30
+    expected_start_datetime_str = (
+        fixed_now - timedelta(minutes=sync_interval_minutes)
+    ).isoformat(timespec="seconds")
 
     assert download_data_mock.call_count == len(a_good_connection.destinations)
     for call in download_data_mock.call_args_list:

@@ -54,7 +54,7 @@ async def action_pull_observations(
     integration, action_config: PullRmwHubObservationsConfiguration
 ):
     current_datetime = datetime.now(timezone.utc)
-    sync_interval_minutes = 5
+    sync_interval_minutes = 30
     start_datetime = current_datetime - timedelta(minutes=sync_interval_minutes)
     start_datetime_str = start_datetime.isoformat(timespec="seconds")
     end_datetime = current_datetime
