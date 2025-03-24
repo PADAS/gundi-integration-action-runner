@@ -1,7 +1,7 @@
 # actions/handlers.py
-from enum import Enum
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from enum import Enum
 from typing import Tuple
 
 from gundi_client_v2 import GundiClient
@@ -14,7 +14,7 @@ from app.services.activity_logger import activity_logger, log_action_activity
 from app.services.gundi import send_observations_to_gundi
 from app.services.utils import find_config_for_action
 
-from .configurations import PullRmwHubObservationsConfiguration, AuthenticateConfig
+from .configurations import AuthenticateConfig, PullRmwHubObservationsConfiguration
 from .rmwhub import RmwHubAdapter
 
 logger = logging.getLogger(__name__)
@@ -53,12 +53,12 @@ async def action_auth(integration: Integration, action_config: AuthenticateConfi
 async def action_pull_observations(
     integration, action_config: PullRmwHubObservationsConfiguration
 ):
-    current_datetime = datetime.now()
-    sync_interval_minutes = 5
+    current_datetime = datetime.now(timezone.utc)
+    sync_interval_minutes = 30
     start_datetime = current_datetime - timedelta(minutes=sync_interval_minutes)
-    start_datetime_str = start_datetime.strftime("%Y-%m-%d %H:%M:%S")
+    start_datetime_str = start_datetime.isoformat(timespec="seconds")
     end_datetime = current_datetime
-    end_datetime_str = end_datetime.strftime("%Y-%m-%d %H:%M:%S")
+    end_datetime_str = end_datetime.isoformat(timespec="seconds")
 
     # TODO: Create sub-actions for each destination
     total_observations = []
@@ -103,27 +103,30 @@ async def action_pull_observations(
         )
 
         observations = []
-        if len(rmwSets.sets) != 0:
-            logger.info(
-                f"Processing updates from RMW Hub API...Number of gearsets returned: {len(rmwSets.sets)}"
-            )
-            observations = await rmw_adapter.process_rmw_download(
-                rmwSets, start_datetime_str, sync_interval_minutes
-            )
-            total_observations.extend(observations)
-        else:
-            await log_action_activity(
-                integration_id=integration.id,
-                action_id="pull_observations",
-                level=LogLevel.INFO,
-                title="No gearsets returned from RMW Hub API.",
-                data={
-                    "start_date_time": start_datetime_str,
-                    "end_date_time": end_datetime_str,
-                    "environment": str(environment),
-                },
-                config_data=action_config.dict(),
-            )
+        try:
+            if len(rmwSets.sets) != 0:
+                logger.info(
+                    f"Processing updates from RMW Hub API...Number of gearsets returned: {len(rmwSets.sets)}"
+                )
+                observations = await rmw_adapter.process_rmw_download(
+                    rmwSets, start_datetime_str, sync_interval_minutes
+                )
+                total_observations.extend(observations)
+            else:
+                await log_action_activity(
+                    integration_id=integration.id,
+                    action_id="pull_observations",
+                    level=LogLevel.INFO,
+                    title="No gearsets returned from RMW Hub API.",
+                    data={
+                        "start_date_time": start_datetime_str,
+                        "end_date_time": end_datetime_str,
+                        "environment": str(environment),
+                    },
+                    config_data=action_config.dict(),
+                )
+        except ValueError as e:
+            logger.error(f"Failed to process RMW Hub data: {str(e)}")
 
         # Upload changes from ER to RMW Hub
         rmw_response = {}
@@ -198,11 +201,11 @@ async def action_pull_observations_24_hour_sync(
 ):
 
     sync_interval_minutes = 1440  # 24 hours
-    current_datetime = datetime.now()
+    current_datetime = datetime.now(timezone.utc)
     start_datetime = current_datetime - timedelta(minutes=sync_interval_minutes)
-    start_datetime_str = start_datetime.strftime("%Y-%m-%d %H:%M:%S")
+    start_datetime_str = start_datetime.isoformat(timespec="seconds")
     end_datetime = current_datetime
-    end_datetime_str = end_datetime.strftime("%Y-%m-%d %H:%M:%S")
+    end_datetime_str = end_datetime.isoformat(timespec="seconds")
 
     # TODO: Create sub-actions for each destination
     total_observations = []

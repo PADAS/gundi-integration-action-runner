@@ -40,6 +40,8 @@ click==8.1.7
     #   uvicorn
 cryptography==43.0.3
     # via gcloud-aio-auth
+dateparser==1.1.1
+    # via -r requirements.in
 environs==9.5.0
     # via
     #   -r requirements-base.in
@@ -121,18 +123,26 @@ pytest-asyncio==0.21.2
     # via -r requirements-dev.in
 pytest-mock==3.12.0
     # via -r requirements-dev.in
+python-dateutil==2.9.0.post0
+    # via dateparser
 python-dotenv==1.0.1
     # via environs
 python-json-logger==2.0.7
     # via -r requirements-base.in
-pytz==2021.3
-    # via -r requirements.in
+pytz==2022.1
+    # via
+    #   -r requirements.in
+    #   dateparser
 redis==5.0.8
     # via -r requirements-base.in
+regex==2022.3.2
+    # via dateparser
 requests==2.28.2
     # via -r requirements.in
 respx==0.21.1
     # via gundi-client-v2
+six==1.17.0
+    # via python-dateutil
 sniffio==1.3.1
     # via
     #   anyio
@@ -152,6 +162,8 @@ typing-extensions==4.12.2
     #   multidict
     #   pydantic
     #   uvicorn
+tzlocal==5.3.1
+    # via dateparser
 urllib3==1.26.20
     # via requests
 uvicorn==0.23.2

@@ -1,4 +1,5 @@
 from datetime import datetime
+from dateparser import parse as parse_date
 from enum import Enum
 import hashlib
 from typing import List, Optional, Tuple
@@ -83,9 +84,12 @@ class Trap(BaseModel):
         Convert the datetime string to UTC.
         """
 
-        datetime_obj = datetime.strptime(datetime_str, "%Y-%m-%dT%H:%M:%S")
-        datetime_obj = datetime_obj.astimezone(pytz.utc)
-        return datetime_obj
+        naive_datetime_obj = parse_date(datetime_str)
+        utc_datetime_obj = naive_datetime_obj.replace(tzinfo=timezone.utc)
+        if not utc_datetime_obj:
+            raise ValueError(f"Unable to parse datetime string: {datetime_str}")
+
+        return utc_datetime_obj
 
 
 class GearSet(BaseModel):
@@ -931,7 +935,7 @@ class RmwHubAdapter:
 
         datetime_obj = datetime.fromisoformat(datetime_str)
         datetime_obj = datetime_obj.astimezone(pytz.utc)
-        formatted_datetime = datetime_obj.strftime("%Y-%m-%dT%H:%M:%SZ")
+        formatted_datetime = datetime_obj.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
         return formatted_datetime
 
 
