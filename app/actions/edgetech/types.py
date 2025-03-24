@@ -99,6 +99,7 @@ class Buoy(pydantic.BaseModel):
         lat: float,
         lon: float,
         devices: List[Dict[str, Any]],
+        is_active: bool,
         last_updated: str,
     ) -> Dict[str, Any]:
         """Return an observation record with the given parameters."""
@@ -107,14 +108,16 @@ class Buoy(pydantic.BaseModel):
             "source": subject_name,
             "type": SOURCE_TYPE,
             "subject_type": SUBJECT_SUBTYPE,
-            "is_active": False,
+            "is_active": is_active,
             "recorded_at": last_updated,
             "location": {"lat": lat, "lon": lon},
             "additional": {
                 "subject_name": subject_name,
                 "edgetech_serial_number": self.serialNumber,
                 "display_id": self.serialNumber,
-                "event_type": None,
+                "event_type": GEAR_DEPLOYED_EVENT
+                if is_active
+                else GEAR_RETRIEVED_EVENT,
                 "devices": devices,
             },
         }
@@ -147,6 +150,7 @@ class Buoy(pydantic.BaseModel):
             lat=start_lat,
             lon=start_lon,
             devices=[],
+            is_active=is_deployed,
             last_updated=iso_time,
         )
         observation_a["is_active"] = is_deployed
@@ -163,6 +167,7 @@ class Buoy(pydantic.BaseModel):
                 lat=end_lat,
                 lon=end_lon,
                 devices=devices,
+                is_active=is_deployed,
                 last_updated=iso_time,
             )
             observation_b["is_active"] = is_deployed
