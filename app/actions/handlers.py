@@ -76,10 +76,11 @@ async def process_destination(
     processor = EdgeTechProcessor(data, er_destination_token, er_destination_url)
     observations, inserted_buoys, updated_buoys = await processor.process()
 
-    # for batch in generate_batches(observations):
-    # result = await send_observations_to_gundi(
-    #     observations=batch, integration_id=str(integration.id)
-    # )
+    for batch in generate_batches(observations):
+        result = await send_observations_to_gundi(
+            observations=batch, integration_id=str(integration.id)
+        )
+        logger.info(f"Sent {len(batch)} observations to Gundi: {result}")
     await log_action_activity(
         integration_id=integration.id,
         action_id="pull_edgetech",
