@@ -121,7 +121,7 @@ async def action_auth(
 
 
 @activity_logger()
-@crontab_schedule("*/5 * * * *")  # Run every 5 minutes
+@crontab_schedule("*/3 * * * *")  # Run every 3 minutes
 async def action_pull_edgetech_observations(
     integration: Integration, action_config: EdgeTechConfiguration
 ):
