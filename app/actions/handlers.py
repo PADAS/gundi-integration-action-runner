@@ -1,5 +1,5 @@
+import json
 import logging
-from timeit import default_timer as timer
 from typing import Dict, List, Tuple
 
 from gundi_client_v2 import GundiClient
@@ -10,7 +10,7 @@ from gundi_core.schemas.v2 import ConnectionIntegration, Integration
 from app.actions.configurations import EdgeTechAuthConfiguration, EdgeTechConfiguration
 from app.actions.edgetech import EdgeTechClient
 from app.actions.edgetech.exceptions import InvalidCredentials
-from app.actions.edgetech.processor import EdgetTechProcessor
+from app.actions.edgetech.processor import EdgeTechProcessor
 from app.services.action_scheduler import crontab_schedule
 from app.services.activity_logger import activity_logger, log_action_activity
 from app.services.gundi import send_observations_to_gundi
@@ -73,23 +73,22 @@ async def process_destination(
     er_destination_token, er_destination_url = await get_destination_credentials(
         gundi_client, destination
     )
-    processor = EdgetTechProcessor(data, er_destination_token, er_destination_url)
-    observations = await processor.process()
+    processor = EdgeTechProcessor(data, er_destination_token, er_destination_url)
+    observations, inserted_buoys, updated_buoys = await processor.process()
+
     for batch in generate_batches(observations):
-        logger.info(f"Sending {len(batch)} observations to Gundi...")
-        await send_observations_to_gundi(
+        result = await send_observations_to_gundi(
             observations=batch, integration_id=str(integration.id)
         )
+        logger.info(f"Sent {len(batch)} observations to Gundi: {result}")
     await log_action_activity(
         integration_id=integration.id,
         action_id="pull_edgetech",
         level=LogLevel.INFO,
         title="Pulled data from EdgeTech API",
     )
-    logger.info(
-        f"Downloaded {len(data)} records from EdgeTech API for integration {integration}"
-    )
-    return len(observations)
+    return len(observations), len(inserted_buoys), len(updated_buoys)
+
 
 # --- Main Handler Functions ---
 
@@ -142,13 +141,17 @@ async def action_pull_edgetech_observations(
     edgetech_client = EdgeTechClient(auth_config=auth_config, pull_config=action_config)
     data = await edgetech_client.download_data()
 
-    total_observations = 0
+    destination_result = {}
     for destination in connection_details.destinations:
-        total_observations += await process_destination(
+        observations, inserted_buoys, updated_buoys = await process_destination(
             gundi_client, integration, data, destination
         )
+        destination_key = f"{destination.id}_{destination.name}"
+        destination_result[destination_key] = {
+            "records_extracted": len(data),
+            "observations_sent": observations,
+            "subjects_inserted": inserted_buoys,
+            "subjects_updated": updated_buoys,
+        }
 
-    return {
-        "observations_extracted": len(data),
-        "observations_sent": total_observations,
-    }
+    return destination_result

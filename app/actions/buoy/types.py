@@ -57,8 +57,8 @@ class ObservationSubject(BaseModel):
     user: Optional[Any]
     tracks_available: bool
     image_url: str
-    last_position_status: LastPositionStatus
-    last_position_date: datetime
-    last_position: Feature
+    last_position_status: Optional[LastPositionStatus]
+    last_position_date: Optional[datetime]
+    last_position: Optional[Feature]
     device_status_properties: Optional[Any]
     url: HttpUrl

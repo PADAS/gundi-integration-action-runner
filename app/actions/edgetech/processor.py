@@ -1,16 +1,16 @@
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import pydantic
 
-from app.actions.buoy import BuoyClient, ObservationSubject
+from app.actions.buoy import BuoyClient
 from app.actions.edgetech.types import Buoy
 
 logger = logging.getLogger(__name__)
 
 
-class EdgetTechProcessor:
+class EdgeTechProcessor:
     def __init__(
         self,
         data: List[Buoy],
@@ -25,7 +25,7 @@ class EdgetTechProcessor:
         further processing, and sets up filters for processing buoy data.
 
         Args:
-            data (List[dict]): A list of dictionaries representing raw buoy data records.
+            data (List[Buoy]): A list of Buoy objects (parsed from raw data).
             er_token (str): Authentication token for the ER client.
             er_url (str): URL endpoint for the ER client.
             filters (dict, optional): A dictionary containing filter criteria (e.g., start_date and end_date).
@@ -40,11 +40,11 @@ class EdgetTechProcessor:
         """
         Generate default filter criteria for processing buoy data.
 
-        The default filters define a time window starting 180 days before the current UTC time
+        By default, this method defines a time window starting 180 days before the current UTC time
         and ending at the current UTC time.
 
         Returns:
-            Dict[str, any]: A dictionary with 'start_date' and 'end_date' keys defining the filter window.
+            Dict[str, Any]: A dictionary with 'start_date' and 'end_date' keys defining the filter window.
         """
         end_date = datetime.now(timezone.utc)
         start_date = end_date - timedelta(days=180)
@@ -52,10 +52,10 @@ class EdgetTechProcessor:
 
     def _filter_data(self) -> List[Buoy]:
         """
-        Filter buoy data records based on the defined time window.
+        Filter buoy data records based on the time window defined in self._filters.
 
-        Iterates over the parsed buoy data and selects records whose 'currentState.lastUpdated'
-        timestamp falls within the filter's start_date and end_date range.
+        Iterates over the parsed buoy data and selects records whose currentState.lastUpdated
+        timestamp falls within the filter's start_date and end_date.
 
         Returns:
             List[Buoy]: A list of Buoy objects that satisfy the filter criteria.
@@ -71,196 +71,226 @@ class EdgetTechProcessor:
                 filtered_data.append(record)
         return filtered_data
 
-    def _get_newest_buoy_states(self) -> Dict[str, Buoy]:
+    def _group_by_serial_number(self) -> Dict[str, List[Buoy]]:
         """
-        Retrieve the most recent state for each unique buoy based on serial number.
+        Group the filtered Buoy data by serial number, returning a dictionary in which each key
+        is a serial number and each value is a list of Buoy records for that serial number.
 
-        Filters the buoy data and then selects the buoy record with the latest 'lastUpdated'
-        timestamp for each serial number.
+        The lists are sorted in ascending order by each Buoy's currentState.lastUpdated.
 
         Returns:
-            Dict[str, Buoy]: A dictionary mapping each buoy's serial number to its newest Buoy record.
+            Dict[str, List[Buoy]]: A dictionary mapping each serial number to a sorted list of Buoy objects.
         """
         filtered_data = self._filter_data()
-        newest_by_serial = {}
-        for buoy in filtered_data:
-            serial = buoy.currentState.serialNumber
-            current_state = buoy.currentState
-            current_newest = newest_by_serial.get(serial)
-            if (
-                current_newest is None
-            ) or current_state.lastUpdated > current_newest.currentState.lastUpdated:
-                newest_by_serial[serial] = buoy
-        return newest_by_serial
+        buoy_states: Dict[str, List[Buoy]] = {}
 
-    def _are_equivalent(self, er_subject: ObservationSubject, buoy: Buoy) -> bool:
-        """
-        Determine whether an ER subject and a Buoy record represent equivalent device states.
-
-        The comparison checks the following:
-            1. Matching serial numbers (handling a '_A' or '_B' suffix if present).
-            2. Matching active state versus deletion status.
-            3. Matching geographic location if available.
-
-        Args:
-            er_subject (ObservationSubject): The ER system's subject representing a device observation.
-            buoy (Buoy): The buoy object containing current state information.
-
-        Returns:
-            bool: True if the ER subject and the buoy record are equivalent; otherwise, False.
-        """
-        # (1) Serial Number:
-        if er_subject.name.startswith(self._prefix):
-            obs_serial = er_subject.name[len(self._prefix) :]
-        else:
-            obs_serial = er_subject.name
-
-        # Remove potential suffix "_A" or "_B" if present
-        if obs_serial.endswith("_A") or obs_serial.endswith("_B"):
-            obs_serial = obs_serial[:-2]
-
-        if obs_serial != buoy.serialNumber:
-            return False
-
-        if obs_serial != buoy.currentState.serialNumber:
-            return False
-
-        # (2) Active state vs. deletion:
-        if er_subject.is_active != (
-            not buoy.currentState.isDeleted or buoy.currentState.isDeployed
-        ):
-            return False
-
-        # (3) Compare location:
-        if (
-            er_subject.last_position
-            and er_subject.last_position.geometry
-            and er_subject.last_position.geometry.coordinates
-        ):
-            obs_lon, obs_lat = er_subject.last_position.geometry.coordinates
-
-            # Determine which buoy coordinates to compare based on the subject suffix.
-            if er_subject.name.endswith("_B"):
-                buoy_lat = buoy.currentState.endLatDeg
-                buoy_lon = buoy.currentState.endLonDeg
+        for record in filtered_data:
+            serial_number = record.serialNumber
+            if serial_number not in buoy_states:
+                buoy_states[serial_number] = [record]
             else:
-                buoy_lat = buoy.currentState.latDeg
-                buoy_lon = buoy.currentState.lonDeg
+                buoy_states[serial_number].append(record)
 
-            if buoy_lat is None or buoy_lon is None:
-                return False
+        for serial_number, buoy_list in buoy_states.items():
+            buoy_list.sort(key=lambda x: x.currentState.lastUpdated, reverse=False)
 
-            tolerance = 0.0001
+        return buoy_states
+
+    async def _get_er_subject_mapping(self) -> Dict[str, Any]:
+        """
+        Retrieves existing ER subjects from the ER client and returns a mapping by name.
+        """
+        er_subjects = await self._er_client.get_er_subjects()
+        er_subject_mapping = {subject.name: subject for subject in er_subjects}
+        return er_subject_mapping
+
+    def _has_location_data(self, buoy_states: List[Buoy]) -> bool:
+        """
+        Checks if at least one buoy record has location data.
+        """
+        for buoy_state in buoy_states:
+            current = buoy_state.currentState
+            # Quick check for direct location data
             if (
-                abs(obs_lat - buoy_lat) > tolerance
-                or abs(obs_lon - buoy_lon) > tolerance
+                current.latDeg is not None
+                or current.lonDeg is not None
+                or current.recoveredLatDeg is not None
+                or current.recoveredLonDeg is not None
             ):
-                return False
-        else:
-            # If ER subject has no location, then the buoy should also have no primary location.
-            if (
-                buoy.currentState.latDeg is not None
-                or buoy.currentState.lonDeg is not None
-            ):
-                return False
+                return True
 
-        return True
+            # Otherwise, check the changeRecords
+            for changeRecord in buoy_state.changeRecords:
+                if changeRecord.type == "MODIFY":
+                    for change in changeRecord.changes:
+                        if change.key in [
+                            "latDeg",
+                            "lonDeg",
+                            "endLatDeg",
+                            "endLonDeg",
+                            "recoveredLatDeg",
+                            "recoveredLonDeg",
+                        ]:
+                            return True
+        return False
+
+    def _identify_buoys(
+        self,
+        buoy_states_by_serial_number: Dict[str, List[Buoy]],
+        er_subject_mapping: Dict[str, Any],
+    ) -> Tuple[Set[str], Set[str], Set[str]]:
+        """
+        Determines which buoys need to be inserted, updated, or have no location data.
+        """
+        er_subject_names = set(er_subject_mapping.keys())
+        insert_buoys = set()
+        update_buoys = set()
+        no_location_buoys = set()
+
+        for serial_number, buoy_states in buoy_states_by_serial_number.items():
+            # Check location
+            if not self._has_location_data(buoy_states):
+                no_location_buoys.add(serial_number)
+                continue
+
+            primary_subject_name = f"{self._prefix}{serial_number}_A"
+            if primary_subject_name in er_subject_names:
+                update_buoys.add(serial_number)
+            else:
+                insert_buoys.add(serial_number)
+
+        return insert_buoys, update_buoys, no_location_buoys
+
+    def _process_inserts(
+        self, insert_buoys: set, buoy_states_by_serial_number: Dict[str, List[Buoy]]
+    ) -> List[dict]:
+        """
+        Creates observation events for buoys that need insertion.
+        """
+        observations = []
+        for serial_number in insert_buoys:
+            buoy_records = buoy_states_by_serial_number[serial_number]
+            last_known_position = None
+            last_known_end_position = None
+
+            for buoy_record in buoy_records:
+                try:
+                    new_obs, last_known_position, last_known_end_position = (
+                        buoy_record.create_observations(
+                            self._prefix,
+                            None,
+                            last_known_position,
+                            last_known_end_position,
+                        )
+                    )
+                    observations.extend(new_obs)
+                except pydantic.ValidationError as ve:
+                    logger.exception(
+                        "Failed to create BuoyEvent for %s. Error: %s",
+                        serial_number,
+                        ve.json(),
+                    )
+        return observations
+
+    def _process_updates(
+        self,
+        update_buoys: set,
+        buoy_states_by_serial_number: Dict[str, List[Buoy]],
+        er_subject_mapping: Dict[str, Any],
+        noop_buoys: set,
+    ) -> List[dict]:
+        """
+        Creates observation events for buoys that need updating, skipping those with no changes (no-op).
+        """
+        observations = []
+        for serial_number in update_buoys:
+            buoy_records = buoy_states_by_serial_number[serial_number]
+            primary_subject_name = f"{self._prefix}{serial_number}_A"
+            er_subject = er_subject_mapping.get(primary_subject_name)
+
+            if er_subject is None:
+                logger.warning(
+                    f"Primary ER subject not found for buoy {serial_number}. Skipping update."
+                )
+                continue
+
+            last_known_position, last_known_end_position = None, None
+            buoys_observations = []
+            for buoy_record in buoy_records:
+                try:
+                    new_obs, last_known_position, last_known_end_position = (
+                        buoy_record.create_observations(
+                            self._prefix,
+                            er_subject.last_position_date,
+                            last_known_position,
+                            last_known_end_position,
+                        )
+                    )
+                    buoys_observations.extend(new_obs)
+                except pydantic.ValidationError as ve:
+                    logger.exception(
+                        "Failed to update BuoyEvent for %s. Error: %s",
+                        serial_number,
+                        ve.json(),
+                    )
+
+            if len(buoys_observations) == 0:
+                noop_buoys.add(serial_number)
+            observations.extend(buoys_observations)
+
+        return observations
 
     async def process(self) -> List[dict]:
         """
         Process buoy data to generate observation events for the ER system.
 
         This asynchronous method performs the following steps:
-            1. Retrieves the latest buoy states grouped by serial number.
+            1. Retrieves and filters the latest buoy states grouped by serial number.
             2. Fetches existing ER subjects from the ER client.
             3. Maps ER subjects by name and categorizes buoy states into:
-                - Inserts: Buoys not present in ER.
-                - Updates: Buoys present in ER that require updating.
-                - No-ops: Buoys present in ER with equivalent data.
-            4. Generates observation events for new or updated buoys.
-            5. Logs information about the inserts, updates, and no-ops.
+                - Inserts: Buoys not yet present in ER.
+                - Updates: Buoys present in ER that need to be updated.
+                - No-ops: Buoys with no location data or no changes.
+            4. Creates observation events for new or updated buoys.
+            5. Logs information about inserts, updates, and no-ops.
 
         Returns:
             List[dict]: A list of dictionaries representing the observation events generated during processing.
-
         Raises:
-            pydantic.ValidationError: If validation fails when creating buoy observation events.
+            pydantic.ValidationError: If validation fails while creating buoy observation events.
         """
-        buoy_states = self._get_newest_buoy_states()
-        er_subjects = await self._er_client.get_er_subjects()
+        buoy_states_by_serial_number = self._group_by_serial_number()
+        er_subject_mapping = await self._get_er_subject_mapping()
 
-        # Create a map of ER subjects by name.
-        er_subject_mapping = {subject.name: subject for subject in er_subjects}
-        er_subject_names = set(er_subject_mapping.keys())
-
-        # Categorize buoys into insert, update, and no-op
-        insert_buoys = set()
-        update_buoys = set()
+        # Identify buoys for insertion or update (or no location data)
+        insert_buoys, update_buoys, no_location_buoys = self._identify_buoys(
+            buoy_states_by_serial_number, er_subject_mapping
+        )
         noop_buoys = set()
 
-        observations = []
+        logger.warning(
+            f"Skipping {len(no_location_buoys)} serial numbers without location data: {no_location_buoys}"
+        )
 
-        for serial_number, buoy_state in buoy_states.items():
-            if (
-                buoy_state.currentState.latDeg is None
-                or buoy_state.currentState.lonDeg is None
-            ):
-                logger.warning(
-                    f"Skipping buoy {serial_number} with missing location data"
-                )
-                continue
+        # Process inserts
+        insert_observations = self._process_inserts(
+            insert_buoys, buoy_states_by_serial_number
+        )
 
-            primary_subject_name = f"{self._prefix}{serial_number}_A"
-            if primary_subject_name in er_subject_names:
-                # Buoy exists in ER, so update it.
-                update_buoys.add(serial_number)
-            else:
-                # Buoy does not exist in ER, insert it.
-                insert_buoys.add(serial_number)
+        # Process updates
+        update_observations = self._process_updates(
+            update_buoys,
+            buoy_states_by_serial_number,
+            er_subject_mapping,
+            noop_buoys,
+        )
 
-        # Process inserts.
-        for serial_number in insert_buoys:
-            buoy_state = buoy_states[serial_number]
-            logger.info(f"Inserting new buoy: {serial_number}")
-            try:
-                new_observations = buoy_state.create_observations(self._prefix)
-                observations.extend(new_observations)
-            except pydantic.ValidationError as ve:
-                logger.exception(
-                    "Failed making BuoyEvent for %s. Error: %s",
-                    serial_number,
-                    ve.json(),
-                )
-
-        # Process updates.
-        for serial_number in update_buoys:
-            buoy_state = buoy_states[serial_number]
-            primary_subject_name = f"{self._prefix}{serial_number}_A"
-            er_subject = er_subject_mapping.get(primary_subject_name)
-            if er_subject is None:
-                logger.warning(
-                    f"Primary ER subject not found for buoy {serial_number}. Skipping update."
-                )
-                continue
-            if self._are_equivalent(er_subject, buoy_state):
-                # No-op: data is already up to date.
-                noop_buoys.add(serial_number)
-                logger.info(f"No changes needed for buoy: {serial_number}")
-            else:
-                # Update ER subject.
-                logger.info(f"Updating buoy: {serial_number}")
-                try:
-                    new_observations = buoy_state.create_observations(self._prefix)
-                    observations.extend(new_observations)
-                except pydantic.ValidationError as ve:
-                    logger.exception(
-                        "Failed updating BuoyEvent for %s. Error: %s",
-                        serial_number,
-                        ve.json(),
-                    )
+        # Final sets
+        update_buoys = update_buoys - noop_buoys
 
         logger.info(f"Inserts: {insert_buoys}")
-        logger.info(f"Updates: {update_buoys - noop_buoys}")
-        logger.info(f"No-ops: {noop_buoys}")
+        logger.info(f"Updates: {update_buoys}")
+        logger.info(f"No-op: {noop_buoys}")
 
-        return observations
+        observations = insert_observations + update_observations
+        return observations, insert_buoys, update_buoys

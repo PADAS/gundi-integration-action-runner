@@ -1,3 +1,4 @@
+import json
 import logging
 from typing import List, Optional
 
@@ -16,7 +17,9 @@ class BuoyClient:
             "Authorization": f"Bearer {self.er_token}",
         }
 
-    async def get_er_subjects(self, start_datetime: Optional[str] = None) -> List:
+    async def get_er_subjects(
+        self, start_datetime: Optional[str] = None
+    ) -> List[ObservationSubject]:
         query_params = {
             "include_details": "true",
             "include_inactive": "true",
@@ -40,4 +43,10 @@ class BuoyClient:
                     logger.error("No subjects found")
                     return []
                 data = data["data"]
-                return [ObservationSubject.parse_obj(item) for item in data]
+                items = []
+                for item in data:
+                    try:
+                        items.append(ObservationSubject.parse_obj(item))
+                    except Exception as e:
+                        logger.error(f"Error parsing subject: {e}\n{json.dumps(item)})")
+                return items
