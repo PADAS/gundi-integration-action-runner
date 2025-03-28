@@ -1090,3 +1090,554 @@ def get_er_subjects_updated_data():
             "url": "https://buoy.dev.pamdas.org/api/v1.0/subject/f78ffc4f-a91a-4057-b8ae-2e7a1657ac1f",
         },
     ]
+
+
+@pytest.fixture
+def get_expected_observations_test_edgetech_processor_inserting_buoys():
+    return [
+        {
+            "name": "edgetech_88CE9978AE_A",
+            "source": "edgetech_88CE9978AE_A",
+            "type": "ropeless_buoy",
+            "subject_type": "ropeless_buoy_device",
+            "is_active": True,
+            "recorded_at": "2024-10-22T16:34:46+00:00",
+            "location": {"lat": 41.82907459248435, "lon": -71.41540430869928},
+            "additional": {
+                "subject_name": "edgetech_88CE9978AE_A",
+                "edgetech_serial_number": "88CE9978AE",
+                "display_id": "f1ab617fc777",
+                "event_type": "gear_deployed",
+                "devices": [
+                    {
+                        "label": "a",
+                        "location": {
+                            "latitude": 41.82907459248435,
+                            "longitude": -71.41540430869928,
+                        },
+                        "device_id": "edgetech_88CE9978AE_A",
+                        "last_updated": "2024-10-22T16:34:46+00:00",
+                    }
+                ],
+            },
+        },
+        {
+            "name": "edgetech_88CE99C99A_A",
+            "source": "edgetech_88CE99C99A_A",
+            "type": "ropeless_buoy",
+            "subject_type": "ropeless_buoy_device",
+            "is_active": False,
+            "recorded_at": "2024-12-03T16:04:55+00:00",
+            "location": {"lat": 41.5740898, "lon": -70.8831463},
+            "additional": {
+                "subject_name": "edgetech_88CE99C99A_A",
+                "edgetech_serial_number": "88CE99C99A",
+                "display_id": "e1f4d34d79f2",
+                "event_type": "gear_retrieved",
+                "devices": [
+                    {
+                        "label": "a",
+                        "location": {"latitude": 41.5740898, "longitude": -70.8831463},
+                        "device_id": "edgetech_88CE99C99A_A",
+                        "last_updated": "2024-12-03T16:04:55+00:00",
+                    }
+                ],
+            },
+        },
+        {
+            "name": "edgetech_88CE9978AE_A",
+            "source": "edgetech_88CE9978AE_A",
+            "type": "ropeless_buoy",
+            "subject_type": "ropeless_buoy_device",
+            "is_active": False,
+            "recorded_at": "2024-12-10T14:51:59+00:00",
+            "location": {"lat": 41.82907459248435, "lon": -71.41540430869928},
+            "additional": {
+                "subject_name": "edgetech_88CE9978AE_A",
+                "edgetech_serial_number": "88CE9978AE",
+                "display_id": "f1ab617fc777",
+                "event_type": "gear_retrieved",
+                "devices": [
+                    {
+                        "label": "a",
+                        "location": {
+                            "latitude": 41.82907459248435,
+                            "longitude": -71.41540430869928,
+                        },
+                        "device_id": "edgetech_88CE9978AE_A",
+                        "last_updated": "2024-12-10T14:51:59+00:00",
+                    }
+                ],
+            },
+        },
+        {
+            "name": "edgetech_88CE99C99A_A",
+            "source": "edgetech_88CE99C99A_A",
+            "type": "ropeless_buoy",
+            "subject_type": "ropeless_buoy_device",
+            "is_active": False,
+            "recorded_at": "2024-12-10T14:52:06+00:00",
+            "location": {"lat": 41.5740898, "lon": -70.8831463},
+            "additional": {
+                "subject_name": "edgetech_88CE99C99A_A",
+                "edgetech_serial_number": "88CE99C99A",
+                "display_id": "e1f4d34d79f2",
+                "event_type": "gear_retrieved",
+                "devices": [
+                    {
+                        "label": "a",
+                        "location": {"latitude": 41.5740898, "longitude": -70.8831463},
+                        "device_id": "edgetech_88CE99C99A_A",
+                        "last_updated": "2024-12-10T14:52:06+00:00",
+                    }
+                ],
+            },
+        },
+        {
+            "name": "edgetech_88CE9978AE_A",
+            "source": "edgetech_88CE9978AE_A",
+            "type": "ropeless_buoy",
+            "subject_type": "ropeless_buoy_device",
+            "is_active": False,
+            "recorded_at": "2025-02-13T15:30:42+00:00",
+            "location": {"lat": 41.82907459248435, "lon": -71.41540430869928},
+            "additional": {
+                "subject_name": "edgetech_88CE9978AE_A",
+                "edgetech_serial_number": "88CE9978AE",
+                "display_id": "f1ab617fc777",
+                "event_type": "gear_retrieved",
+                "devices": [
+                    {
+                        "label": "a",
+                        "location": {
+                            "latitude": 41.82907459248435,
+                            "longitude": -71.41540430869928,
+                        },
+                        "device_id": "edgetech_88CE9978AE_A",
+                        "last_updated": "2025-02-13T15:30:42+00:00",
+                    }
+                ],
+            },
+        },
+        {
+            "name": "edgetech_88CE99C99A_A",
+            "source": "edgetech_88CE99C99A_A",
+            "type": "ropeless_buoy",
+            "subject_type": "ropeless_buoy_device",
+            "is_active": False,
+            "recorded_at": "2025-03-14T12:07:27+00:00",
+            "location": {"lat": 41.7832483, "lon": -70.7527803},
+            "additional": {
+                "subject_name": "edgetech_88CE99C99A_A",
+                "edgetech_serial_number": "88CE99C99A",
+                "display_id": "e1f4d34d79f2",
+                "event_type": "gear_retrieved",
+                "devices": [
+                    {
+                        "label": "a",
+                        "location": {"latitude": 41.7832483, "longitude": -70.7527803},
+                        "device_id": "edgetech_88CE99C99A_A",
+                        "last_updated": "2025-03-14T12:07:27+00:00",
+                    }
+                ],
+            },
+        },
+        {
+            "name": "edgetech_88CE999763_A",
+            "source": "edgetech_88CE999763_A",
+            "type": "ropeless_buoy",
+            "subject_type": "ropeless_buoy_device",
+            "is_active": True,
+            "recorded_at": "2025-03-17T16:26:12+00:00",
+            "location": {"lat": 41.52546746182916, "lon": -70.67401171221228},
+            "additional": {
+                "subject_name": "edgetech_88CE999763_A",
+                "edgetech_serial_number": "88CE999763",
+                "display_id": "dc5103663894",
+                "event_type": "gear_deployed",
+                "devices": [
+                    {
+                        "label": "a",
+                        "location": {
+                            "latitude": 41.52546746182916,
+                            "longitude": -70.67401171221228,
+                        },
+                        "device_id": "edgetech_88CE999763_A",
+                        "last_updated": "2025-03-17T16:26:12+00:00",
+                    }
+                ],
+            },
+        },
+        {
+            "name": "edgetech_88CE999763_A",
+            "source": "edgetech_88CE999763_A",
+            "type": "ropeless_buoy",
+            "subject_type": "ropeless_buoy_device",
+            "is_active": False,
+            "recorded_at": "2025-03-17T16:41:22+00:00",
+            "location": {"lat": 41.52546746182916, "lon": -70.67401171221228},
+            "additional": {
+                "subject_name": "edgetech_88CE999763_A",
+                "edgetech_serial_number": "88CE999763",
+                "display_id": "dc5103663894",
+                "event_type": "gear_retrieved",
+                "devices": [
+                    {
+                        "label": "a",
+                        "location": {
+                            "latitude": 41.52546746182916,
+                            "longitude": -70.67401171221228,
+                        },
+                        "device_id": "edgetech_88CE999763_A",
+                        "last_updated": "2025-03-17T16:41:22+00:00",
+                    }
+                ],
+            },
+        },
+        {
+            "name": "edgetech_88CE999763_A",
+            "source": "edgetech_88CE999763_A",
+            "type": "ropeless_buoy",
+            "subject_type": "ropeless_buoy_device",
+            "is_active": True,
+            "recorded_at": "2025-03-17T16:43:40+00:00",
+            "location": {"lat": 41.52546746182916, "lon": -70.67401171221228},
+            "additional": {
+                "subject_name": "edgetech_88CE999763_A",
+                "edgetech_serial_number": "88CE999763",
+                "display_id": "5eb353fb0f49",
+                "event_type": "gear_deployed",
+                "devices": [
+                    {
+                        "label": "a",
+                        "location": {
+                            "latitude": 41.52546746182916,
+                            "longitude": -70.67401171221228,
+                        },
+                        "device_id": "edgetech_88CE999763_A",
+                        "last_updated": "2025-03-17T16:43:40+00:00",
+                    },
+                    {
+                        "label": "b",
+                        "location": {
+                            "latitude": 41.52537796592242,
+                            "longitude": -70.6738777899687,
+                        },
+                        "device_id": "edgetech_88CE999763_B",
+                        "last_updated": "2025-03-17T16:43:40+00:00",
+                    },
+                ],
+            },
+        },
+        {
+            "name": "edgetech_88CE999763_B",
+            "source": "edgetech_88CE999763_B",
+            "type": "ropeless_buoy",
+            "subject_type": "ropeless_buoy_device",
+            "is_active": True,
+            "recorded_at": "2025-03-17T16:43:40+00:00",
+            "location": {"lat": 41.52537796592242, "lon": -70.6738777899687},
+            "additional": {
+                "subject_name": "edgetech_88CE999763_B",
+                "edgetech_serial_number": "88CE999763",
+                "display_id": "5eb353fb0f49",
+                "event_type": "gear_deployed",
+                "devices": [
+                    {
+                        "label": "a",
+                        "location": {
+                            "latitude": 41.52546746182916,
+                            "longitude": -70.67401171221228,
+                        },
+                        "device_id": "edgetech_88CE999763_A",
+                        "last_updated": "2025-03-17T16:43:40+00:00",
+                    },
+                    {
+                        "label": "b",
+                        "location": {
+                            "latitude": 41.52537796592242,
+                            "longitude": -70.6738777899687,
+                        },
+                        "device_id": "edgetech_88CE999763_B",
+                        "last_updated": "2025-03-17T16:43:40+00:00",
+                    },
+                ],
+            },
+        },
+    ]
+
+
+@pytest.fixture
+def get_expected_observations_test_create_observations_with_last_updated_timestamp():
+    return [
+        {
+            "name": "edgetech_88CE999763_A",
+            "source": "edgetech_88CE999763_A",
+            "type": "ropeless_buoy",
+            "subject_type": "ropeless_buoy_device",
+            "is_active": False,
+            "recorded_at": "2025-03-17T17:34:32+00:00",
+            "location": {"lat": 41.52546746182916, "lon": -70.67401171221228},
+            "additional": {
+                "subject_name": "edgetech_88CE999763_A",
+                "edgetech_serial_number": "88CE999763",
+                "display_id": "5eb353fb0f49",
+                "event_type": "gear_retrieved",
+                "devices": [
+                    {
+                        "label": "a",
+                        "location": {
+                            "latitude": 41.52546746182916,
+                            "longitude": -70.67401171221228,
+                        },
+                        "device_id": "edgetech_88CE999763_A",
+                        "last_updated": "2025-03-17T17:34:32+00:00",
+                    },
+                    {
+                        "label": "b",
+                        "location": {
+                            "latitude": 41.52537796592242,
+                            "longitude": -70.6738777899687,
+                        },
+                        "device_id": "edgetech_88CE999763_B",
+                        "last_updated": "2025-03-17T17:34:32+00:00",
+                    },
+                ],
+            },
+        },
+        {
+            "name": "edgetech_88CE999763_B",
+            "source": "edgetech_88CE999763_B",
+            "type": "ropeless_buoy",
+            "subject_type": "ropeless_buoy_device",
+            "is_active": False,
+            "recorded_at": "2025-03-17T17:34:32+00:00",
+            "location": {"lat": 41.52537796592242, "lon": -70.6738777899687},
+            "additional": {
+                "subject_name": "edgetech_88CE999763_B",
+                "edgetech_serial_number": "88CE999763",
+                "display_id": "5eb353fb0f49",
+                "event_type": "gear_retrieved",
+                "devices": [
+                    {
+                        "label": "a",
+                        "location": {
+                            "latitude": 41.52546746182916,
+                            "longitude": -70.67401171221228,
+                        },
+                        "device_id": "edgetech_88CE999763_A",
+                        "last_updated": "2025-03-17T17:34:32+00:00",
+                    },
+                    {
+                        "label": "b",
+                        "location": {
+                            "latitude": 41.52537796592242,
+                            "longitude": -70.6738777899687,
+                        },
+                        "device_id": "edgetech_88CE999763_B",
+                        "last_updated": "2025-03-17T17:34:32+00:00",
+                    },
+                ],
+            },
+        },
+    ]
+
+
+@pytest.fixture
+def get_expected_observations_test_create_observations():
+    return [
+        {
+            "name": "edgetech_88CE9978AE_A",
+            "source": "edgetech_88CE9978AE_A",
+            "type": "ropeless_buoy",
+            "subject_type": "ropeless_buoy_device",
+            "is_active": True,
+            "recorded_at": "2024-10-22T16:34:46+00:00",
+            "location": {"lat": 41.82907459248435, "lon": -71.41540430869928},
+            "additional": {
+                "subject_name": "edgetech_88CE9978AE_A",
+                "edgetech_serial_number": "88CE9978AE",
+                "display_id": "f1ab617fc777",
+                "event_type": "gear_deployed",
+                "devices": [
+                    {
+                        "label": "a",
+                        "location": {
+                            "latitude": 41.82907459248435,
+                            "longitude": -71.41540430869928,
+                        },
+                        "device_id": "edgetech_88CE9978AE_A",
+                        "last_updated": "2024-10-22T16:34:46+00:00",
+                    }
+                ],
+            },
+        },
+        {
+            "name": "edgetech_88CE99C99A_A",
+            "source": "edgetech_88CE99C99A_A",
+            "type": "ropeless_buoy",
+            "subject_type": "ropeless_buoy_device",
+            "is_active": False,
+            "recorded_at": "2024-12-03T16:04:55+00:00",
+            "location": {"lat": 41.5740898, "lon": -70.8831463},
+            "additional": {
+                "subject_name": "edgetech_88CE99C99A_A",
+                "edgetech_serial_number": "88CE99C99A",
+                "display_id": "e1f4d34d79f2",
+                "event_type": "gear_retrieved",
+                "devices": [
+                    {
+                        "label": "a",
+                        "location": {"latitude": 41.5740898, "longitude": -70.8831463},
+                        "device_id": "edgetech_88CE99C99A_A",
+                        "last_updated": "2024-12-03T16:04:55+00:00",
+                    }
+                ],
+            },
+        },
+        {
+            "name": "edgetech_88CE99C99A_A",
+            "source": "edgetech_88CE99C99A_A",
+            "type": "ropeless_buoy",
+            "subject_type": "ropeless_buoy_device",
+            "is_active": False,
+            "recorded_at": "2025-03-14T12:07:27+00:00",
+            "location": {"lat": 41.7832483, "lon": -70.7527803},
+            "additional": {
+                "subject_name": "edgetech_88CE99C99A_A",
+                "edgetech_serial_number": "88CE99C99A",
+                "display_id": "e1f4d34d79f2",
+                "event_type": "gear_retrieved",
+                "devices": [
+                    {
+                        "label": "a",
+                        "location": {"latitude": 41.7832483, "longitude": -70.7527803},
+                        "device_id": "edgetech_88CE99C99A_A",
+                        "last_updated": "2025-03-14T12:07:27+00:00",
+                    }
+                ],
+            },
+        },
+        {
+            "name": "edgetech_88CE999763_A",
+            "source": "edgetech_88CE999763_A",
+            "type": "ropeless_buoy",
+            "subject_type": "ropeless_buoy_device",
+            "is_active": True,
+            "recorded_at": "2025-03-17T16:26:12+00:00",
+            "location": {"lat": 41.52546746182916, "lon": -70.67401171221228},
+            "additional": {
+                "subject_name": "edgetech_88CE999763_A",
+                "edgetech_serial_number": "88CE999763",
+                "display_id": "dc5103663894",
+                "event_type": "gear_deployed",
+                "devices": [
+                    {
+                        "label": "a",
+                        "location": {
+                            "latitude": 41.52546746182916,
+                            "longitude": -70.67401171221228,
+                        },
+                        "device_id": "edgetech_88CE999763_A",
+                        "last_updated": "2025-03-17T16:26:12+00:00",
+                    }
+                ],
+            },
+        },
+        {
+            "name": "edgetech_88CE999763_A",
+            "source": "edgetech_88CE999763_A",
+            "type": "ropeless_buoy",
+            "subject_type": "ropeless_buoy_device",
+            "is_active": False,
+            "recorded_at": "2025-03-17T16:41:22+00:00",
+            "location": {"lat": 41.52546746182916, "lon": -70.67401171221228},
+            "additional": {
+                "subject_name": "edgetech_88CE999763_A",
+                "edgetech_serial_number": "88CE999763",
+                "display_id": "dc5103663894",
+                "event_type": "gear_retrieved",
+                "devices": [
+                    {
+                        "label": "a",
+                        "location": {
+                            "latitude": 41.52546746182916,
+                            "longitude": -70.67401171221228,
+                        },
+                        "device_id": "edgetech_88CE999763_A",
+                        "last_updated": "2025-03-17T16:41:22+00:00",
+                    }
+                ],
+            },
+        },
+        {
+            "name": "edgetech_88CE999763_A",
+            "source": "edgetech_88CE999763_A",
+            "type": "ropeless_buoy",
+            "subject_type": "ropeless_buoy_device",
+            "is_active": True,
+            "recorded_at": "2025-03-17T16:43:40+00:00",
+            "location": {"lat": 41.52546746182916, "lon": -70.67401171221228},
+            "additional": {
+                "subject_name": "edgetech_88CE999763_A",
+                "edgetech_serial_number": "88CE999763",
+                "display_id": "5eb353fb0f49",
+                "event_type": "gear_deployed",
+                "devices": [
+                    {
+                        "label": "a",
+                        "location": {
+                            "latitude": 41.52546746182916,
+                            "longitude": -70.67401171221228,
+                        },
+                        "device_id": "edgetech_88CE999763_A",
+                        "last_updated": "2025-03-17T16:43:40+00:00",
+                    },
+                    {
+                        "label": "b",
+                        "location": {
+                            "latitude": 41.52537796592242,
+                            "longitude": -70.6738777899687,
+                        },
+                        "device_id": "edgetech_88CE999763_B",
+                        "last_updated": "2025-03-17T16:43:40+00:00",
+                    },
+                ],
+            },
+        },
+        {
+            "name": "edgetech_88CE999763_B",
+            "source": "edgetech_88CE999763_B",
+            "type": "ropeless_buoy",
+            "subject_type": "ropeless_buoy_device",
+            "is_active": True,
+            "recorded_at": "2025-03-17T16:43:40+00:00",
+            "location": {"lat": 41.52537796592242, "lon": -70.6738777899687},
+            "additional": {
+                "subject_name": "edgetech_88CE999763_B",
+                "edgetech_serial_number": "88CE999763",
+                "display_id": "5eb353fb0f49",
+                "event_type": "gear_deployed",
+                "devices": [
+                    {
+                        "label": "a",
+                        "location": {
+                            "latitude": 41.52546746182916,
+                            "longitude": -70.67401171221228,
+                        },
+                        "device_id": "edgetech_88CE999763_A",
+                        "last_updated": "2025-03-17T16:43:40+00:00",
+                    },
+                    {
+                        "label": "b",
+                        "location": {
+                            "latitude": 41.52537796592242,
+                            "longitude": -70.6738777899687,
+                        },
+                        "device_id": "edgetech_88CE999763_B",
+                        "last_updated": "2025-03-17T16:43:40+00:00",
+                    },
+                ],
+            },
+        },
+    ]
