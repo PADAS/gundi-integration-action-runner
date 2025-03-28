@@ -1,7 +1,3 @@
-import hashlib
-from ast import List
-from datetime import datetime, timezone
-
 import pytest
 
 from app.actions.buoy import ObservationSubject
@@ -32,7 +28,6 @@ async def test_edgetech_processor_updated_buoys(
     # Act
     processor = EdgeTechProcessor(buoys, "er_token", "er_token")
     observations, inserts_buoys, update_buoys = await processor.process()
-
     assert observations == []
     assert inserts_buoys == set()
     assert update_buoys == set()
