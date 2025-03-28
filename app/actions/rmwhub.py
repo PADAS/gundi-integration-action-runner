@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from dateparser import parse as parse_date
 from enum import Enum
 import hashlib
@@ -91,6 +91,20 @@ class Trap(BaseModel):
 
         return utc_datetime_obj
 
+    def shift_update_time(self):
+        """
+        Shift the update time of the trap by 5 seconds.
+        """
+
+        if self.status == "deployed":
+            self.deploy_datetime_utc = (
+                self.get_latest_update_time() + timedelta(seconds=5)
+            ).isoformat()
+        elif self.status == "retrieved":
+            self.retrieved_datetime_utc = (
+                self.get_latest_update_time() + timedelta(seconds=5)
+            ).isoformat()
+
 
 class GearSet(BaseModel):
     vessel_id: str
@@ -141,7 +155,7 @@ class GearSet(BaseModel):
 
         return devices
 
-    def create_observations(self) -> List:
+    async def create_observations(self, er_subject: dict = None) -> List:
         """
         Create observations for the gear set.
         """
@@ -151,6 +165,18 @@ class GearSet(BaseModel):
         observations = []
 
         for trap in self.traps:
+            if (
+                self.deployment_type == "trawl"
+                and er_subject
+                and RmwHubAdapter.clean_id_str(er_subject.get("name"))
+                == RmwHubAdapter.clean_id_str(trap.id)
+            ):
+                if er_subject.get("additional") and (
+                    devices := er_subject.get("additional").get("devices")
+                ):
+                    if len(self.traps) != len(devices):
+                        trap.shift_update_time()
+
             if trap.status == "deployed":
                 observations.append(
                     self.create_observation_for_event(trap, devices, Status.DEPLOYED)
@@ -361,16 +387,16 @@ class RmwHubAdapter:
         self.er_subject_id_to_subject_mapping = dict(
             (subject.get("id"), subject) for subject in er_subjects
         )
-        er_subject_names_and_ids = set(
-            self.er_subject_name_to_subject_mapping.keys()
-        ).union(self.er_subject_id_to_subject_mapping.keys())
+        er_subject_names = set(self.er_subject_name_to_subject_mapping.keys())
+        er_subject_ids = set(self.er_subject_id_to_subject_mapping.keys())
+        er_subject_names_and_ids = er_subject_names | er_subject_ids
 
         # Iterate through rmwSets and determine what is an insert and what is an update to Earthranger
         rmw_inserts = set()
         rmw_updates = set()
         for gearset in rmw_sets.sets:
             for trap in gearset.traps:
-                if await self.clean_id_str(trap.id) in er_subject_names_and_ids:
+                if RmwHubAdapter.clean_id_str(trap.id) in er_subject_names_and_ids:
                     rmw_updates.add(gearset)
                 else:
                     rmw_inserts.add(gearset)
@@ -394,7 +420,7 @@ class RmwHubAdapter:
                 logger.info(f"Processing trap ID {trap.id} for insert to ER.")
 
                 # Create observations for the gear set from RmwHub
-                new_observations = self._create_observations(gearset)
+                new_observations = await self._create_observations(gearset)
 
                 observations.extend(new_observations)
                 logger.info(
@@ -423,7 +449,7 @@ class RmwHubAdapter:
                 logger.info(f"Processing trap ID {trap.id} for update to ER.")
 
                 # Get subject from ER
-                clean_trap_id = await self.clean_id_str(trap.id)
+                clean_trap_id = RmwHubAdapter.clean_id_str(trap.id)
                 if clean_trap_id in self.er_subject_name_to_subject_mapping.keys():
                     er_subject = self.er_subject_name_to_subject_mapping.get(
                         clean_trap_id
@@ -439,7 +465,7 @@ class RmwHubAdapter:
                     er_subject = None
 
                 # Create observations for the gear set from RmwHub
-                new_observations = self._create_observations(gearset)
+                new_observations = await self._create_observations(gearset, er_subject)
 
                 observations.extend(new_observations)
                 logger.info(
@@ -491,7 +517,7 @@ class RmwHubAdapter:
 
         for gearset in rmw_sets.sets:
             for trap in gearset.traps:
-                rmw_trap_ids.add(await self.clean_id_str(trap.id))
+                rmw_trap_ids.add(RmwHubAdapter.clean_id_str(trap.id))
 
         # Iterate through er_subjects and determine what is an insert and what is an update to RmwHub
         er_inserts = set()
@@ -506,7 +532,7 @@ class RmwHubAdapter:
                 )
                 continue
             # Use display_id for ER subjects to ensure uniqueness among gear sets
-            elif await self.clean_id_str(subject_name) in rmw_trap_ids:
+            elif RmwHubAdapter.clean_id_str(subject_name) in rmw_trap_ids:
                 er_updates.add(subject["additional"]["display_id"])
             else:
                 er_inserts.add(subject["additional"]["display_id"])
@@ -613,7 +639,7 @@ class RmwHubAdapter:
 
         visited_traps = set()
         for observation in observations:
-            rmw_set_id = await self.clean_id_str(
+            rmw_set_id = RmwHubAdapter.clean_id_str(
                 observation.get("additional").get("rmwhub_set_id")
             )
 
@@ -638,7 +664,7 @@ class RmwHubAdapter:
                 visited_traps.add(trap.id)
 
                 # Get subject from ER
-                clean_trap_id = await self.clean_id_str(trap.id)
+                clean_trap_id = RmwHubAdapter.clean_id_str(trap.id)
                 if clean_trap_id in self.er_subject_name_to_subject_mapping.keys():
                     er_subject = self.er_subject_name_to_subject_mapping.get(
                         clean_trap_id
@@ -680,7 +706,7 @@ class RmwHubAdapter:
                 f"Insert operation for Trap {trap.id}. Cannot update subject that does not exist."
             )
 
-            trap_id_in_er = "rmwhub_" + (await self.clean_id_str(trap.id))
+            trap_id_in_er = "rmwhub_" + (RmwHubAdapter.clean_id_str(trap.id))
             async for attempt in stamina.retry_context(
                 on=httpx.HTTPError, wait_initial=1.0, wait_jitter=5.0, wait_max=32.0
             ):
@@ -693,7 +719,9 @@ class RmwHubAdapter:
                 f"Failed to compare gear set for trap ID {trap.id}. RMW latest update time: {trap_latest_update_time.isoformat()}"
             )
 
-    def _create_observations(self, rmw_set: GearSet) -> List:
+    async def _create_observations(
+        self, rmw_set: GearSet, er_subject: dict = None
+    ) -> List:
         """
         Create new observations for ER from RmwHub data.
 
@@ -701,7 +729,7 @@ class RmwHubAdapter:
         """
 
         # Create observations for the gear set
-        observations = rmw_set.create_observations()
+        observations = await rmw_set.create_observations(er_subject)
 
         return observations
 
@@ -813,7 +841,7 @@ class RmwHubAdapter:
         for device in er_subject.get("additional").get("devices"):
             # Use just the ID for the Trap ID if the gearset is originally from RMW
             subject_name = er_subject.get("name")
-            cleaned_id = await self.clean_id_str(subject_name)
+            cleaned_id = RmwHubAdapter.clean_id_str(subject_name)
             trap_id = (
                 cleaned_id
                 if rmw_gearset and subject_name.startswith("rmw")
@@ -880,7 +908,7 @@ class RmwHubAdapter:
 
         set_id_to_set_mapping = {}
         for gear_set in sets:
-            set_id_to_set_mapping[await self.clean_id_str(gear_set.id)] = gear_set
+            set_id_to_set_mapping[RmwHubAdapter.clean_id_str(gear_set.id)] = gear_set
         return set_id_to_set_mapping
 
     async def create_name_to_subject_mapping(self, er_subjects: List) -> dict:
@@ -892,7 +920,7 @@ class RmwHubAdapter:
         for subject in er_subjects:
             if subject.get("name"):
                 name_to_subject_mapping[
-                    await self.clean_id_str(subject.get("id"))
+                    RmwHubAdapter.clean_id_str(subject.get("name"))
                 ] = subject
             else:
                 msg = "Cannot clean string. Subject name is empty."
@@ -904,18 +932,14 @@ class RmwHubAdapter:
                 )
         return name_to_subject_mapping
 
-    async def clean_id_str(self, subject_name: str):
+    @classmethod
+    def clean_id_str(cls, subject_name: str):
         """
         Resolve the ID string to just the UUID
         """
         if not subject_name:
             msg = "Cannot clean string. Subject name is empty."
-            await log_action_activity(
-                integration_id=self.integration_id,
-                action_id="pull_observations",
-                title=msg,
-                level=LogLevel.ERROR,
-            )
+            logger.error(msg)
             return None
 
         cleaned_str = (
@@ -935,7 +959,7 @@ class RmwHubAdapter:
 
         datetime_obj = datetime.fromisoformat(datetime_str)
         datetime_obj = datetime_obj.astimezone(pytz.utc)
-        formatted_datetime = datetime_obj.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+        formatted_datetime = datetime_obj.isoformat()
         return formatted_datetime
 
 

@@ -1,5 +1,5 @@
 import pytest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 
 @pytest.mark.asyncio
@@ -32,3 +32,18 @@ async def test_trap_convert_to_utc(mock_rmwhub_items):
         parsed_datetime_with_fractional_seconds.strftime("%Y-%m-%d %H:%M:%S.%f")
         == datetime_with_fractional_seconds_str
     )
+
+
+@pytest.mark.asyncio
+async def test_trap_shift_update_time(mock_rmwhub_items):
+    # Setup mock trap
+    mock_trap = mock_rmwhub_items[0].traps[0]
+    mock_trap.status = "deployed"
+
+    expected_deployment_time = (
+        mock_trap.get_latest_update_time() + timedelta(seconds=5)
+    ).isoformat()
+
+    mock_trap.shift_update_time()
+
+    assert mock_trap.deploy_datetime_utc == expected_deployment_time
