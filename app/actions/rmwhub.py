@@ -172,9 +172,9 @@ class GearSet(BaseModel):
                 == RmwHubAdapter.clean_id_str(trap.id)
             ):
                 if er_subject.get("additional") and (
-                    devices := er_subject.get("additional").get("devices")
+                    er_subject_devices := er_subject.get("additional").get("devices")
                 ):
-                    if len(self.traps) != len(devices):
+                    if len(self.traps) != len(er_subject_devices):
                         trap.shift_update_time()
 
             if trap.status == "deployed":
