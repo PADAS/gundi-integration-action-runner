@@ -33,7 +33,10 @@ def test_create_observations(
     assert observations == expected_observations
 
 @pytest.mark.usefixtures
-def test_create_observations_recored_at_same_as_current_state(get_mock_edgetech_data):
+def test_create_observations_recored_at_same_as_current_state(
+    get_mock_edgetech_data,
+    get_expected_observations_test_create_observations_recored_at_same_as_current_state,
+):
     """
     Test the create_observations method of the Buoy class with a changeRecord with recorded_at
     at the same time as the currentState.
@@ -53,7 +56,8 @@ def test_create_observations_recored_at_same_as_current_state(get_mock_edgetech_
         observations.extend(buoy_observations)
 
     # Assert
-    assert observations == []
+    expected_observations = get_expected_observations_test_create_observations_recored_at_same_as_current_state
+    assert observations == expected_observations
 
 
 @pytest.mark.usefixtures

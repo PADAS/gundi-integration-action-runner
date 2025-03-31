@@ -227,7 +227,9 @@ class Buoy(pydantic.BaseModel):
                 or self.currentState.dateRecovered
                 or self.currentState.lastUpdated
             ).replace(microsecond=0)
-            if recorded_at == current_state_observation_recorded_at:
+            if (recorded_at == current_state_observation_recorded_at) and (
+                self.currentState.endLatDeg or self.currentState.recoveredLatDeg
+            ):
                 continue
             # Skip if the event is older than or equal to last_observation_timestamp if provided
             if last_observation_timestamp and recorded_at <= last_observation_timestamp:
