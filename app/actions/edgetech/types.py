@@ -1,3 +1,4 @@
+import hashlib
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -103,6 +104,10 @@ class Buoy(pydantic.BaseModel):
         last_updated: str,
     ) -> Dict[str, Any]:
         """Return an observation record with the given parameters."""
+        devices_names = [device["device_id"] for device in devices]
+        concatenated = "".join(devices_names)
+        display_id = hashlib.sha256(concatenated.encode("utf-8")).hexdigest()[:12]
+
         return {
             "name": subject_name,
             "source": subject_name,
@@ -114,7 +119,7 @@ class Buoy(pydantic.BaseModel):
             "additional": {
                 "subject_name": subject_name,
                 "edgetech_serial_number": self.serialNumber,
-                "display_id": self.serialNumber,
+                "display_id": display_id,
                 "event_type": GEAR_DEPLOYED_EVENT
                 if is_active
                 else GEAR_RETRIEVED_EVENT,
@@ -137,31 +142,34 @@ class Buoy(pydantic.BaseModel):
         including associated device records.
         """
         observations = []
-        event_type = GEAR_DEPLOYED_EVENT if is_deployed else GEAR_RETRIEVED_EVENT
         iso_time = recorded_at.isoformat()
 
+        is_trawl = end_lat is not None and end_lon is not None
+
+        devices = []
         subject_name_a = f"{prefix}{self.serialNumber}_A"
         device_a = self._create_device_record(
             "a", start_lat, start_lon, subject_name_a, iso_time
         )
-        devices = [device_a]
-        observation_a = self._create_observation_record(
-            subject_name=subject_name_a,
-            lat=start_lat,
-            lon=start_lon,
-            devices=[],
-            is_active=is_deployed,
-            last_updated=iso_time,
-        )
-        observation_a["is_active"] = is_deployed
-        observation_a["additional"]["event_type"] = event_type
-
-        if end_lat is not None and end_lon is not None:
+        devices.append(device_a)
+        if is_trawl:
             subject_name_b = f"{prefix}{self.serialNumber}_B"
             device_b = self._create_device_record(
                 "b", end_lat, end_lon, subject_name_b, iso_time
             )
-            devices = [device_a, device_b]
+            devices.append(device_b)
+
+        observation_a = self._create_observation_record(
+            subject_name=subject_name_a,
+            lat=start_lat,
+            lon=start_lon,
+            devices=devices,
+            is_active=is_deployed,
+            last_updated=iso_time,
+        )
+        observations.append(observation_a)
+
+        if is_trawl:
             observation_b = self._create_observation_record(
                 subject_name=subject_name_b,
                 lat=end_lat,
@@ -170,12 +178,7 @@ class Buoy(pydantic.BaseModel):
                 is_active=is_deployed,
                 last_updated=iso_time,
             )
-            observation_b["is_active"] = is_deployed
-            observation_b["additional"]["event_type"] = event_type
             observations.append(observation_b)
-
-        observation_a["additional"]["devices"] = devices
-        observations.append(observation_a)
 
         return observations
 
@@ -218,6 +221,17 @@ class Buoy(pydantic.BaseModel):
             recorded_str = recorded_str.replace("Z", "+00:00")
             recorded_at = datetime.fromisoformat(recorded_str).replace(microsecond=0)
 
+            # Skip if the event in change record is the same as the current state
+            current_state_observation_recorded_at = (
+                self.currentState.dateDeployed
+                or self.currentState.dateRecovered
+                or self.currentState.lastUpdated
+            ).replace(microsecond=0)
+            if (recorded_at == current_state_observation_recorded_at) and (
+                self.currentState.endLatDeg or self.currentState.recoveredLatDeg
+            ):
+                continue
+            # Skip if the event is older than or equal to last_observation_timestamp if provided
             if last_observation_timestamp and recorded_at <= last_observation_timestamp:
                 continue
 
