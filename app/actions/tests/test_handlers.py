@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from app.actions.rmwhub import RmwSets
@@ -21,7 +23,7 @@ async def test_handler_action_pull_observations(
     """
     Test handler.action_pull_observations
     """
-
+    fixed_now = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
     items = mock_rmwhub_items
 
     mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
@@ -33,7 +35,8 @@ async def test_handler_action_pull_observations(
         "app.services.gundi.GundiDataSenderClient", mock_gundi_sensors_client_class
     )
     mocker.patch("app.services.gundi._get_gundi_api_key", mock_get_gundi_api_key)
-    mocker.patch(
+
+    download_data_mock = mocker.patch(
         "app.actions.rmwhub.RmwHubAdapter.download_data",
         return_value=(RmwSets(sets=items)),
     )
@@ -53,6 +56,8 @@ async def test_handler_action_pull_observations(
         "app.actions.handlers.get_er_token_and_site",
         return_value=("super_secret_token", "er.destination.com"),
     )
+    mock_datetime = mocker.patch("app.actions.handlers.datetime")
+    mock_datetime.now.return_value = fixed_now
 
     from app.actions.handlers import action_pull_observations
 
@@ -63,3 +68,13 @@ async def test_handler_action_pull_observations(
     assert action_response.get("observations_extracted") == (
         len(mock_rmw_observations) * len(a_good_connection.destinations)
     )
+
+    sync_interval_minutes = 30
+    expected_start_datetime_str = (
+        fixed_now - timedelta(minutes=sync_interval_minutes)
+    ).isoformat(timespec="seconds")
+
+    assert download_data_mock.call_count == len(a_good_connection.destinations)
+    for call in download_data_mock.call_args_list:
+        args, kwargs = call
+        assert args[0] == expected_start_datetime_str
