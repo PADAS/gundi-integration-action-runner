@@ -1,21 +1,15 @@
-from datetime import datetime, timedelta
-from dateparser import parse as parse_date
-from enum import Enum
 import hashlib
 import json
 import logging
-
-from fastapi.encoders import jsonable_encoder
-import pytz
 import uuid
-from datetime import datetime, timezone
-
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import List, Optional, Tuple
 
 import httpx
 import pytz
 import stamina
+from dateparser import parse as parse_date
 from fastapi.encoders import jsonable_encoder
 from gundi_core.schemas.v2.gundi import LogLevel
 from pydantic import BaseModel, NoneStr, validator
@@ -83,12 +77,6 @@ class Trap(BaseModel):
         """
         Convert the datetime string to UTC.
         """
-        try:
-            datetime_obj = datetime.strptime(datetime_str, "%Y-%m-%dT%H:%M:%S.%f")
-        except ValueError:
-            datetime_obj = datetime.strptime(datetime_str, "%Y-%m-%dT%H:%M:%S")
-
-
         naive_datetime_obj = parse_date(datetime_str)
         utc_datetime_obj = naive_datetime_obj.replace(tzinfo=timezone.utc)
         if not utc_datetime_obj:
@@ -515,7 +503,7 @@ class RmwHubAdapter:
                 )
                 continue
             # Use display_id for ER subjects to ensure uniqueness among gear sets
-            elif await self.clean_id_str(subject_name) in rmw_trap_ids:
+            elif self.clean_id_str(subject_name) in rmw_trap_ids:
                 if not subject.get("additional") or not subject.get("additional").get(
                     "devices"
                 ):
@@ -871,7 +859,7 @@ class RmwHubAdapter:
             # TODO: Use subject.id instead of subject.name for the trap ID
             # TODO: Determine the effects of this^ change on the download/upload process
             subject_name = er_subject.get("name")
-            cleaned_id = await validate_id_length(await self.clean_id_str(subject_name))
+            cleaned_id = await validate_id_length(self.clean_id_str(subject_name))
 
             trap_id = (
                 cleaned_id
