@@ -123,6 +123,12 @@ class GearSet(BaseModel):
             return ""
         return v
 
+    @validator("share_with", pre=True)
+    def none_to_empty_list(cls, v: object) -> object:
+        if v is None:
+            return []
+        return v
+
     def __getitem__(self, key):
         return getattr(self, key)
 
@@ -142,9 +148,10 @@ class GearSet(BaseModel):
             devices.append(
                 {
                     "device_id": "rmwhub_"
-                    + trap.id.replace("e_", "")
-                    .replace("rmwhub_", "")
-                    .replace("device_", ""),
+                    + trap.id.removeprefix("e_")
+                    .removeprefix("rmwhub_")
+                    .removeprefix("device_")
+                    .removeprefix("edgetech_"),
                     "label": "a" if trap.sequence == 1 else "b",
                     "location": {
                         "latitude": trap.latitude,
@@ -326,7 +333,7 @@ class RmwHubAdapter:
                 deployment_type=set["deployment_type"],
                 traps_in_set=set["traps_in_set"],
                 trawl_path=set["trawl_path"],
-                share_with=set["share_with"],
+                share_with=set.get("share_with", []),
                 when_updated_utc=set["when_updated_utc"],
                 traps=traps,
             )
@@ -460,6 +467,9 @@ class RmwHubAdapter:
         # Normalize the extracted data into a list of updates following to the RMWHub schema:
         updates = []
 
+        # RF-755 tech debt: Remove call to get gear when is_active status is accurately posted on observation
+        self.er_client.get_gear()
+
         # Get updates from the last interval_minutes in ER
         er_subjects = await self.er_client.get_er_subjects(start_datetime_str)
         if not er_subjects:
@@ -483,9 +493,14 @@ class RmwHubAdapter:
         )
         rmw_set_ids = rmw_set_id_to_gearset_mapping.keys()
 
+        rmw_trap_id_to_gearset_mapping = {}
         for gearset in rmw_sets.sets:
             for trap in gearset.traps:
-                rmw_trap_ids.add(RmwHubAdapter.clean_id_str(trap.id))
+                rmw_trap_id_to_gearset_mapping[
+                    RmwHubAdapter.clean_id_str(trap.id)
+                ] = gearset
+
+        rmw_trap_ids = rmw_trap_id_to_gearset_mapping.keys()
 
         # Iterate through er_subjects and determine what is an insert and what is an update to RmwHub
         er_inserts = set()
@@ -541,38 +556,31 @@ class RmwHubAdapter:
             subject = id_to_er_subject_mapping.get(display_id)
             logger.info(f"Subject ID {subject.get('name')} found in RMW traps.")
 
-            # Get the latest observation for the subject
-            latest_observations = await self.er_client.get_latest_observations(
-                subject.get("id"), 1
-            )
-            latest_observation = latest_observations[0]
-
-            if not latest_observation["observation_details"].get("rmwhub_set_id"):
-                logger.error(f"Subject ID {subject.get('id')} has no RMWHub set ID.")
-                continue
-
-            rmwhub_set_id = latest_observation["observation_details"].get(
-                "rmwhub_set_id"
-            )
-
-            if rmwhub_set_id not in rmw_set_id_to_gearset_mapping.keys():
+            if not subject.get("additional"):
                 logger.error(
-                    f"RMW Set ID {rmwhub_set_id} not found in RMW sets. No action."
-                )
-                log_action_activity(
-                    integration_id=self.integration_id,
-                    action_id="pull_observations",
-                    title=f"RMW Set ID {rmwhub_set_id} not found in RMW sets. No action.",
-                    level=LogLevel.ERROR,
+                    f"Subject ID {subject.get('id')} has no additional data. No action."
                 )
                 continue
+
+            latest_observation = subject.get("additional")
+            rmwhub_set_id = latest_observation.get("rmwhub_set_id")
+            rmwhub_gearset = rmw_trap_id_to_gearset_mapping.get(
+                RmwHubAdapter.clean_id_str(subject.get("name"))
+            )
+            if not rmwhub_set_id and not rmwhub_gearset:
+                logger.error(
+                    f"Subject ID {subject.get('id')} has no RMW set ID from ER or rmwHub. No action."
+                )
+                continue
+
+            rmwhub_set_id = RmwHubAdapter.clean_id_str(rmwhub_gearset.id)
+            logger.warning(
+                f"Subject ID {subject.get('id')} has no RMW set ID. Recovering set ID from rmwHub: {rmwhub_set_id}."
+            )
 
             # Create new updates from ER data for upload to RMWHub
-            rmw_gearset = rmw_set_id_to_gearset_mapping[
-                subject.get("additional").get("rmwhub_set_id")
-            ]
             updated_gearset = await self._create_rmw_update_from_er_subject(
-                subject, rmw_gearset
+                subject, rmwhub_gearset
             )
 
             if not updated_gearset.traps:
@@ -583,6 +591,9 @@ class RmwHubAdapter:
                     level=LogLevel.ERROR,
                 )
             else:
+                num_new_observations += await self._create_put_er_set_id_observation(
+                    subject, updated_gearset.id
+                )
                 updates.append(updated_gearset)
                 logger.info(
                     f"Processed update for gear set with set ID {updated_gearset.id} from ER subject ID: {subject['id']}."
@@ -723,6 +734,7 @@ class RmwHubAdapter:
                 {
                     "name": device["device_id"],
                     "source": device["device_id"],
+                    "manufacturer_id": device["device_id"],
                     "type": SOURCE_TYPE,
                     "subject_type": SUBJECT_SUBTYPE,
                     "is_active": is_active,
@@ -867,7 +879,7 @@ class RmwHubAdapter:
             # we don't want our data back in the download step
             share_with=[],
             traps=traps,
-            when_updated_utc=EPOCH,
+            when_updated_utc=datetime.now(timezone.utc).isoformat(),
         )
 
         return gear_set
@@ -914,11 +926,11 @@ class RmwHubAdapter:
             return None
 
         cleaned_str = (
-            subject_name.replace("device_", "")
-            .replace("rmwhub_", "")
-            .replace("rmw_", "")
-            .replace("e_", "")
-            .replace("edgetech_", "")
+            subject_name.removeprefix("device_")
+            .removeprefix("rmwhub_")
+            .removeprefix("rmw_")
+            .removeprefix("e_")
+            .removeprefix("edgetech_")
             .lower()
         )
         return cleaned_str

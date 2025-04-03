@@ -160,7 +160,7 @@ class BuoyClient:
         if response.status_code == 200:
             logger.info("Request to get source provider was successful")
             data = json.loads(response.text)
-            data = data["data"]
+            data = data.get("data")[0]
             if not data.get("provider"):
                 logger.error(f"No source provider found")
             return data.get("provider")

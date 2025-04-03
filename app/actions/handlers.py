@@ -160,7 +160,7 @@ async def action_pull_observations(
                 )
         except ValueError as e:
             logger.error(f"Failed to upload changes to RMW Hub: {str(e)}")
-            num_put_set_id_observations = []
+            num_put_set_id_observations = 0
             rmw_response = {}
 
         # total_observations.extend(put_set_id_observations)
@@ -219,12 +219,10 @@ async def action_pull_observations_24_hour_sync(
             f"Downloading data from rmwHub to the Earthranger destination: {str(environment)}..."
         )
 
-        rmw_url = "https://test.ropeless.network/api"
         rmw_adapter = RmwHubAdapter(
             integration.id,
             action_config.api_key.get_secret_value(),
-            # action_config.rmw_url,
-            rmw_url,
+            action_config.rmw_url,
             er_token,
             er_destination + "api/v1.0",
         )
