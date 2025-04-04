@@ -215,6 +215,7 @@ class GearSet(BaseModel):
             "recorded_at": last_updated,
             "location": {"lat": trap.latitude, "lon": trap.longitude},
             "additional": {
+                "subject_is_active": True if event_status == Status.DEPLOYED else False,
                 "subject_name": subject_name,
                 "rmwhub_set_id": self.id,
                 "display_id": display_id_hash,
@@ -767,6 +768,7 @@ class RmwHubAdapter:
                         "lon": device["location"]["longitude"],
                     },
                     "additional": {
+                        "is_active": is_active,
                         "subject_name": device["device_id"],
                         "rmwhub_set_id": set_id,
                         "display_id": display_id_hash,
