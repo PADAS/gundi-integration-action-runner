@@ -768,7 +768,7 @@ class RmwHubAdapter:
                         "lon": device["location"]["longitude"],
                     },
                     "additional": {
-                        "is_active": is_active,
+                        "subject_is_active": is_active,
                         "subject_name": device["device_id"],
                         "rmwhub_set_id": set_id,
                         "display_id": display_id_hash,
