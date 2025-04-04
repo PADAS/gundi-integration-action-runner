@@ -120,6 +120,7 @@ class Buoy(pydantic.BaseModel):
                 "subject_name": subject_name,
                 "edgetech_serial_number": self.serialNumber,
                 "display_id": display_id,
+                "subject_is_active": is_active,
                 "event_type": GEAR_DEPLOYED_EVENT
                 if is_active
                 else GEAR_RETRIEVED_EVENT,
