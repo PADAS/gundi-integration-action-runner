@@ -1108,6 +1108,7 @@ def get_expected_observations_test_edgetech_processor_inserting_buoys():
                 "edgetech_serial_number": "88CE9978AE",
                 "display_id": "f1ab617fc777",
                 "event_type": "gear_deployed",
+                "subject_is_active": True,
                 "devices": [
                     {
                         "label": "a",
@@ -1133,6 +1134,7 @@ def get_expected_observations_test_edgetech_processor_inserting_buoys():
                 "subject_name": "edgetech_88CE99C99A_A",
                 "edgetech_serial_number": "88CE99C99A",
                 "display_id": "e1f4d34d79f2",
+                "subject_is_active": False,
                 "event_type": "gear_retrieved",
                 "devices": [
                     {
@@ -1156,6 +1158,7 @@ def get_expected_observations_test_edgetech_processor_inserting_buoys():
                 "subject_name": "edgetech_88CE9978AE_A",
                 "edgetech_serial_number": "88CE9978AE",
                 "display_id": "f1ab617fc777",
+                "subject_is_active": False,
                 "event_type": "gear_retrieved",
                 "devices": [
                     {
@@ -1182,6 +1185,7 @@ def get_expected_observations_test_edgetech_processor_inserting_buoys():
                 "subject_name": "edgetech_88CE99C99A_A",
                 "edgetech_serial_number": "88CE99C99A",
                 "display_id": "e1f4d34d79f2",
+                "subject_is_active": False,
                 "event_type": "gear_retrieved",
                 "devices": [
                     {
@@ -1205,6 +1209,7 @@ def get_expected_observations_test_edgetech_processor_inserting_buoys():
                 "subject_name": "edgetech_88CE9978AE_A",
                 "edgetech_serial_number": "88CE9978AE",
                 "display_id": "f1ab617fc777",
+                "subject_is_active": False,
                 "event_type": "gear_retrieved",
                 "devices": [
                     {
@@ -1231,6 +1236,7 @@ def get_expected_observations_test_edgetech_processor_inserting_buoys():
                 "subject_name": "edgetech_88CE99C99A_A",
                 "edgetech_serial_number": "88CE99C99A",
                 "display_id": "e1f4d34d79f2",
+                "subject_is_active": False,
                 "event_type": "gear_retrieved",
                 "devices": [
                     {
@@ -1253,6 +1259,7 @@ def get_expected_observations_test_edgetech_processor_inserting_buoys():
             "additional": {
                 "subject_name": "edgetech_88CE999763_A",
                 "edgetech_serial_number": "88CE999763",
+                "subject_is_active": True,
                 "display_id": "dc5103663894",
                 "event_type": "gear_deployed",
                 "devices": [
@@ -1279,6 +1286,7 @@ def get_expected_observations_test_edgetech_processor_inserting_buoys():
             "additional": {
                 "subject_name": "edgetech_88CE999763_A",
                 "edgetech_serial_number": "88CE999763",
+                "subject_is_active": False,
                 "display_id": "dc5103663894",
                 "event_type": "gear_retrieved",
                 "devices": [
@@ -1305,6 +1313,7 @@ def get_expected_observations_test_edgetech_processor_inserting_buoys():
             "additional": {
                 "subject_name": "edgetech_88CE999763_A",
                 "edgetech_serial_number": "88CE999763",
+                "subject_is_active": True,
                 "display_id": "5eb353fb0f49",
                 "event_type": "gear_deployed",
                 "devices": [
@@ -1340,6 +1349,7 @@ def get_expected_observations_test_edgetech_processor_inserting_buoys():
             "additional": {
                 "subject_name": "edgetech_88CE999763_B",
                 "edgetech_serial_number": "88CE999763",
+                "subject_is_active": True,
                 "display_id": "5eb353fb0f49",
                 "event_type": "gear_deployed",
                 "devices": [
@@ -1375,6 +1385,7 @@ def get_expected_observations_test_edgetech_processor_inserting_buoys():
             "additional": {
                 "subject_name": "edgetech_88CE999763_A",
                 "edgetech_serial_number": "88CE999763",
+                "subject_is_active": False,
                 "display_id": "5eb353fb0f49",
                 "event_type": "gear_retrieved",
                 "devices": [
@@ -1410,6 +1421,7 @@ def get_expected_observations_test_edgetech_processor_inserting_buoys():
             "additional": {
                 "subject_name": "edgetech_88CE999763_B",
                 "edgetech_serial_number": "88CE999763",
+                "subject_is_active": False,
                 "display_id": "5eb353fb0f49",
                 "event_type": "gear_retrieved",
                 "devices": [
@@ -1451,6 +1463,7 @@ def get_expected_observations_test_create_observations_with_last_updated_timesta
             "additional": {
                 "subject_name": "edgetech_88CE999763_A",
                 "edgetech_serial_number": "88CE999763",
+                "subject_is_active": False,
                 "display_id": "5eb353fb0f49",
                 "event_type": "gear_retrieved",
                 "devices": [
@@ -1486,6 +1499,7 @@ def get_expected_observations_test_create_observations_with_last_updated_timesta
             "additional": {
                 "subject_name": "edgetech_88CE999763_B",
                 "edgetech_serial_number": "88CE999763",
+                "subject_is_active": False,
                 "display_id": "5eb353fb0f49",
                 "event_type": "gear_retrieved",
                 "devices": [
@@ -1527,6 +1541,7 @@ def get_expected_observations_test_create_observations():
             "additional": {
                 "subject_name": "edgetech_88CE9978AE_A",
                 "edgetech_serial_number": "88CE9978AE",
+                "subject_is_active": True,
                 "display_id": "f1ab617fc777",
                 "event_type": "gear_deployed",
                 "devices": [
@@ -1552,6 +1567,7 @@ def get_expected_observations_test_create_observations():
             "location": {"lat": 41.5740898, "lon": -70.8831463},
             "additional": {
                 "subject_name": "edgetech_88CE99C99A_A",
+                "subject_is_active": False,
                 "edgetech_serial_number": "88CE99C99A",
                 "display_id": "e1f4d34d79f2",
                 "event_type": "gear_retrieved",
@@ -1576,6 +1592,7 @@ def get_expected_observations_test_create_observations():
             "additional": {
                 "subject_name": "edgetech_88CE99C99A_A",
                 "edgetech_serial_number": "88CE99C99A",
+                "subject_is_active": False,
                 "display_id": "e1f4d34d79f2",
                 "event_type": "gear_retrieved",
                 "devices": [
@@ -1600,6 +1617,7 @@ def get_expected_observations_test_create_observations():
                 "subject_name": "edgetech_88CE999763_A",
                 "edgetech_serial_number": "88CE999763",
                 "display_id": "dc5103663894",
+                "subject_is_active": True,
                 "event_type": "gear_deployed",
                 "devices": [
                     {
@@ -1625,6 +1643,7 @@ def get_expected_observations_test_create_observations():
             "additional": {
                 "subject_name": "edgetech_88CE999763_A",
                 "edgetech_serial_number": "88CE999763",
+                "subject_is_active": False,
                 "display_id": "dc5103663894",
                 "event_type": "gear_retrieved",
                 "devices": [
@@ -1651,6 +1670,7 @@ def get_expected_observations_test_create_observations():
             "additional": {
                 "subject_name": "edgetech_88CE999763_A",
                 "edgetech_serial_number": "88CE999763",
+                "subject_is_active": True,
                 "display_id": "5eb353fb0f49",
                 "event_type": "gear_deployed",
                 "devices": [
@@ -1687,6 +1707,7 @@ def get_expected_observations_test_create_observations():
                 "subject_name": "edgetech_88CE999763_B",
                 "edgetech_serial_number": "88CE999763",
                 "display_id": "5eb353fb0f49",
+                "subject_is_active": True,
                 "event_type": "gear_deployed",
                 "devices": [
                     {
@@ -1722,6 +1743,7 @@ def get_expected_observations_test_create_observations():
                 "subject_name": "edgetech_88CE999763_A",
                 "edgetech_serial_number": "88CE999763",
                 "display_id": "5eb353fb0f49",
+                "subject_is_active": False,
                 "event_type": "gear_retrieved",
                 "devices": [
                     {
@@ -1757,6 +1779,7 @@ def get_expected_observations_test_create_observations():
                 "subject_name": "edgetech_88CE999763_B",
                 "edgetech_serial_number": "88CE999763",
                 "display_id": "5eb353fb0f49",
+                "subject_is_active": False,
                 "event_type": "gear_retrieved",
                 "devices": [
                     {
@@ -1797,6 +1820,7 @@ def get_expected_observations_test_create_observations_recored_at_same_as_curren
             "additional": {
                 "subject_name": "edgetech_88CE999763_A",
                 "edgetech_serial_number": "88CE999763",
+                "subject_is_active": False,
                 "display_id": "5eb353fb0f49",
                 "event_type": "gear_retrieved",
                 "devices": [
@@ -1832,6 +1856,7 @@ def get_expected_observations_test_create_observations_recored_at_same_as_curren
             "additional": {
                 "subject_name": "edgetech_88CE999763_B",
                 "edgetech_serial_number": "88CE999763",
+                "subject_is_active": False,
                 "display_id": "5eb353fb0f49",
                 "event_type": "gear_retrieved",
                 "devices": [
