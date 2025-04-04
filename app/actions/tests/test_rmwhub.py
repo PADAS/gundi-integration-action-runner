@@ -258,7 +258,7 @@ async def test_rmwhub_adapter_process_upload_update_success(
         a_good_configuration.api_key,
         a_good_configuration.rmw_url,
         "super_secret_token",
-        "er.destination.com",
+        "http://er.destination.com",
     )
     start_datetime_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     mock_log_activity = AsyncMock()
@@ -285,6 +285,15 @@ async def test_rmwhub_adapter_process_upload_update_success(
     )
     mocker.patch(
         "app.actions.buoy.BuoyClient.get_latest_observations",
+        return_value=mock_latest_observations,
+    )
+    mocker.patch(
+        "app.actions.buoy.BuoyClient.get_source_provider",
+        return_value={"source_provider": "rmwhub"}
+    )
+    mocker.patch(
+        "app.actions.buoy.BuoyClient.create_v1_observation",
+        return_value=0,
     )
 
     observations, rmw_response = await rmw_adapter.process_upload(start_datetime_str)
