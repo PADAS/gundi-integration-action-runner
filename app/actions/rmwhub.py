@@ -894,7 +894,7 @@ class RmwHubAdapter:
             trawl_path="",
             # Share with is not set to ER because
             # we don't want our data back in the download step
-            share_with=[],
+            share_with=None,
             traps=traps,
             when_updated_utc=datetime(
                 1970, 1, 1, 0, 0, 0, tzinfo=timezone.utc
