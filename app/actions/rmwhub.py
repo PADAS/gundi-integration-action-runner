@@ -107,7 +107,7 @@ class GearSet(BaseModel):
     deployment_type: str
     traps_in_set: int
     trawl_path: str
-    share_with: List[str]
+    share_with: Optional[List[str]]
     traps: List[Trap]
     when_updated_utc: str
 
