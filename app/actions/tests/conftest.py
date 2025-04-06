@@ -5,6 +5,7 @@ from app.actions.rmwhub import GearSet, Trap
 from gundi_core.schemas.v2 import Connection, ConnectionIntegration
 from gundi_core.schemas import IntegrationInformation
 
+from app.conftest import AsyncMock
 from ropeless_utils import State
 
 
@@ -774,6 +775,96 @@ def mock_er_subjects():
             "url": "https://buoy.dev.pamdas.org/api/v1.0/subject/0931ddaa-770c-4bb4-9d66-b8106c17e043",
         },
     ]
+    
+@pytest.fixture
+def mock_get_latest_observations():
+    """
+    Fixture that simulates the behavior of get_latest_observations.
+    """
+    async def _get_latest_observations(self, subject_id: str, page_size: int):
+        # You can ignore page_size for this fake implementation
+        if subject_id == "0302a774-1971-4a64-8264-1d7f17969442":
+            return [{
+                'id': '0302a774-1971-4a64-8264-1d7f17969442',
+                'location': {'latitude': 42.6762, 'longitude': -70.6255043},
+                'created_at': '2025-01-28T14:51:02.996570-08:00',
+                'recorded_at': '2025-01-26T03:20:57+00:00',
+                'source': 'random-string',
+                'exclusion_flags': 0,
+                'observation_details':
+                    {
+                        'devices': [
+                            {
+                                "label": "a",
+                                "location": {"latitude": 42.6762, "longitude": -70.6255043},
+                                "device_id": "FBB01895-0BC3-4498-ACAC-BCBCE12F1363",
+                                "last_updated": "2025-01-26T03:20:57+00:00",
+                            }
+                        ],
+                        'display_id': '30548f5def46',
+                        'event_type': 'gear_position_rmwhub',
+                        'subject_is_active': True
+                    }
+                }]
+        elif subject_id == "081bfce1-e977-46ad-b948-aa90c9283304":
+            return [{
+                'id': '081bfce1-e977-46ad-b948-aa90c9283304',
+                'location': {"latitude": 20.624751, "longitude": -105.310673},
+                'created_at': '2025-01-28T14:51:02.996570-08:00',
+                'recorded_at': '2025-01-26T03:20:57+00:00',
+                'source': 'random-string',
+                'exclusion_flags': 0,
+                'observation_details':
+                    {
+                        'devices': [
+                            {
+                                "label": "a",
+                                "location": {"latitude": 20.629892, "longitude": -105.318998},
+                                "device_id": "F6528E48-39B9-49A8-8F24-0023CF5EE3D7",
+                                "last_updated": "2025-01-25T13:22:32+00:00",
+                            },
+                            {
+                                "label": "b",
+                                "location": {"latitude": 20.624751, "longitude": -105.310673},
+                                "device_id": "BB1ABEBC-13BF-4110-A4A3-DE6C4F7022D4",
+                                "last_updated": "2025-01-25T13:22:32+00:00",
+                            },
+                        ],
+                        'display_id': '84f360b0a8a5',
+                        'event_type': 'gear_deployed',
+                        'subject_is_active': True
+                    }
+                }]
+        elif subject_id == "0931ddaa-770c-4bb4-9d66-b8106c17e043":
+            return [{
+                'id': '0931ddaa-770c-4bb4-9d66-b8106c17e043',
+                'location': {"latitude": 42.6762032, "longitude": -70.6253728},
+                'created_at': '2025-01-28T14:51:02.996570-08:00',
+                'recorded_at': '2025-01-26T03:20:57+00:00',
+                'source': 'random-string',
+                'exclusion_flags': 0,
+                'observation_details':
+                    {
+                        'devices': [
+                            {
+                                "label": "a",
+                                "location": {"latitude": 20.629892, "longitude": -105.318998},
+                                "device_id": "F6528E48-39B9-49A8-8F24-0023CF5EE3D7",
+                                "last_updated": "2025-01-25T13:22:32+00:00",
+                            },
+                            {
+                                "label": "b",
+                                "location": {"latitude": 20.624751, "longitude": -105.310673},
+                                "device_id": "BB1ABEBC-13BF-4110-A4A3-DE6C4F7022D4",
+                                "last_updated": "2025-01-25T13:22:32+00:00",
+                            },
+                        ],
+                        'display_id': '71be27a7ed7e',
+                        'event_type': 'gear_position_rmwhub',
+                        'subject_is_active': True
+                    }
+                }]
+    return _get_latest_observations
 
 
 @pytest.fixture
