@@ -139,13 +139,6 @@ async def action_pull_observations(
             put_set_id_observations = []
             rmw_response = {}
 
-        total_observations.extend(put_set_id_observations)
-
-        # TODO: Check if the uploaded observations to rmwhub should be added to the observations
-        # TODO: since when push_status_updates is called it won't find it in rmwSets
-        # TODO: (because it is an "own" gear, not "hub" gear)
-        # observations.extend(put_set_id_observations)
-
         # TODO: Handle failed response
         await log_action_activity(
             integration_id=integration.id,
@@ -262,8 +255,6 @@ async def action_pull_observations_24_hour_sync(
         put_set_id_observations, rmw_response = await rmw_adapter.process_rmw_upload(
             start_datetime_str
         )
-        total_observations.extend(put_set_id_observations)
-        observations.extend(put_set_id_observations)
 
         # TODO: Handle failed response
         await log_activity(
