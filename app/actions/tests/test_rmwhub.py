@@ -8,7 +8,7 @@ from app.conftest import AsyncMock
 
 
 @pytest.mark.asyncio
-async def test_rmwhub_download_data(
+async def test_rmwhub_adapter_download_data(
     mocker, get_mock_rmwhub_data, a_good_configuration, a_good_integration
 ):
     """
@@ -39,7 +39,7 @@ async def test_rmwhub_download_data(
 
 @pytest.mark.asyncio
 # TODO: rewrite test
-async def test_process_rmw_download(
+async def test_rmw_adapter_process_download(
     mocker, mock_rmwhub_items, a_good_configuration, a_good_integration
 ):
     """
@@ -68,7 +68,7 @@ async def test_process_rmw_download(
     rmw_sets = RmwSets(sets=mock_rmwhub_items)
     start_datetime_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     minute_interval = 5
-    observations = await rmwadapter.process_rmw_download(
+    observations = await rmwadapter.process_download(
         rmw_sets, start_datetime_str, minute_interval
     )
 
@@ -76,7 +76,7 @@ async def test_process_rmw_download(
 
 
 @pytest.mark.asyncio
-async def test_rmwhub_search_hub(mocker, a_good_configuration):
+async def test_rmwhub_adapter_search_hub(mocker, a_good_configuration):
     """
     Test rmwhub.search_hub
     """
@@ -114,7 +114,7 @@ async def test_rmwhub_search_hub(mocker, a_good_configuration):
 
 
 @pytest.mark.asyncio
-async def test_rmwhub_search_hub_failure(mocker, a_good_configuration):
+async def test_rmwhub_adapter_search_hub_failure(mocker, a_good_configuration):
     """
     Test rmwhub.search_hub failure
     """
@@ -135,7 +135,7 @@ async def test_rmwhub_search_hub_failure(mocker, a_good_configuration):
 
 
 @pytest.mark.asyncio
-async def test_rmwhub_adapter_process_rmw_upload_insert_success(
+async def test_rmwhub_adapter_process_upload_insert_success(
     mocker,
     a_good_configuration,
     a_good_integration,
@@ -145,7 +145,7 @@ async def test_rmwhub_adapter_process_rmw_upload_insert_success(
     mock_er_subjects_from_rmw,
 ):
     """
-    Test RmwHubAdapter.process_rmw_upload insert operations
+    Test RmwHubAdapter.process_upload insert operations
     """
 
     rmw_adapter = RmwHubAdapter(
@@ -178,12 +178,18 @@ async def test_rmwhub_adapter_process_rmw_upload_insert_success(
         "app.actions.buoy.BuoyClient.get_gear",
         return_value=[],
     )
-
-    observations, rmw_response = await rmw_adapter.process_rmw_upload(
-        start_datetime_str
+    mocker.patch(
+        "app.actions.buoy.BuoyClient.get_source_provider",
+        return_value="rmw",
+    )
+    mocker.patch(
+        "app.actions.buoy.BuoyClient.create_v1_observation",
+        return_value=1,
     )
 
-    assert len(observations) == 0
+    observations, rmw_response = await rmw_adapter.process_upload(start_datetime_str)
+
+    assert observations == 0
 
     # Test handle ER upload success
     data = mock_er_subjects
@@ -204,10 +210,8 @@ async def test_rmwhub_adapter_process_rmw_upload_insert_success(
         return_value=[],
     )
 
-    observations, rmw_response = await rmw_adapter.process_rmw_upload(
-        start_datetime_str
-    )
-    assert len(observations) == 5
+    observations, rmw_response = await rmw_adapter.process_upload(start_datetime_str)
+    assert observations == 5
     assert rmw_response["trap_count"] == 5
 
     # Test handle ER upload success with ER Subjects from RMW
@@ -230,15 +234,13 @@ async def test_rmwhub_adapter_process_rmw_upload_insert_success(
         return_value=[],
     )
 
-    observations, rmw_response = await rmw_adapter.process_rmw_upload(
-        start_datetime_str
-    )
-    assert len(observations) == 0
+    observations, rmw_response = await rmw_adapter.process_upload(start_datetime_str)
+    assert observations == 0
     assert rmw_response["trap_count"] == 0
 
 
 @pytest.mark.asyncio
-async def test_rmwhub_adapter_process_rmw_upload_update_success(
+async def test_rmwhub_adapter_process_upload_update_success(
     mocker,
     a_good_configuration,
     a_good_integration,
@@ -248,7 +250,7 @@ async def test_rmwhub_adapter_process_rmw_upload_update_success(
     mock_latest_observations,
 ):
     """
-    Test RmwHubAdapter.process_rmw_upload update operations
+    Test RmwHubAdapter.process_upload update operations
     """
 
     rmw_adapter = RmwHubAdapter(
@@ -256,7 +258,7 @@ async def test_rmwhub_adapter_process_rmw_upload_update_success(
         a_good_configuration.api_key,
         a_good_configuration.rmw_url,
         "super_secret_token",
-        "er.destination.com",
+        "http://er.destination.com",
     )
     start_datetime_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     mock_log_activity = AsyncMock()
@@ -283,19 +285,26 @@ async def test_rmwhub_adapter_process_rmw_upload_update_success(
     )
     mocker.patch(
         "app.actions.buoy.BuoyClient.get_latest_observations",
+        return_value=mock_latest_observations,
+    )
+    mocker.patch(
+        "app.actions.buoy.BuoyClient.get_source_provider",
+        return_value={"source_provider": "rmwhub"}
+    )
+    mocker.patch(
+        "app.actions.buoy.BuoyClient.create_v1_observation",
+        return_value=0,
     )
 
-    observations, rmw_response = await rmw_adapter.process_rmw_upload(
-        start_datetime_str
-    )
+    observations, rmw_response = await rmw_adapter.process_upload(start_datetime_str)
     # There will be no new observsation for items originally from RMW
     # because the set ID has already been added.
-    assert len(observations) == 0
+    assert observations == 0
     assert rmw_response
 
 
 @pytest.mark.asyncio
-async def test_rmwhub_adapter_process_rmw_upload_failure(
+async def test_rmwhub_adapter_process_upload_failure(
     mocker, a_good_configuration, a_good_integration, mock_rmwhub_items
 ):
     """
@@ -332,10 +341,8 @@ async def test_rmwhub_adapter_process_rmw_upload_failure(
         return_value=[],
     )
 
-    observations, rmw_response = await rmw_adapter.process_rmw_upload(
-        start_datetime_str
-    )
-    assert len(observations) == 0
+    observations, rmw_response = await rmw_adapter.process_upload(start_datetime_str)
+    assert observations == 0
     assert rmw_response == {}
 
 
