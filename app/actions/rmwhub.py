@@ -292,6 +292,7 @@ class RmwHubAdapter:
         """
 
         response = await self.rmw_client.search_hub(start_datetime_str, status)
+        response_json = json.loads(response)
 
         if "sets" not in response_json:
             logger.error(f"Failed to download data from RMW Hub API. Error: {response}")
@@ -343,6 +344,7 @@ class RmwHubAdapter:
                 trawl_path=set["trawl_path"],
                 share_with=set.get("share_with", []),
                 when_updated_utc=set["when_updated_utc"],
+                traps=traps,
             )
 
             gearsets.append(gearset)
@@ -983,6 +985,7 @@ class RmwHubAdapter:
                     accuracy="",
                     is_on_end=True,
                 )
+            )
 
         # Create gear set:
         if not rmw_gearset:

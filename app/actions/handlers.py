@@ -137,7 +137,7 @@ async def action_pull_observations(
             (
                 num_put_set_id_observations,
                 rmw_response,
-            ) = await rmw_adapter.process_upload(start_datetime_str)
+            ) = await rmw_adapter.process_rmw_upload(start_datetime_str)
 
             if rmw_response and "detail" in rmw_response:
                 await log_action_activity(
@@ -280,7 +280,7 @@ async def action_pull_observations_24_hour_sync(
             (
                 num_put_set_id_observations,
                 rmw_response,
-            ) = await rmw_adapter.process_upload(start_datetime_str)
+            ) = await rmw_adapter.process_rmw_upload(start_datetime_str)
 
             if rmw_response and "detail" in rmw_response:
                 await log_action_activity(
