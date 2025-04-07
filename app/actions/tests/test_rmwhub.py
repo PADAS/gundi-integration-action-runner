@@ -143,9 +143,10 @@ async def test_rmwhub_adapter_process_upload_insert_success(
     mock_rmw_upload_response,
     mock_er_subjects,
     mock_er_subjects_from_rmw,
+    mock_get_latest_observations,
 ):
     """
-    Test RmwHubAdapter.process_upload insert operations
+    Test RmwHubAdapter.process_rmw_upload insert operations
     """
 
     rmw_adapter = RmwHubAdapter(
@@ -187,7 +188,7 @@ async def test_rmwhub_adapter_process_upload_insert_success(
         return_value=1,
     )
 
-    observations, rmw_response = await rmw_adapter.process_upload(start_datetime_str)
+    observations, rmw_response = await rmw_adapter.process_rmw_upload(start_datetime_str)
 
     assert observations == 0
 
@@ -206,11 +207,15 @@ async def test_rmwhub_adapter_process_upload_insert_success(
         return_value=RmwSets(sets=[mock_rmwhub_items[0]]),
     )
     mocker.patch(
+        "app.actions.buoy.BuoyClient.get_latest_observations",
+        new=mock_get_latest_observations,
+    )
+    mocker.patch(
         "app.actions.buoy.BuoyClient.get_gear",
         return_value=[],
     )
 
-    observations, rmw_response = await rmw_adapter.process_upload(start_datetime_str)
+    observations, rmw_response = await rmw_adapter.process_rmw_upload(start_datetime_str)
     assert observations == 5
     assert rmw_response["trap_count"] == 5
 
@@ -234,7 +239,7 @@ async def test_rmwhub_adapter_process_upload_insert_success(
         return_value=[],
     )
 
-    observations, rmw_response = await rmw_adapter.process_upload(start_datetime_str)
+    observations, rmw_response = await rmw_adapter.process_rmw_upload(start_datetime_str)
     assert observations == 0
     assert rmw_response["trap_count"] == 0
 
@@ -250,7 +255,7 @@ async def test_rmwhub_adapter_process_upload_update_success(
     mock_latest_observations,
 ):
     """
-    Test RmwHubAdapter.process_upload update operations
+    Test RmwHubAdapter.process_rmw_upload update operations
     """
 
     rmw_adapter = RmwHubAdapter(
@@ -296,7 +301,7 @@ async def test_rmwhub_adapter_process_upload_update_success(
         return_value=0,
     )
 
-    observations, rmw_response = await rmw_adapter.process_upload(start_datetime_str)
+    observations, rmw_response = await rmw_adapter.process_rmw_upload(start_datetime_str)
     # There will be no new observsation for items originally from RMW
     # because the set ID has already been added.
     assert observations == 0
@@ -341,7 +346,7 @@ async def test_rmwhub_adapter_process_upload_failure(
         return_value=[],
     )
 
-    observations, rmw_response = await rmw_adapter.process_upload(start_datetime_str)
+    observations, rmw_response = await rmw_adapter.process_rmw_upload(start_datetime_str)
     assert observations == 0
     assert rmw_response == {}
 

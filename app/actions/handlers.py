@@ -78,6 +78,9 @@ async def action_pull_observations(
             action_config.rmw_url,
             er_token,
             er_destination + "api/v1.0",
+            options={
+                "share_with": [] # TODO: Add the share_with option to the rmw adapter when fixed the process_rmw_download method
+            }
         )
 
         logger.info(
@@ -134,7 +137,7 @@ async def action_pull_observations(
             (
                 num_put_set_id_observations,
                 rmw_response,
-            ) = await rmw_adapter.process_upload(start_datetime_str)
+            ) = await rmw_adapter.process_rmw_upload(start_datetime_str)
 
             if rmw_response and "detail" in rmw_response:
                 await log_action_activity(
@@ -277,7 +280,7 @@ async def action_pull_observations_24_hour_sync(
             (
                 num_put_set_id_observations,
                 rmw_response,
-            ) = await rmw_adapter.process_upload(start_datetime_str)
+            ) = await rmw_adapter.process_rmw_upload(start_datetime_str)
 
             if rmw_response and "detail" in rmw_response:
                 await log_action_activity(

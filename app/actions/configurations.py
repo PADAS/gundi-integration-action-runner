@@ -1,4 +1,5 @@
 # actions/configurations.py
+from typing import List
 import pydantic
 from .core import (
     PullActionConfiguration,
@@ -24,3 +25,8 @@ class PullRmwHubObservationsConfiguration(PullActionConfiguration):
         format="password",
     )
     rmw_url: str = "https://test.ropeless.network/api/"
+    share_with: List[str] = pydantic.Field(
+        title="rmwhub \"Share with\" field",
+        description="Value to use for the \"share_with\" field when sharing data with rmwHUB.",
+        default=""
+    )

@@ -45,14 +45,19 @@ class BuoyClient:
         """
         Get the latest observations for a subject. Return only the latest observation when page_size = 1.
         """
-        url = (
-            self.er_site
-            + f"/observations/?sort_by=-recorded_at&subject_id={subject_id}&include_details=true&page_size={page_size}"
-        )
+        url = f"{self.er_site}/observations/"
+        
+        params = {
+            "sort_by": "-recorded_at",
+            "subject_id": subject_id,
+            "include_details": "true",
+            "page_size": page_size,
+            "include_additional_data": "true",
+        }
         BuoyClient.headers["Authorization"] = f"Bearer {self.er_token}"
 
         async with httpx.AsyncClient() as client:
-            response = await client.get(url, headers=BuoyClient.headers)
+            response = await client.get(url, headers=BuoyClient.headers, params=params)
 
         if response.status_code == 200:
             logger.info("Request to get latest observation was successful")
