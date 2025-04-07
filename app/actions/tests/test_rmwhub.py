@@ -188,7 +188,7 @@ async def test_rmwhub_adapter_process_upload_insert_success(
         return_value=1,
     )
 
-    observations, rmw_response = await rmw_adapter.process_rmw_upload(start_datetime_str)
+    observations, rmw_response = await rmw_adapter.process_upload(start_datetime_str)
 
     assert observations == 0
 
@@ -215,7 +215,7 @@ async def test_rmwhub_adapter_process_upload_insert_success(
         return_value=[],
     )
 
-    observations, rmw_response = await rmw_adapter.process_rmw_upload(start_datetime_str)
+    observations, rmw_response = await rmw_adapter.process_upload(start_datetime_str)
     assert observations == 5
     assert rmw_response["trap_count"] == 5
 
@@ -239,7 +239,7 @@ async def test_rmwhub_adapter_process_upload_insert_success(
         return_value=[],
     )
 
-    observations, rmw_response = await rmw_adapter.process_rmw_upload(start_datetime_str)
+    observations, rmw_response = await rmw_adapter.process_upload(start_datetime_str)
     assert observations == 0
     assert rmw_response["trap_count"] == 0
 
@@ -301,7 +301,7 @@ async def test_rmwhub_adapter_process_upload_update_success(
         return_value=0,
     )
 
-    observations, rmw_response = await rmw_adapter.process_rmw_upload(start_datetime_str)
+    observations, rmw_response = await rmw_adapter.process_upload(start_datetime_str)
     # There will be no new observsation for items originally from RMW
     # because the set ID has already been added.
     assert observations == 0
@@ -346,7 +346,7 @@ async def test_rmwhub_adapter_process_upload_failure(
         return_value=[],
     )
 
-    observations, rmw_response = await rmw_adapter.process_rmw_upload(start_datetime_str)
+    observations, rmw_response = await rmw_adapter.process_upload(start_datetime_str)
     assert observations == 0
     assert rmw_response == {}
 

@@ -481,7 +481,7 @@ class RmwHubAdapter:
         Create a mapping of traps (concatenated) to their corresponding gear sets.
         """
         traps_to_gearsets_mapping = {
-            "".join(sorted([RmwHubAdapter.clean_id_str(trap.id) for trap in gearset.traps])): RmwHubAdapter.clean_id_str(gearset.id)
+            "".join(sorted([RmwHubAdapter.clean_id_str(trap.id).lower().rstrip("#") for trap in gearset.traps])): RmwHubAdapter.clean_id_str(gearset.id)
             for gearset in rmw_sets.sets
         }
         return traps_to_gearsets_mapping
@@ -500,7 +500,7 @@ class RmwHubAdapter:
                 display_id_to_er_subject_mapping[display_id] = er_subject
         return display_id_to_er_subject_mapping
 
-    async def process_rmw_upload(self, start_datetime_str) -> Tuple[List, dict]:
+    async def process_upload(self, start_datetime_str) -> Tuple[List, dict]:
         """
         Process the sets from the Buoy API and upload to RMWHub.
         Returns a list of new observations for Earthranger with the new RmwHub set IDs.
@@ -514,9 +514,6 @@ class RmwHubAdapter:
         # Normalize the extracted data into a list of updates following to the RMWHub schema:
         updates = []
 
-        # RF-755 tech debt: Remove call to get gear when is_active status is accurately posted on observation
-        self.er_client.get_gear()
-
         # Get updates from the last interval_minutes in ER
         er_subjects = await self.er_client.get_er_subjects(start_datetime_str)
         if not er_subjects:
@@ -529,7 +526,7 @@ class RmwHubAdapter:
             return 0, {}
 
         # Set of all traps ids in the RMW sets
-        rmw_trap_ids = {RmwHubAdapter.clean_id_str(trap.id) for gearset in rmw_sets.sets for trap in gearset.traps}
+        rmw_trap_ids = {RmwHubAdapter.clean_id_str(trap.id).rstrip("#") for gearset in rmw_sets.sets for trap in gearset.traps}
         
         # Create utility mapping for the upload process
 
@@ -555,7 +552,8 @@ class RmwHubAdapter:
         for subject in er_subjects:
             subject_name = subject.get("name")
             subject_id = subject.get("id")
-
+            if "015_" in subject_name:
+                pass 
             if not subject_name:
                 logger.error(f"Subject ID {subject_id} has no name. No action.")
                 continue
@@ -597,9 +595,10 @@ class RmwHubAdapter:
                     level=LogLevel.ERROR,
                 )
             else:
-                num_new_observations += await self._create_put_er_set_id_observation(
-                    subject, updated_gearset.id
-                )
+                # TODO: Check with Halley if this is needed
+                # num_new_observations += await self._create_put_er_set_id_observation(
+                #     subject, updated_gearset.id
+                # )
                 updates.append(updated_gearset)
 
                 logger.info(
@@ -645,7 +644,7 @@ class RmwHubAdapter:
                 devices = latest_observation.get("observation_details", {}).get("devices")                
                 
                 rmwhub_set_id = traps_to_gearsets_mapping.get(
-                    "".join(sorted([RmwHubAdapter.clean_id_str(device.get("device_id")) for device in devices]))
+                    "".join(sorted([RmwHubAdapter.clean_id_str(device.get("device_id")).lower() for device in devices]))
                 )
 
             if not rmwhub_set_id:
@@ -672,9 +671,10 @@ class RmwHubAdapter:
                     level=LogLevel.ERROR,
                 )
             else:
-                num_new_observations += await self._create_put_er_set_id_observation(
-                    subject, updated_gearset.id
-                )
+                # TODO: Check with Halley if this is needed
+                # num_new_observations += await self._create_put_er_set_id_observation(
+                #     subject, updated_gearset.id
+                # )
                 updates.append(updated_gearset)
                 logger.info(
                     f"Processed update for gear set with set ID {updated_gearset.id} from ER subject ID: {subject['id']}."
@@ -892,28 +892,8 @@ class RmwHubAdapter:
         :param rmw_gearset: RMW gear set to update (not required for new inserts)
         :param latest_observation: Latest observation for the subject (not required for new inserts)
         """
-
-        async def get_last_deployed_time():
-            observations = await self.er_client.get_latest_observations(
-                er_subject.get("id"), 10
-            )
-
-            if observations[0].get("observation_details") and observations[0].get(
-                "observation_details"
-            ).get("last_deployed"):
-                return observations[0].get("observation_details").get("last_deployed")
-
-            for observation in observations:
-                details = observation.get("observation_details")
-                if "deploy" in details.get("event_type"):
-                    return observation.get("recorded_at")
-
-            logger.error("No deployment events found. Use null datetime.")
-            # Initialize a datetime object representing the Unix epoch
-            return datetime(1970, 1, 1, 0, 0, 0, tzinfo=timezone.utc).isoformat()
-
         # Trap IDs must be atleast 32 characters and no more than 38 characters
-        async def validate_id_length(id_str: str):
+        def validate_id_length(id_str: str):
             target_length = 32
             if len(id_str) < target_length:
                 logger.error(
@@ -942,10 +922,11 @@ class RmwHubAdapter:
         additional_data = er_subject.get("additional", {})
 
         trap_id_mapping = {
-            trap.id: trap
+            RmwHubAdapter.clean_id_str(trap.id).rstrip("#"): trap
             for trap in rmw_gearset.traps
         } if rmw_gearset else {}
 
+        devices = latest_observation.get("observation_details", {}).get("devices") if latest_observation else er_subject.get("additional").get("devices")
         latest_observation_datetime = latest_observation.get("recorded_at") if latest_observation else None
         for device in er_subject.get("additional").get("devices"):
             # Use just the ID for the Trap ID if the gearset is originally from RMW
@@ -953,7 +934,7 @@ class RmwHubAdapter:
             # TODO: Determine the effects of this^ change on the download/upload process
             subject_name = er_subject.get("name")
             device_name = device.get("device_id")
-            cleaned_id = RmwHubAdapter.clean_id_str(device_name)
+            cleaned_id = RmwHubAdapter.clean_id_str(device_name).rstrip("#")
             trap_id = (
                 cleaned_id
                 if rmw_gearset and subject_name.startswith("rmw")
@@ -969,15 +950,13 @@ class RmwHubAdapter:
             rmw_trap_datetime = latest_observation_datetime if latest_observation else device.get("last_updated") 
             rmw_trap_datetime = self.convert_datetime_to_utc(rmw_trap_datetime) if rmw_trap_datetime else None
             # deploy_datetime_utc is required, so in retrieve events, we will use the current deployed datetime
-            current_deployed_datetime = trap_id_mapping.get(trap_id).deploy_datetime_utc if not deployed else None
+            current_deployed_datetime = trap_id_mapping.get(RmwHubAdapter.clean_id_str(trap_id)).deploy_datetime_utc if not deployed else None
             traps.append(
                 Trap(
-                    id=trap_id,
+                    id=validate_id_length(trap_id),
                     sequence=1 if device.get("label") == "a" else 2,
                     latitude=device.get("location").get("latitude"),
                     longitude=device.get("location").get("longitude"),
-                    # TODO: Need workaround for using is_active status which will not be correct in ER for RMW data
-                    # Solution: Use get latest observation for a subject by subject name.
                     deploy_datetime_utc=rmw_trap_datetime if deployed else current_deployed_datetime,
                     surface_datetime_utc=rmw_trap_datetime if deployed else None,
                     retrieved_datetime_utc=None if deployed else rmw_trap_datetime,
