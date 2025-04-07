@@ -150,3 +150,53 @@ class BuoyClient:
         logger.info(
             f"Successfully updated subject state for {er_subject_name} to {state}"
         )
+
+    async def get_source_provider(self, er_subject_id: str) -> str:
+        """
+        Get the source provider for a subject
+        """
+
+        url = self.er_site + f"/subject/{er_subject_id}/sources/"
+        BuoyClient.headers["Authorization"] = f"Bearer {self.er_token}"
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, headers=BuoyClient.headers)
+
+        if response.status_code == 200:
+            logger.info("Request to get source provider was successful")
+            data = json.loads(response.text)
+            data = data.get("data")[0]
+            if not data.get("provider"):
+                logger.error(f"No source provider found")
+            return data.get("provider")
+        else:
+            logger.error(
+                f"Failed to get source provider. Status code: {response.status_code}"
+            )
+
+        return {}
+
+    async def create_v1_observation(
+        self, source_provider: str, observation: dict
+    ) -> dict:
+        """
+        Create a new observation using the Gundi v1 Sensors API.
+        """
+
+        url = self.er_site + f"/sensors/generic/{source_provider}/status/"
+        BuoyClient.headers["Authorization"] = f"Bearer {self.er_token}"
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                url, headers=BuoyClient.headers, json=observation
+            )
+
+        if response.status_code == 201:
+            logger.info("Request to create observation was successful")
+            return 1
+        else:
+            logger.error(
+                f"Failed to create observation. Status code: {response.status_code}"
+            )
+
+        return 0

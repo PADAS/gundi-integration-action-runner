@@ -111,7 +111,7 @@ async def action_pull_observations(
                 logger.info(
                     f"Processing updates from RMW Hub API...Number of gearsets returned: {len(rmwSets.sets)}"
                 )
-                observations = await rmw_adapter.process_rmw_download(
+                observations = await rmw_adapter.process_download(
                     rmwSets, start_datetime_str, sync_interval_minutes
                 )
                 total_observations.extend(observations)
@@ -135,9 +135,9 @@ async def action_pull_observations(
         rmw_response = {}
         try:
             (
-                put_set_id_observations,
+                num_put_set_id_observations,
                 rmw_response,
-            ) = await rmw_adapter.process_rmw_upload(start_datetime_str)
+            ) = await rmw_adapter.process_upload(start_datetime_str)
 
             if rmw_response and "detail" in rmw_response:
                 await log_action_activity(
@@ -163,7 +163,9 @@ async def action_pull_observations(
                 )
         except ValueError as e:
             logger.error(f"Failed to upload changes to RMW Hub: {str(e)}")
+            num_put_set_id_observations = 0
             rmw_response = {}
+
 
         # Send the extracted data to Gundi in batches
         for batch in generate_batches(observations):
@@ -179,14 +181,15 @@ async def action_pull_observations(
         )
 
     # The result will be recorded in the portal if using the activity_logger decorator
+    num_total_observations = len(total_observations) + num_put_set_id_observations
     if rmw_response:
         return {
-            "observations_extracted": len(total_observations),
+            "observations_extracted": num_total_observations,
             "rmw_updates": rmw_response,
         }
     else:
         return {
-            "observations_extracted": len(total_observations),
+            "observations_extracted": num_total_observations,
         }
 
 
@@ -227,6 +230,9 @@ async def action_pull_observations_24_hour_sync(
             f"Downloading data from RMW Hub API...For the dates: {start_datetime_str} - {end_datetime_str}"
         )
         rmwSets = await rmw_adapter.download_data(start_datetime_str)
+        logger.info(
+            f"{len(rmwSets.sets)} Gearsets Downloaded from RMW Hub API...For the datetimes: {start_datetime_str} - {end_datetime_str}"
+        )
 
         # Optionally, log a custom messages to be shown in the portal
         await log_action_activity(
@@ -243,32 +249,65 @@ async def action_pull_observations_24_hour_sync(
         )
 
         observations = []
-        if len(rmwSets.sets) != 0:
-            logger.info(
-                f"Processing updates from RMW Hub API...Number of gearsets returned: {len(rmwSets.sets)}"
-            )
-            observations = await rmw_adapter.process_rmw_download(
-                rmwSets, start_datetime_str, sync_interval_minutes
-            )
-            total_observations.extend(observations)
-        else:
-            await log_action_activity(
-                integration_id=integration.id,
-                action_id="pull_observations",
-                level=LogLevel.INFO,
-                title="No gearsets returned from RMW Hub API.",
-                data={
-                    "start_date_time": start_datetime_str,
-                    "end_date_time": end_datetime_str,
-                    "environment": str(environment),
-                },
-                config_data=action_config.dict(),
-            )
+        try:
+            if len(rmwSets.sets) != 0:
+                logger.info(
+                    f"Processing updates from RMW Hub API...Number of gearsets returned: {len(rmwSets.sets)}"
+                )
+                observations = await rmw_adapter.process_download(
+                    rmwSets, start_datetime_str, sync_interval_minutes
+                )
+                total_observations.extend(observations)
+            else:
+                await log_action_activity(
+                    integration_id=integration.id,
+                    action_id="pull_observations",
+                    level=LogLevel.INFO,
+                    title="No gearsets returned from RMW Hub API.",
+                    data={
+                        "start_date_time": start_datetime_str,
+                        "end_date_time": end_datetime_str,
+                        "environment": str(environment),
+                    },
+                    config_data=action_config.dict(),
+                )
+        except ValueError as e:
+            logger.error(f"Failed to process RMW Hub data: {str(e)}")
 
         # Upload changes from ER to RMW Hub
         rmw_response = {}
-        put_set_id_observations, rmw_response = await rmw_adapter.process_rmw_upload(start_datetime_str)
-        total_observations.extend(put_set_id_observations)
+        try:
+            (
+                num_put_set_id_observations,
+                rmw_response,
+            ) = await rmw_adapter.process_upload(start_datetime_str)
+
+            if rmw_response and "detail" in rmw_response:
+                await log_action_activity(
+                    integration_id=integration.id,
+                    action_id="pull_observations",
+                    level=LogLevel.ERROR,
+                    title="Failed to upload data to rmwHub.",
+                    data={
+                        "rmw_response": str(rmw_response),
+                    },
+                    config_data=action_config.dict(),
+                )
+            else:
+                await log_action_activity(
+                    integration_id=integration.id,
+                    action_id="pull_observations",
+                    level=LogLevel.INFO,
+                    title="Process upload to rmwHub completed.",
+                    data={
+                        "rmw_response": str(rmw_response),
+                    },
+                    config_data=action_config.dict(),
+                )
+        except ValueError as e:
+            logger.error(f"Failed to upload changes to RMW Hub: {str(e)}")
+            num_put_set_id_observations = 0
+            rmw_response = {}
 
         if rmw_response and "detail" in rmw_response:
             await log_action_activity(
@@ -306,15 +345,17 @@ async def action_pull_observations_24_hour_sync(
         )
 
     # The result will be recorded in the portal if using the activity_logger decorator
+    num_total_observations = len(total_observations) + num_put_set_id_observations
     if rmw_response:
         return {
-            "observations_extracted": len(total_observations),
+            "observations_extracted": num_total_observations,
             "rmw_updates": rmw_response,
         }
     else:
         return {
-            "observations_extracted": len(total_observations),
+            "observations_extracted": num_total_observations,
         }
+
 
 
 def generate_batches(iterable, n=LOAD_BATCH_SIZE):
