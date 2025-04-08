@@ -552,8 +552,6 @@ class RmwHubAdapter:
         for subject in er_subjects:
             subject_name = subject.get("name")
             subject_id = subject.get("id")
-            if "015_" in subject_name:
-                pass 
             if not subject_name:
                 logger.error(f"Subject ID {subject_id} has no name. No action.")
                 continue
@@ -661,7 +659,7 @@ class RmwHubAdapter:
         response = await self._upload_data(updates)
         if not updates:
             logger.info("No updates to upload to RMW Hub API.")
-
+        num_new_observations = len([trap.id for gearset in updates for trap in gearset.traps])
         return num_new_observations, response
 
     # TODO RF-752: Remove unecessary code when status updates are verified to be working through event
