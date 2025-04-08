@@ -619,33 +619,11 @@ class RmwHubAdapter:
                 logger.error(f"Subject ID {subject.get('id')} has no latest observation.")
                 continue
             
-            rmwhub_set_id = None
-
-            if latest_observation["observation_details"].get("rmwhub_set_id"):
-                rmwhub_set_id = latest_observation["observation_details"].get("rmwhub_set_id")
-                if rmwhub_set_id not in set_id_to_gearset_mapping.keys():
-                    logger.error(
-                        f"RMW Set ID {rmwhub_set_id} not found in RMW sets. No action."
-                    )
-                    log_action_activity(
-                        integration_id=self.integration_id,
-                        action_id="pull_observations",
-                        title=f"RMW Set ID {rmwhub_set_id} not found in RMW sets. No action.",
-                        level=LogLevel.ERROR,
-                    )
-                    continue
-
-                # Create new updates from ER data for upload to RMWHub
-                rmwhub_set_id = latest_observation.get("observation_details").get("rmwhub_set_id")
-            else:
-                # If no latest observation, find the RMW set ID by its traps that matches the subjects' name.
-                logger.warning(f"Subject ID {subject.get('id')} has no RMWHub set ID. Trying to find it from traps.")                
-
-                devices = latest_observation.get("observation_details", {}).get("devices")                
-                
-                rmwhub_set_id = traps_to_gearsets_mapping.get(
-                    "".join(sorted([RmwHubAdapter.clean_id_str(device.get("device_id")).lower() for device in devices]))
-                )
+            devices = latest_observation.get("observation_details", {}).get("devices")                
+            
+            rmwhub_set_id = traps_to_gearsets_mapping.get(
+                "".join(sorted([RmwHubAdapter.clean_id_str(device.get("device_id")).lower() for device in devices]))
+            )
 
             if not rmwhub_set_id:
                 logger.error(f"RMW Set ID not found for subject ID {subject.get('id')}. No action.")
