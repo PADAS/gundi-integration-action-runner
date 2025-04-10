@@ -919,9 +919,9 @@ class RmwHubAdapter:
             for trap in rmw_gearset.traps
         } if rmw_gearset else {}
 
-        devices = latest_observation.get("observation_details", {}).get("devices") if latest_observation else er_subject.get("additional").get("devices")
+        devices = latest_observation.get("observation_details", {}).get("devices") if latest_observation else additional_data.get("devices")
         latest_observation_datetime = latest_observation.get("recorded_at") if latest_observation else None
-        for device in er_subject.get("additional").get("devices"):
+        for device in devices:
             # Use just the ID for the Trap ID if the gearset is originally from RMW
             # TODO: Use subject.id instead of subject.name for the trap ID
             # TODO: Determine the effects of this^ change on the download/upload process
