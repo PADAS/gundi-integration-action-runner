@@ -585,6 +585,14 @@ class RmwHubAdapter:
             # Create new updates from ER data for upload to RMWHub, and collect set ID to update ER.
             updated_gearset = await self._create_rmw_update_from_er_subject(subject)
 
+            if updated_gearset is None:
+                await log_action_activity(
+                    integration_id=self.integration_id,
+                    action_id="pull_observations",
+                    title=f"Subject {subject.get('name')} ({subject.get('id')}) was skipped check previous log to understand why.",
+                    level=LogLevel.WARNING,
+                )
+                continue
             if not updated_gearset.traps:
                 await log_action_activity(
                     integration_id=self.integration_id,
@@ -638,6 +646,15 @@ class RmwHubAdapter:
             updated_gearset = await self._create_rmw_update_from_er_subject(
                 subject, rmw_gearset, latest_observation
             )
+
+            if updated_gearset is None:
+                await log_action_activity(
+                    integration_id=self.integration_id,
+                    action_id="pull_observations",
+                    title=f"Subject {subject.get('name')} ({subject.get('id')}) was skipped check previous log to understand why.",
+                    level=LogLevel.WARNING,
+                )
+                continue
 
             if not updated_gearset.traps:
                 await log_action_activity(
@@ -860,7 +877,7 @@ class RmwHubAdapter:
 
     async def _create_rmw_update_from_er_subject(
         self, er_subject: dict, rmw_gearset: GearSet = None, latest_observation: dict = None
-    ) -> GearSet:
+    ) -> Optional[GearSet]:
         """
         Create new updates from ER data for upload to RMWHub.
         
@@ -918,9 +935,14 @@ class RmwHubAdapter:
             )
             
             if not deployed and not rmw_gearset:
-                logger.error(
-                    f"This trap ({trap_id}) is not being deployed and still does not exist in RMW Hub, skipping."
+                msg = f"This trap ({trap_id}) is not being deployed and still does not exist in RMW Hub, skipping."
+                log_action_activity(
+                    integration_id=self.integration_id,
+                    action_id="pull_observations",
+                    title=msg,
+                    level=LogLevel.WARNING,
                 )
+                logger.warning(msg)
                 continue
             
             rmw_trap_datetime = latest_observation_datetime if latest_observation else device.get("last_updated") 
@@ -941,6 +963,10 @@ class RmwHubAdapter:
                     is_on_end=True,
                 )
             )
+
+        # No traps found for the gear set it will be skipped
+        if len(traps) == 0:
+            return None
 
         # Create gear set:
         if not rmw_gearset:
