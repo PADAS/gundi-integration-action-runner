@@ -476,14 +476,34 @@ class RmwHubAdapter:
             )
         return subject_id_to_latest_observation
 
+    def _create_traps_gearsets_mapping_key(self, traps_ids: List[str]) -> str:
+        """
+        Create a unique key for the traps and gearsets mapping.
+        """
+        sorted_traps_ids = sorted(traps_ids)
+        cleaned_traps_ids = [
+            RmwHubAdapter.clean_id_str(trap_id).lower().rstrip("#")
+            for trap_id in sorted_traps_ids
+        ]
+        "".join(cleaned_traps_ids)
+        return "".join(cleaned_traps_ids)
+
     def create_traps_gearsets_mapping(self, rmw_sets: RmwSets) -> Dict[str, str]:
         """
         Create a mapping of traps (concatenated) to their corresponding gear sets.
+        Should map to the latest gear set if multiple exist for the same traps.
         """
-        traps_to_gearsets_mapping = {
-            "".join(sorted([RmwHubAdapter.clean_id_str(trap.id).lower().rstrip("#") for trap in gearset.traps])): RmwHubAdapter.clean_id_str(gearset.id)
-            for gearset in rmw_sets.sets
-        }
+        traps_to_gearsets_mapping = {}
+        for gearset in rmw_sets.sets:
+            trap_ids = [trap.id for trap in gearset.traps]
+            trap_names = self._create_traps_gearsets_mapping_key(trap_ids)
+            if trap_names in traps_to_gearsets_mapping:
+                existing_mapped_gearset = traps_to_gearsets_mapping[trap_names]
+                if existing_mapped_gearset.when_updated_utc < gearset.when_updated_utc:
+                    traps_to_gearsets_mapping[trap_names] = gearset
+                continue
+            traps_to_gearsets_mapping[trap_names] = gearset
+
         return traps_to_gearsets_mapping
 
 
@@ -627,8 +647,11 @@ class RmwHubAdapter:
             
             devices = latest_observation.get("observation_details", {}).get("devices")                
             
+            traps_to_gearsets_mapping_key = self._create_traps_gearsets_mapping_key(
+                [device.get("device_id") for device in devices]
+            )
             rmwhub_set_id = traps_to_gearsets_mapping.get(
-                "".join(sorted([RmwHubAdapter.clean_id_str(device.get("device_id")).lower() for device in devices]))
+                traps_to_gearsets_mapping_key
             )
 
             if not rmwhub_set_id:
