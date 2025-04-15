@@ -1,1 +1,3 @@
 # Add your integration-specific dependencies here
+https://github.com/PADAS/er-client/releases/download/v1.4.1/earthranger_client-1.4.1-py3-none-any.whl
+shapely==2.0.7
