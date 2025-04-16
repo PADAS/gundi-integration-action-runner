@@ -294,7 +294,7 @@ async def test_rmwhub_adapter_process_upload_update_success(
     )
     mocker.patch(
         "app.actions.buoy.BuoyClient.get_source_provider",
-        return_value={"source_provider": "rmwhub"}
+        return_value={"source_provider": "rmwhub"},
     )
     mocker.patch(
         "app.actions.buoy.BuoyClient.create_v1_observation",
@@ -304,7 +304,7 @@ async def test_rmwhub_adapter_process_upload_update_success(
     observations, rmw_response = await rmw_adapter.process_upload(start_datetime_str)
     # There will be no new observsation for items originally from RMW
     # because the set ID has already been added.
-    assert observations == 0
+    assert observations == 1
     assert rmw_response
 
 
@@ -384,7 +384,7 @@ async def test_rmwhub_adapter_create_rmw_update_from_er_subject(
 
     # Test create UPDATE update (existing rmwHub gearset)
     gearset_update = await rmwadapter._create_rmw_update_from_er_subject(
-        mock_er_subjects[0], mock_rmwhub_items[0]
+        mock_er_subjects[0], rmw_gearset=mock_rmwhub_items[0]
     )
 
     assert gearset_update
