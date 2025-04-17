@@ -690,7 +690,7 @@ class RmwHubAdapter:
                 logger.error(
                     f"RMW Set ID not found for subject ID {subject.get('id')}. No action."
                 )
-                log_action_activity(
+                await log_action_activity(
                     integration_id=self.integration_id,
                     action_id="pull_observations",
                     title=f"RMW Set ID not found for subject ID {subject.get('id')}. No action.",
@@ -728,7 +728,13 @@ class RmwHubAdapter:
                     f"Processed update for gear set with set ID {updated_gearset.id} from ER subject ID: {subject['id']}."
                 )
 
-        response = await self._upload_data(updates)
+        # Commented out due to RF-889
+        # response = await self._upload_data(updates)
+        for update in updates:
+            logger.info(
+                f"Uploading gear set with set ID {update.id} to RMW Hub API. Update: {json.dumps(update.dict(), indent=2)}"
+            )
+        response = {}
         if not updates:
             logger.info("No updates to upload to RMW Hub API.")
         num_new_observations = len(
@@ -859,7 +865,8 @@ class RmwHubAdapter:
 
         display_id_hash = hashlib.sha256(str(set_id).encode()).hexdigest()[:12]
         is_active = er_subject.get("is_active")
-        source_provider = await self.er_client.get_source_provider(er_subject.get("id"))
+        # Commented out for RF-889
+        # source_provider = await self.er_client.get_source_provider(er_subject.get("id"))
 
         observations = []
         for device in er_subject.get("additional").get("devices"):
@@ -893,9 +900,13 @@ class RmwHubAdapter:
         # Send observations to Gundi v1 Sensors API
         created = 0
         for observation in observations:
-            created += await self.er_client.create_v1_observation(
-                source_provider, observation
+            logger.info(
+                f"Creating observation for Subject Name: {observation['name']} with rmwHub Set ID {observation['additional'].get('rmwhub_set_id')}."
             )
+            # Commented out for bug RF-889
+            # created += await self.er_client.create_v1_observation(
+            #     source_provider, observation
+            # )
 
         return created
 
