@@ -684,7 +684,7 @@ class RmwHubAdapter:
             traps_to_gearsets_mapping_key = self._create_traps_gearsets_mapping_key(
                 [device.get("device_id") for device in devices]
             )
-            rmwhub_set_id = traps_to_gearsets_mapping.get(traps_to_gearsets_mapping_key)
+            rmw_gearset = traps_to_gearsets_mapping.get(traps_to_gearsets_mapping_key)
 
             if not rmwhub_set_id:
                 logger.error(
@@ -697,8 +697,6 @@ class RmwHubAdapter:
                     level=LogLevel.ERROR,
                 )
                 continue
-
-            rmw_gearset = set_id_to_gearset_mapping[rmwhub_set_id]
 
             updated_gearset = await self._create_rmw_update_from_er_subject(
                 subject, latest_observation, rmw_gearset
