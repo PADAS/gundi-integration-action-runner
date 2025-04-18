@@ -217,8 +217,7 @@ async def test_rmwhub_adapter_process_upload_insert_success(
 
     observations, rmw_response = await rmw_adapter.process_upload(start_datetime_str)
     assert observations == 5
-    # Commented out for bug RF-889
-    # assert rmw_response["trap_count"] == 5
+    assert rmw_response["trap_count"] == 5
 
     # Test handle ER upload success with ER Subjects from RMW
     data = mock_er_subjects_from_rmw
@@ -242,8 +241,7 @@ async def test_rmwhub_adapter_process_upload_insert_success(
 
     observations, rmw_response = await rmw_adapter.process_upload(start_datetime_str)
     assert observations == 0
-    # Commented out for bug RF-889
-    # assert rmw_response["trap_count"] == 0
+    assert rmw_response["trap_count"] == 0
 
 
 @pytest.mark.asyncio
@@ -307,8 +305,7 @@ async def test_rmwhub_adapter_process_upload_update_success(
     # There will be no new observsation for items originally from RMW
     # because the set ID has already been added.
     assert observations == 1
-    # Commented out for bug RF-889
-    # assert rmw_response
+    assert rmw_response
 
 
 @pytest.mark.asyncio

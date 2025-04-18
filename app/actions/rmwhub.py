@@ -684,19 +684,21 @@ class RmwHubAdapter:
             traps_to_gearsets_mapping_key = self._create_traps_gearsets_mapping_key(
                 [device.get("device_id") for device in devices]
             )
-            rmw_gearset = traps_to_gearsets_mapping.get(traps_to_gearsets_mapping_key)
+            rmwhub_set_id = traps_to_gearsets_mapping.get(traps_to_gearsets_mapping_key)
 
             if not rmwhub_set_id:
                 logger.error(
                     f"RMW Set ID not found for subject ID {subject.get('id')}. No action."
                 )
-                await log_action_activity(
+                log_action_activity(
                     integration_id=self.integration_id,
                     action_id="pull_observations",
                     title=f"RMW Set ID not found for subject ID {subject.get('id')}. No action.",
                     level=LogLevel.ERROR,
                 )
                 continue
+
+            rmw_gearset = set_id_to_gearset_mapping[rmwhub_set_id]
 
             updated_gearset = await self._create_rmw_update_from_er_subject(
                 subject, latest_observation, rmw_gearset
@@ -728,13 +730,7 @@ class RmwHubAdapter:
                     f"Processed update for gear set with set ID {updated_gearset.id} from ER subject ID: {subject['id']}."
                 )
 
-        # Commented out due to RF-889
-        # response = await self._upload_data(updates)
-        for update in updates:
-            logger.info(
-                f"Uploading gear set with set ID {update.id} to RMW Hub API. Update: {json.dumps(update.dict(), indent=2)}"
-            )
-        response = {}
+        response = await self._upload_data(updates)
         if not updates:
             logger.info("No updates to upload to RMW Hub API.")
         num_new_observations = len(
@@ -865,8 +861,7 @@ class RmwHubAdapter:
 
         display_id_hash = hashlib.sha256(str(set_id).encode()).hexdigest()[:12]
         is_active = er_subject.get("is_active")
-        # Commented out for RF-889
-        # source_provider = await self.er_client.get_source_provider(er_subject.get("id"))
+        source_provider = await self.er_client.get_source_provider(er_subject.get("id"))
 
         observations = []
         for device in er_subject.get("additional").get("devices"):
@@ -900,13 +895,9 @@ class RmwHubAdapter:
         # Send observations to Gundi v1 Sensors API
         created = 0
         for observation in observations:
-            logger.info(
-                f"Creating observation for Subject Name: {observation['name']} with rmwHub Set ID {observation['additional'].get('rmwhub_set_id')}."
+            created += await self.er_client.create_v1_observation(
+                source_provider, observation
             )
-            # Commented out for bug RF-889
-            # created += await self.er_client.create_v1_observation(
-            #     source_provider, observation
-            # )
 
         return created
 
