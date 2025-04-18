@@ -690,7 +690,7 @@ class RmwHubAdapter:
                 logger.error(
                     f"RMW Set ID not found for subject ID {subject.get('id')}. No action."
                 )
-                log_action_activity(
+                await log_action_activity(
                     integration_id=self.integration_id,
                     action_id="pull_observations",
                     title=f"RMW Set ID not found for subject ID {subject.get('id')}. No action.",
@@ -729,6 +729,11 @@ class RmwHubAdapter:
                 logger.info(
                     f"Processed update for gear set with set ID {updated_gearset.id} from ER subject ID: {subject['id']}."
                 )
+
+        for update in updates:
+            logger.info(
+                f"Uploading gear set with set ID {update.id} to RMW Hub API. Update: {json.dumps(update.dict(), indent=2)}"
+            )
 
         response = await self._upload_data(updates)
         if not updates:
