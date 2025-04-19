@@ -23,9 +23,7 @@ class BuoyClient:
         updated_since = start_datetime
         url = self.er_site + f"/subjects/?include_details=True&include_inactive=True"
         if updated_since:
-            url += (
-                f"&updated_since={updated_since}&position_updated_since={updated_since}"
-            )
+            url += f"&position_updated_since={updated_since}"
         BuoyClient.headers["Authorization"] = f"Bearer {self.er_token}"
 
         async with httpx.AsyncClient() as client:
