@@ -687,14 +687,14 @@ class RmwHubAdapter:
             rmwhub_set_id = traps_to_gearsets_mapping.get(traps_to_gearsets_mapping_key)
 
             if not rmwhub_set_id:
-                logger.error(
+                logger.warning(
                     f"RMW Set ID not found for subject ID {subject.get('id')}. No action."
                 )
                 await log_action_activity(
                     integration_id=self.integration_id,
                     action_id="pull_observations",
                     title=f"RMW Set ID not found for subject ID {subject.get('id')}. No action.",
-                    level=LogLevel.ERROR,
+                    level=LogLevel.WARNING,
                 )
                 continue
 

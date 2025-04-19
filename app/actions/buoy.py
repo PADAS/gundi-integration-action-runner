@@ -23,7 +23,9 @@ class BuoyClient:
         updated_since = start_datetime
         url = self.er_site + f"/subjects/?include_details=True&include_inactive=True"
         if updated_since:
-            url += f"&updated_since={updated_since}"
+            url += (
+                f"&updated_since={updated_since}&position_updated_since={updated_since}"
+            )
         BuoyClient.headers["Authorization"] = f"Bearer {self.er_token}"
 
         async with httpx.AsyncClient() as client:
@@ -46,7 +48,7 @@ class BuoyClient:
         Get the latest observations for a subject. Return only the latest observation when page_size = 1.
         """
         url = f"{self.er_site}/observations/"
-        
+
         params = {
             "sort_by": "-recorded_at",
             "subject_id": subject_id,
