@@ -684,9 +684,9 @@ class RmwHubAdapter:
             traps_to_gearsets_mapping_key = self._create_traps_gearsets_mapping_key(
                 [device.get("device_id") for device in devices]
             )
-            rmwhub_set_id = traps_to_gearsets_mapping.get(traps_to_gearsets_mapping_key)
+            rmw_gearset = traps_to_gearsets_mapping.get(traps_to_gearsets_mapping_key)
 
-            if not rmwhub_set_id:
+            if not rmw_gearset:
                 logger.warning(
                     f"RMW Set ID not found for subject ID {subject.get('id')}. No action."
                 )
@@ -697,8 +697,6 @@ class RmwHubAdapter:
                     level=LogLevel.WARNING,
                 )
                 continue
-
-            rmw_gearset = set_id_to_gearset_mapping[rmwhub_set_id]
 
             updated_gearset = await self._create_rmw_update_from_er_subject(
                 subject, latest_observation, rmw_gearset
@@ -968,15 +966,7 @@ class RmwHubAdapter:
             "devices"
         ):
             logger.error(f"No traps found for trap ID {er_subject.get('name')}.")
-            return GearSet(
-                vessel_id="",
-                id="",
-                deployment_type="",
-                traps_in_set=-1,
-                trawl_path="",
-                share_with=[],
-                traps=traps,
-            )
+            return None
 
         deployed = er_subject.get("is_active")
         additional_data = er_subject.get("additional", {})
