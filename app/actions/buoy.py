@@ -30,11 +30,11 @@ class BuoyClient:
             response = await client.get(url, headers=BuoyClient.headers)
 
         if response.status_code == 200:
-            logger.info("Request to get ER subjects was successful")
             data = json.loads(response.text)
             if len(data["data"]) == 0:
                 logger.error(f"No subjects found")
                 return None
+            logger.info(f"Request to get ER subjects was successful.  Loaded {len(data['data'])} subjects.")
             return data["data"]
         else:
             logger.error(f"Failed to make request. Status code: {response.status_code}")
