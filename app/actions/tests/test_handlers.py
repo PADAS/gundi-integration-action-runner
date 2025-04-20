@@ -1,9 +1,5 @@
 from datetime import datetime, timedelta, timezone
-
 import pytest
-
-from app.actions.rmwhub import RmwSets
-
 
 @pytest.mark.asyncio
 async def test_handler_action_pull_observations(
@@ -38,7 +34,7 @@ async def test_handler_action_pull_observations(
 
     download_data_mock = mocker.patch(
         "app.actions.rmwhub.RmwHubAdapter.download_data",
-        return_value=(RmwSets(sets=items)),
+        return_value=items,
     )
     mocker.patch(
         "app.actions.rmwhub.RmwHubAdapter.process_download",

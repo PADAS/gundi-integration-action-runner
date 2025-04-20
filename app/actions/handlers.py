@@ -88,7 +88,7 @@ async def action_pull_observations(
         )
         rmwSets = await rmw_adapter.download_data(start_datetime_str)
         logger.info(
-            f"{len(rmwSets.sets)} Gearsets Downloaded from RMW Hub API...For the datetimes: {start_datetime_str} - {end_datetime_str}"
+            f"{len(rmwSets)} Gearsets Downloaded from RMW Hub API...For the datetimes: {start_datetime_str} - {end_datetime_str}"
         )
 
         await log_action_activity(
@@ -100,16 +100,16 @@ async def action_pull_observations(
                 "start_date_time": start_datetime_str,
                 "end_date_time": end_datetime_str,
                 "environment": str(environment),
-                "gear_sets_to_process": len(rmwSets.sets),
+                "gear_sets_to_process": len(rmwSets),
             },
             config_data=action_config.dict(),
         )
 
         observations = []
         try:
-            if len(rmwSets.sets) != 0:
+            if len(rmwSets) != 0:
                 logger.info(
-                    f"Processing updates from RMW Hub API...Number of gearsets returned: {len(rmwSets.sets)}"
+                    f"Processing updates from RMW Hub API...Number of gearsets returned: {len(rmwSets)}"
                 )
                 observations = await rmw_adapter.process_download(
                     rmwSets, start_datetime_str, sync_interval_minutes
@@ -231,7 +231,7 @@ async def action_pull_observations_24_hour_sync(
         )
         rmwSets = await rmw_adapter.download_data(start_datetime_str)
         logger.info(
-            f"{len(rmwSets.sets)} Gearsets Downloaded from RMW Hub API...For the datetimes: {start_datetime_str} - {end_datetime_str}"
+            f"{len(rmwSets)} Gearsets Downloaded from RMW Hub API...For the datetimes: {start_datetime_str} - {end_datetime_str}"
         )
 
         # Optionally, log a custom messages to be shown in the portal
@@ -250,9 +250,9 @@ async def action_pull_observations_24_hour_sync(
 
         observations = []
         try:
-            if len(rmwSets.sets) != 0:
+            if len(rmwSets) != 0:
                 logger.info(
-                    f"Processing updates from RMW Hub API...Number of gearsets returned: {len(rmwSets.sets)}"
+                    f"Processing updates from RMW Hub API...Number of gearsets returned: {len(rmwSets)}"
                 )
                 observations = await rmw_adapter.process_download(
                     rmwSets, start_datetime_str, sync_interval_minutes

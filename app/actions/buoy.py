@@ -23,7 +23,7 @@ class BuoyClient:
         updated_since = start_datetime
         url = self.er_site + f"/subjects/?include_details=True&include_inactive=True"
         if updated_since:
-            url += f"&position_updated_since={updated_since}"
+            url += f"&position_updated_since={updated_since.isoformat()}"
         BuoyClient.headers["Authorization"] = f"Bearer {self.er_token}"
 
         async with httpx.AsyncClient() as client:
@@ -64,7 +64,7 @@ class BuoyClient:
             data = json.loads(response.text)
             if len(data["data"]) == 0:
                 logger.error(f"No observations found")
-                return {}
+                return []
 
             return data["data"]["results"]
         else:
@@ -72,7 +72,7 @@ class BuoyClient:
                 f"Failed to get latest observation. Status code: {response.status_code}"
             )
 
-        return {}
+        return []
 
     async def get_gear(self) -> List:
         """

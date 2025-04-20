@@ -1,8 +1,11 @@
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+import dateparser
+import time
+from app.actions.buoy import BuoyClient
 import json
 import pytest
 
-from app.actions.rmwhub import RmwHubAdapter, RmwSets
+from app.actions.rmwhub import RmwHubAdapter
 from app.actions.rmwhub import RmwHubClient
 from app.conftest import AsyncMock
 
@@ -34,7 +37,7 @@ async def test_rmwhub_adapter_download_data(
     minute_interval = 5
     rmw_sets = await rmwadapter.download_data(start_datetime_str, minute_interval)
 
-    assert len(rmw_sets.sets) == 5
+    assert len(rmw_sets) == 5
 
 
 @pytest.mark.asyncio
@@ -65,7 +68,7 @@ async def test_rmw_adapter_process_download(
         "er.destination.com",
     )
 
-    rmw_sets = RmwSets(sets=mock_rmwhub_items)
+    rmw_sets = mock_rmwhub_items
     start_datetime_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     minute_interval = 5
     observations = await rmwadapter.process_download(
@@ -173,7 +176,7 @@ async def test_rmwhub_adapter_process_upload_insert_success(
     )
     mocker.patch(
         "app.actions.rmwhub.RmwHubAdapter.search_own",
-        return_value=RmwSets(sets=[]),
+        return_value=[],
     )
     mocker.patch(
         "app.actions.buoy.BuoyClient.get_gear",
@@ -204,7 +207,7 @@ async def test_rmwhub_adapter_process_upload_insert_success(
     )
     mocker.patch(
         "app.actions.rmwhub.RmwHubAdapter.search_own",
-        return_value=RmwSets(sets=[mock_rmwhub_items[0]]),
+        return_value=[mock_rmwhub_items[0]],
     )
     mocker.patch(
         "app.actions.buoy.BuoyClient.get_latest_observations",
@@ -232,7 +235,7 @@ async def test_rmwhub_adapter_process_upload_insert_success(
     )
     mocker.patch(
         "app.actions.rmwhub.RmwHubAdapter.search_own",
-        return_value=RmwSets(sets=[mock_rmwhub_items[0]]),
+        return_value=[mock_rmwhub_items[0]],
     )
     mocker.patch(
         "app.actions.buoy.BuoyClient.get_gear",
@@ -252,7 +255,7 @@ async def test_rmwhub_adapter_process_upload_update_success(
     mock_rmwhub_items_update,
     mock_er_subjects_update,
     mock_rmw_upload_response,
-    mock_latest_observations,
+    mock_get_latest_observations,
 ):
     """
     Test RmwHubAdapter.process_upload update operations
@@ -282,7 +285,7 @@ async def test_rmwhub_adapter_process_upload_update_success(
     )
     mocker.patch(
         "app.actions.rmwhub.RmwHubAdapter.search_own",
-        return_value=RmwSets(sets=mock_rmwhub_items_update),
+        return_value=mock_rmwhub_items_update,
     )
     mocker.patch(
         "app.actions.buoy.BuoyClient.get_gear",
@@ -290,7 +293,7 @@ async def test_rmwhub_adapter_process_upload_update_success(
     )
     mocker.patch(
         "app.actions.buoy.BuoyClient.get_latest_observations",
-        return_value=mock_latest_observations,
+        new=mock_get_latest_observations,
     )
     mocker.patch(
         "app.actions.buoy.BuoyClient.get_source_provider",
@@ -302,9 +305,9 @@ async def test_rmwhub_adapter_process_upload_update_success(
     )
 
     observations, rmw_response = await rmw_adapter.process_upload(start_datetime_str)
-    # There will be no new observsation for items originally from RMW
-    # because the set ID has already been added.
-    assert observations == 1
+
+    # Should make 4 and skip the 5th
+    assert observations == 4
     assert rmw_response
 
 
@@ -339,7 +342,7 @@ async def test_rmwhub_adapter_process_upload_failure(
     )
     mocker.patch(
         "app.actions.rmwhub.RmwHubAdapter.search_own",
-        return_value=RmwSets(sets=[mock_rmwhub_items[0]]),
+        return_value=[mock_rmwhub_items[0]],
     )
     mocker.patch(
         "app.actions.buoy.BuoyClient.get_gear",

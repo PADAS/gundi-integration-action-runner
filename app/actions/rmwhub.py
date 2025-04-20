@@ -261,10 +261,6 @@ class GearSet(BaseModel):
         return traps_in_gearset & visited
 
 
-class RmwSets(BaseModel):
-    sets: List[GearSet]
-
-
 class RmwHubAdapter:
     def __init__(
         self,
@@ -284,7 +280,7 @@ class RmwHubAdapter:
 
     async def download_data(
         self, start_datetime_str: str, status: bool = None
-    ) -> RmwSets:
+    ) -> List[GearSet]:
         """
         Downloads data from the RMW Hub API using the search_hub endpoint.
         ref: https://ropeless.network/api/docs#/Download
@@ -295,25 +291,61 @@ class RmwHubAdapter:
 
         if "sets" not in response_json:
             logger.error(f"Failed to download data from RMW Hub API. Error: {response}")
-            return RmwSets(sets=[])
+            return []
 
         return self.convert_to_sets(response)
 
-    async def search_own(self):
+    async def _get_newest_set_from_rmwhub(self, devices):
         """
         Downloads data from the RMW Hub API using the search_own endpoint.
         ref: https://ropeless.network/api/docs#/Download
         """
 
-        response = await self.rmw_client.search_own()
+        if(not devices):
+            return None
+        target_traps = sorted([self.validate_id_length("e_" + self.clean_id_str(device['device_id'])) for device in devices])
+        sets = await self.search_own(trap_id = target_traps[0])
+
+        newest = None
+        newestDate = None
+        for gearset in sets:
+            set_traps = sorted([trap.id for trap in gearset.traps])
+            if(set_traps == target_traps):
+                datecomp = parse_date(gearset.when_updated_utc)
+                if(not newestDate or (datecomp > newestDate)):
+                    newest = gearset
+                    newestDate = datecomp
+                    
+        return newest
+
+    async def search_own(self, trap_id = None) -> dict:
+        """
+        Downloads data from the RMWHub API using the search_own endpoint.
+        ref: https://ropeless.network/api/docs#/Download
+        """
+
+        url = self.rmw_url + "/search_own/"
+
+        data = {"format_version": 0.1, "api_key": self.api_key}
+        if(trap_id):
+            data['trap_id'] = trap_id
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, headers=RmwHubClient.HEADERS, json=data)
+
+        if response.status_code != 200:
+            logger.error(
+                f"Failed to download data from RMW Hub API. Error: {response.status_code} - {response.text}"
+            )
+
         return self.convert_to_sets(response)
 
-    def convert_to_sets(self, response: dict) -> RmwSets:
+    def convert_to_sets(self, response: dict) -> List[GearSet]:
         response_json = json.loads(response)
 
         if "sets" not in response_json:
             logger.error(f"Failed to download data from RMW Hub API. Error: {response}")
-            return RmwSets(sets=[])
+            return []
 
         sets = response_json["sets"]
         gearsets = []
@@ -348,10 +380,10 @@ class RmwHubAdapter:
 
             gearsets.append(gearset)
 
-        return RmwSets(sets=gearsets)
+        return gearsets
 
     async def process_download(
-        self, rmw_sets: RmwSets, start_datetime_str: str, minute_interval: int
+        self, rmw_sets: List[GearSet], start_datetime_str: str, minute_interval: int
     ) -> List:
         """
         Process the sets from the RMW Hub API.
@@ -379,7 +411,7 @@ class RmwHubAdapter:
         # Iterate through rmwSets and determine what is an insert and what is an update to Earthranger
         rmw_inserts = set()
         rmw_updates = set()
-        for gearset in rmw_sets.sets:
+        for gearset in rmw_sets:
             for trap in gearset.traps:
                 if RmwHubAdapter.clean_id_str(trap.id) in er_subject_names_and_ids:
                     rmw_updates.add(gearset)
@@ -461,24 +493,6 @@ class RmwHubAdapter:
 
         return observations
 
-    async def create_subject_latest_observation_mapping(
-        self, er_subjects: List
-    ) -> Dict[str, Dict]:
-        """
-        Create a mapping of ER Subjects IDs to their latest observations.
-        """
-
-        subject_id_to_latest_observation = {}
-        for er_subject in er_subjects:
-            subject_id = er_subject.get("id")
-            latest_observations = await self.er_client.get_latest_observations(
-                subject_id, 1
-            )
-            subject_id_to_latest_observation[subject_id] = (
-                latest_observations[0] if latest_observations else {}
-            )
-        return subject_id_to_latest_observation
-
     def _create_traps_gearsets_mapping_key(self, traps_ids: List[str]) -> str:
         """
         Create a unique key for the traps and gearsets mapping.
@@ -490,40 +504,17 @@ class RmwHubAdapter:
         "".join(cleaned_traps_ids)
         return "".join(cleaned_traps_ids)
 
-    def create_traps_gearsets_mapping(self, rmw_sets: RmwSets) -> Dict[str, str]:
-        """
-        Create a mapping of traps (concatenated) to their corresponding gear sets.
-        Should map to the latest gear set if multiple exist for the same traps.
-        """
-        traps_to_gearsets_mapping = {}
-        for gearset in rmw_sets.sets:
-            trap_ids = [trap.id for trap in gearset.traps]
-            trap_names = self._create_traps_gearsets_mapping_key(trap_ids)
-            if trap_names in traps_to_gearsets_mapping:
-                existing_mapped_gearset = traps_to_gearsets_mapping[trap_names]
-                if existing_mapped_gearset.when_updated_utc < gearset.when_updated_utc:
-                    traps_to_gearsets_mapping[trap_names] = gearset
-                continue
-            traps_to_gearsets_mapping[trap_names] = gearset
+    async def generate_display_id_from_devices(self, devices):
+        concat_devices = self._create_traps_gearsets_mapping_key(
+            [device.get("device_id") for device in devices]
+        )
+        display_id_hash = hashlib.sha256(str(concat_devices).encode()).hexdigest()[:12]
 
-        return traps_to_gearsets_mapping
+        return display_id_hash
 
-    def create_display_id_subject_mapping(
-        self, er_subjects: List, subject_latest_observation_mapping: Dict
-    ) -> Dict[str, dict]:
-        """
-        Create a mapping of display IDs to their corresponding Earthranger subjects.
-        """
-        display_id_to_er_subject_mapping = {}
-        for er_subject in er_subjects:
-            subject_id = er_subject.get("id")
-            latest_observation = subject_latest_observation_mapping.get(subject_id)
-            display_id = latest_observation.get("observation_details", {}).get(
-                "display_id"
-            )
-            if display_id:
-                display_id_to_er_subject_mapping[display_id] = er_subject
-        return display_id_to_er_subject_mapping
+    # Trap IDs must be atleast 32 characters and no more than 38 characters
+    def validate_id_length(self, id_str: str):
+        return id_str.ljust(32, "#")
 
     async def process_upload(self, start_datetime_str) -> Tuple[List, dict]:
         """
@@ -532,9 +523,6 @@ class RmwHubAdapter:
         """
 
         logger.info("Processing updates to RMW Hub from ER...")
-
-        # Download data from search_own endpoint in RMWHub
-        rmw_sets = await self.search_own()
 
         # Normalize the extracted data into a list of updates following to the RMWHub schema:
         updates = []
@@ -550,192 +538,43 @@ class RmwHubAdapter:
             )
             return 0, {}
 
-        # Set of all traps ids in the RMW sets
-        rmw_trap_ids = {
-            RmwHubAdapter.clean_id_str(trap.id)
-            for gearset in rmw_sets.sets
-            for trap in gearset.traps
-        }
-
-        # Create utility mapping for the upload process
-
-        # ER Subject ID to latest observation mapping
-        subject_id_to_latest_observation_mapping = (
-            await self.create_subject_latest_observation_mapping(er_subjects)
-        )
-
-        # ER Subject's display ID to ER Subject mapping
-        display_id_to_subject_mapping = self.create_display_id_subject_mapping(
-            er_subjects, subject_id_to_latest_observation_mapping
-        )
-
-        # RMW traps (concactenated) to their corresponding gear sets
-        traps_to_gearsets_mapping = self.create_traps_gearsets_mapping(rmw_sets)
-
-        # RMW set ID to respective gear set
-        set_id_to_gearset_mapping = await self.create_set_id_to_gearset_mapping(
-            rmw_sets.sets
-        )
-
         # Iterate through er_subjects and determine what is an insert and what is an update to RmwHub
         # Based on the display ID existence on the RMW side
-        er_inserts, er_updates = set(), set()
         for subject in er_subjects:
             subject_name = subject.get("name")
-            subject_id = subject.get("id")
-            if not subject_name:
-                logger.error(f"Subject ID {subject_id} has no name. No action.")
-                continue
-
-            subject_latest_observation = subject_id_to_latest_observation_mapping.get(
-                subject_id
-            )
-            subject_display_id = subject_latest_observation.get(
-                "observation_details", {}
-            ).get("display_id")
-
-            devices = subject_latest_observation.get("observation_details", {}).get(
-                "devices"
-            )
-            traps_to_gearsets_mapping_key = self._create_traps_gearsets_mapping_key(
-                [device.get("device_id") for device in devices]
-            )
-            rmwhub_set_id = traps_to_gearsets_mapping.get(traps_to_gearsets_mapping_key)
 
             if subject_name.startswith("rmw"):
-                logger.info(
-                    f"Subject ID {subject_name} originally from rmwHub. Skipped."
-                )
+                logger.debug(f"Subject ID {subject_name} originally from rmwHub. Skipped.")
+                continue
+            elif not subject_name:
+                logger.error(f"Subject ID {subject['id']} has no name. No action.")
                 continue
 
-            # Use display_id for ER subjects to ensure uniqueness among gear sets
-            elif (
-                RmwHubAdapter.clean_id_str(subject_name).lower() in rmw_trap_ids
-                and rmwhub_set_id
-            ):
-                er_updates.add(subject_display_id)
-            else:
-                er_inserts.add(subject_display_id)
-
-        logger.info(f"{len(er_inserts)} Inserts to rmwHub.")
-        logger.info(f"{len(er_updates)} Updates to rmwHub.")
-
-        # Collect set ID updates for Earthranger subjects from RMW inserts
-        num_new_observations = 0
-
-        # Handle inserts to RMW
-        for display_id in er_inserts:
-            subject = display_id_to_subject_mapping.get(display_id)
-            logger.info(f"Subject ID {subject.get('name')} not found in RMW traps.")
-
-            # Create new updates from ER data for upload to RMWHub, and collect set ID to update ER.
-            subject_latest_observation = subject_id_to_latest_observation_mapping.get(
-                subject.get("id")
-            )
-            updated_gearset = await self._create_rmw_update_from_er_subject(
-                subject, subject_latest_observation
-            )
-
-            if updated_gearset is None:
-                await log_action_activity(
-                    integration_id=self.integration_id,
-                    action_id="pull_observations",
-                    title=f"Subject {subject.get('name')} ({subject.get('id')}) was skipped check previous log to understand why.",
-                    level=LogLevel.WARNING,
-                )
+            latest_observation = await self.er_client.get_latest_observations(subject['id'], 1)
+            if(not latest_observation):
+                logging.info(f"No latest observation found for subject {subject['id']}.  Skipping...")
                 continue
-            if not updated_gearset.traps:
-                await log_action_activity(
-                    integration_id=self.integration_id,
-                    action_id="pull_observations",
-                    title=f"No devices found for ER subject ID: {subject.get('id')}.",
-                    level=LogLevel.ERROR,
-                )
-            else:
-                # TODO: Check with Halley if this is needed
-                num_new_observations += await self._create_put_er_set_id_observation(
-                    subject, updated_gearset.id
-                )
-                updates.append(updated_gearset)
+            latest_observation = latest_observation[0]
 
-                logger.info(
-                    f"Processed new gear set for set ID {updated_gearset.id} from ER subject ID: {subject.get('id')}."
-                )
+            devices = latest_observation.get('observation_details', {}).get('devices', [])
+            if(not devices):
+                logging.info(f"No devices in latest observation for subject {subject['id']}.  Skipping...")
+                continue
+            
+            rmwhub_set = await self._get_newest_set_from_rmwhub(devices)
 
-        # Handle updates to RMW
-        for display_id in er_updates:
-            subject = display_id_to_subject_mapping.get(display_id)
-            subject_id = subject.get("id")
-            logger.info(f"Subject ID {subject.get('name')} found in RMW traps.")
-
-            # Get the latest observation for the subject
-            latest_observation = subject_id_to_latest_observation_mapping.get(
-                subject_id
-            )
-
-            if not latest_observation:
-                logger.error(
-                    f"Subject ID {subject.get('id')} has no latest observation."
-                )
+            if(rmwhub_set and (parse_date(rmwhub_set.when_updated_utc) > parse_date(latest_observation['created_at']))):
                 continue
 
-            devices = latest_observation.get("observation_details", {}).get("devices")
+            new_gearset = await self._create_rmw_update_from_er_subject(subject, latest_observation, rmwhub_set)
+            if(new_gearset):
+                updates.append(new_gearset)
 
-            traps_to_gearsets_mapping_key = self._create_traps_gearsets_mapping_key(
-                [device.get("device_id") for device in devices]
-            )
-            rmw_gearset = traps_to_gearsets_mapping.get(traps_to_gearsets_mapping_key)
-
-            if not rmw_gearset:
-                logger.warning(
-                    f"RMW Set ID not found for subject ID {subject.get('id')}. No action."
-                )
-                await log_action_activity(
-                    integration_id=self.integration_id,
-                    action_id="pull_observations",
-                    title=f"RMW Set ID not found for subject ID {subject.get('id')}. No action.",
-                    level=LogLevel.WARNING,
-                )
-                continue
-
-            updated_gearset = await self._create_rmw_update_from_er_subject(
-                subject, latest_observation, rmw_gearset
-            )
-
-            if updated_gearset is None:
-                await log_action_activity(
-                    integration_id=self.integration_id,
-                    action_id="pull_observations",
-                    title=f"Subject {subject.get('name')} ({subject.get('id')}) was skipped check previous log to understand why.",
-                    level=LogLevel.WARNING,
-                )
-                continue
-
-            if not updated_gearset.traps:
-                await log_action_activity(
-                    integration_id=self.integration_id,
-                    action_id="pull_observations",
-                    title=f"No devices found for ER subject ID: {subject.get('id')}.",
-                    level=LogLevel.ERROR,
-                )
-            else:
-                # TODO: Check with Halley if this is needed
-                num_new_observations += await self._create_put_er_set_id_observation(
-                    subject, updated_gearset.id
-                )
-                updates.append(updated_gearset)
-                logger.info(
-                    f"Processed update for gear set with set ID {updated_gearset.id} from ER subject ID: {subject['id']}."
-                )
-
-        for update in updates:
-            logger.info(
-                f"Uploading gear set with set ID {update.id} to RMW Hub API. Update: {json.dumps(update.dict(), indent=2)}"
-            )
-
-        response = await self._upload_data(updates)
         if not updates:
             logger.info("No updates to upload to RMW Hub API.")
+            return 0, {"trap_count": 0}
+    
+        response = await self._upload_data(updates)
         num_new_observations = len(
             [trap.id for gearset in updates for trap in gearset.traps]
         )
@@ -743,14 +582,12 @@ class RmwHubAdapter:
 
     # TODO RF-752: Remove unecessary code when status updates are verified to be working through event
     # type in API instead of is_active status on observation.
-    async def push_status_updates(self, observations: List, rmw_sets: RmwSets):
+    async def push_status_updates(self, observations: List, rmw_sets: List[GearSet]):
         """
         Process the status updates from the RMW Hub API.
         """
 
-        rmw_set_id_to_gearset_mapping = await self.create_set_id_to_gearset_mapping(
-            rmw_sets.sets
-        )
+        rmw_set_id_to_gearset_mapping = await self.create_set_id_to_gearset_mapping(rmw_sets)
 
         visited_traps = set()
         for observation in observations:
@@ -855,19 +692,14 @@ class RmwHubAdapter:
         Update the set ID for the ER subject based on the provided set ID.
         Returns 1 if the observation was created for the ER subject, 0 otherwise.
         """
+        devices = er_subject.get("additional").get("devices", [])
+        display_id_hash = self.generate_display_id_from_devices(devices)
 
-        if not er_subject.get("additional") or not er_subject.get("additional").get(
-            "devices"
-        ):
-            logger.error(f"No traps found for trap ID {er_subject.get('name')}.")
-            return {}
-
-        display_id_hash = hashlib.sha256(str(set_id).encode()).hexdigest()[:12]
         is_active = er_subject.get("is_active")
         source_provider = await self.er_client.get_source_provider(er_subject.get("id"))
 
         observations = []
-        for device in er_subject.get("additional").get("devices"):
+        for device in devices:
             observations.append(
                 {
                     "name": device["device_id"],
@@ -950,15 +782,6 @@ class RmwHubAdapter:
         :param rmw_gearset: RMW gear set to update (not required for new inserts)
         :param latest_observation: Latest observation for the subject (not required for new inserts)
         """
-        # Trap IDs must be atleast 32 characters and no more than 38 characters
-        def validate_id_length(id_str: str):
-            target_length = 32
-            if len(id_str) < target_length:
-                logger.error(
-                    f"ID {id_str} is too short. Adding '#' to meet Trap ID length requirements."
-                )
-                return id_str.ljust(target_length, "#")
-            return id_str
 
         # Create traps list:
         traps = []
@@ -1027,7 +850,7 @@ class RmwHubAdapter:
             )
             traps.append(
                 Trap(
-                    id=validate_id_length(trap_id),
+                    id=self.validate_id_length(trap_id),
                     sequence=1 if device.get("label") == "a" else 2,
                     latitude=device.get("location").get("latitude"),
                     longitude=device.get("location").get("longitude"),
@@ -1149,7 +972,7 @@ class RmwHubClient:
         data = {
             "format_version": 0.1,
             "api_key": self.api_key,
-            "max_sets": 1000,
+            "max_sets": 2000,
             # "status": "deployed", // Pull all data not just deployed gear
             "start_datetime_utc": start_datetime_str,
         }
@@ -1158,26 +981,6 @@ class RmwHubClient:
             data["status"] = status
 
         url = self.rmw_url + "/search_hub/"
-
-        async with httpx.AsyncClient() as client:
-            response = await client.post(url, headers=RmwHubClient.HEADERS, json=data)
-
-        if response.status_code != 200:
-            logger.error(
-                f"Failed to download data from RMW Hub API. Error: {response.status_code} - {response.text}"
-            )
-
-        return response.text
-
-    async def search_own(self) -> dict:
-        """
-        Downloads data from the RMWHub API using the search_own endpoint.
-        ref: https://ropeless.network/api/docs#/Download
-        """
-
-        url = self.rmw_url + "/search_own/"
-
-        data = {"format_version": 0.1, "api_key": self.api_key}
 
         async with httpx.AsyncClient() as client:
             response = await client.post(url, headers=RmwHubClient.HEADERS, json=data)

@@ -1,3 +1,4 @@
+import json
 import pytest
 
 from app.actions.configurations import PullRmwHubObservationsConfiguration
@@ -440,7 +441,7 @@ def mock_rmwhub_items_update():
             when_updated_utc="2025-03-14T16:38:12Z",
             traps=[
                 Trap(
-                    id="test_trap_id_0",
+                    id="e_100###########################",
                     sequence=1,
                     latitude=-5.19816,
                     longitude=122.8113,
@@ -853,8 +854,8 @@ def mock_get_latest_observations():
             return [{
                 'id': '0302a774-1971-4a64-8264-1d7f17969442',
                 'location': {'latitude': 42.6762, 'longitude': -70.6255043},
-                'created_at': '2025-01-28T14:51:02.996570-08:00',
-                'recorded_at': '2025-01-26T03:20:57+00:00',
+                'created_at': '2025-01-26T03:20:57+00:00',
+                'recorded_at': '2025-04-20T14:51:02.996570-08:00',
                 'source': 'random-string',
                 'exclusion_flags': 0,
                 'observation_details':
@@ -863,7 +864,7 @@ def mock_get_latest_observations():
                             {
                                 "label": "a",
                                 "location": {"latitude": 42.6762, "longitude": -70.6255043},
-                                "device_id": "FBB01895-0BC3-4498-ACAC-BCBCE12F1363",
+                                "device_id": "100",
                                 "last_updated": "2025-01-26T03:20:57+00:00",
                             }
                         ],
@@ -906,7 +907,7 @@ def mock_get_latest_observations():
                 'id': '0931ddaa-770c-4bb4-9d66-b8106c17e043',
                 'location': {"latitude": 42.6762032, "longitude": -70.6253728},
                 'created_at': '2025-01-28T14:51:02.996570-08:00',
-                'recorded_at': '2025-01-26T03:20:57+00:00',
+                'recorded_at': '2025-04-26T03:20:57+00:00',
                 'source': 'random-string',
                 'exclusion_flags': 0,
                 'observation_details':
@@ -1148,7 +1149,7 @@ def mock_latest_observations():
         {
             "id": "82d599d7-62f1-4620-bab4-0415fa8e6b4b",
             "location": {"latitude": 34.472032, "longitude": -123.10975},
-            "created_at": "2024-10-09T17:00:54.182801-07:00",
+            "created_at": "2024-01-09T17:00:54.182801-07:00",
             "recorded_at": "2020-07-31T11:58:33-07:00",
             "source": "7107445c-d883-423b-84d9-3525e7a37c8c",
             "exclusion_flags": 0,
