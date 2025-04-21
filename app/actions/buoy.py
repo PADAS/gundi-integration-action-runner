@@ -1,6 +1,7 @@
 import json
 from typing import List
 import logging
+from datetime import datetime
 
 import httpx
 
@@ -18,7 +19,7 @@ class BuoyClient:
         self.er_site = er_site
 
     # TODO: Validate include details works as expected
-    async def get_er_subjects(self, start_datetime: str = None) -> List:
+    async def get_er_subjects(self, start_datetime: datetime = None) -> List:
 
         updated_since = start_datetime
         url = self.er_site + f"/subjects/?include_details=True&include_inactive=True"

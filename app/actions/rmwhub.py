@@ -279,14 +279,14 @@ class RmwHubAdapter:
         self.options = kwargs.get("options", {})
 
     async def download_data(
-        self, start_datetime_str: str, status: bool = None
+        self, start_datetime: str, status: bool = None
     ) -> List[GearSet]:
         """
         Downloads data from the RMW Hub API using the search_hub endpoint.
         ref: https://ropeless.network/api/docs#/Download
         """
 
-        response = await self.rmw_client.search_hub(start_datetime_str, status)
+        response = await self.rmw_client.search_hub(start_datetime, status)
         response_json = json.loads(response)
 
         if "sets" not in response_json:
@@ -383,7 +383,7 @@ class RmwHubAdapter:
         return gearsets
 
     async def process_download(
-        self, rmw_sets: List[GearSet], start_datetime_str: str, minute_interval: int
+        self, rmw_sets: List[GearSet], start_datetime: datetime, minute_interval: int
     ) -> List:
         """
         Process the sets from the RMW Hub API.
@@ -516,7 +516,7 @@ class RmwHubAdapter:
     def validate_id_length(self, id_str: str):
         return id_str.ljust(32, "#")
 
-    async def process_upload(self, start_datetime_str) -> Tuple[List, dict]:
+    async def process_upload(self, start_datetime: datetime) -> Tuple[List, dict]:
         """
         Process the sets from the Buoy API and upload to RMWHub.
         Returns a list of new observations for Earthranger with the new RmwHub set IDs.
@@ -528,13 +528,13 @@ class RmwHubAdapter:
         updates = []
 
         # Get updates from the last interval_minutes in ER
-        er_subjects = await self.er_client.get_er_subjects(start_datetime_str)
+        er_subjects = await self.er_client.get_er_subjects(start_datetime)
         if not er_subjects:
             await log_action_activity(
                 integration_id=self.integration_id,
                 action_id="pull_observations",
-                title="No subjects found in ER.",
-                level=LogLevel.WARNING,
+                title="No subjects with new observations found in ER.",
+                level=LogLevel.INFO,
             )
             return 0, {}
 
@@ -963,7 +963,7 @@ class RmwHubClient:
         self.api_key = api_key
         self.rmw_url = rmw_url
 
-    async def search_hub(self, start_datetime_str: str, status: bool = None) -> dict:
+    async def search_hub(self, start_datetime: str, status: bool = None) -> dict:
         """
         Downloads data from the RMWHub API using the search_hub endpoint.
         ref: https://ropeless.network/api/docs#/Download
@@ -974,7 +974,7 @@ class RmwHubClient:
             "api_key": self.api_key,
             "max_sets": 2000,
             # "status": "deployed", // Pull all data not just deployed gear
-            "start_datetime_utc": start_datetime_str,
+            "start_datetime_utc": start_datetime.astimezone(pytz.utc).isoformat()
         }
 
         if status:

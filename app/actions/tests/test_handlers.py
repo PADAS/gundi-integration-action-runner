@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import pytz
 import pytest
 
 @pytest.mark.asyncio
@@ -66,11 +67,9 @@ async def test_handler_action_pull_observations(
     )
 
     sync_interval_minutes = 30
-    expected_start_datetime_str = (
-        fixed_now - timedelta(minutes=sync_interval_minutes)
-    ).isoformat(timespec="seconds")
+    expected_start_datetime = (fixed_now - timedelta(minutes=sync_interval_minutes)).astimezone(pytz.utc)
 
     assert download_data_mock.call_count == len(a_good_connection.destinations)
     for call in download_data_mock.call_args_list:
         args, kwargs = call
-        assert args[0] == expected_start_datetime_str
+        assert args[0] == expected_start_datetime

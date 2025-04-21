@@ -1,5 +1,6 @@
 from datetime import datetime, timezone, timedelta
 import dateparser
+import pytz
 import time
 from app.actions.buoy import BuoyClient
 import json
@@ -33,9 +34,9 @@ async def test_rmwhub_adapter_download_data(
         "super_secret_token",
         "er.destination.com",
     )
-    start_datetime_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    start_datetime = datetime.now(tz=pytz.utc)
     minute_interval = 5
-    rmw_sets = await rmwadapter.download_data(start_datetime_str, minute_interval)
+    rmw_sets = await rmwadapter.download_data(start_datetime, minute_interval)
 
     assert len(rmw_sets) == 5
 
@@ -69,10 +70,10 @@ async def test_rmw_adapter_process_download(
     )
 
     rmw_sets = mock_rmwhub_items
-    start_datetime_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    start_datetime = datetime.now(tz = pytz.utc)
     minute_interval = 5
     observations = await rmwadapter.process_download(
-        rmw_sets, start_datetime_str, minute_interval
+        rmw_sets, start_datetime, minute_interval
     )
 
     assert len(observations) == 9
@@ -110,8 +111,8 @@ async def test_rmwhub_adapter_search_hub(mocker, a_good_configuration):
     rmw_client = RmwHubClient(
         a_good_configuration.api_key, a_good_configuration.rmw_url
     )
-    start_datetime_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    response = await rmw_client.search_hub(start_datetime_str)
+    start_datetime = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    response = await rmw_client.search_hub(start_datetime)
 
     assert response == mock_response_text
 
@@ -130,9 +131,9 @@ async def test_rmwhub_adapter_search_hub_failure(mocker, a_good_configuration):
     rmw_client = RmwHubClient(
         a_good_configuration.api_key, a_good_configuration.rmw_url
     )
-    start_datetime_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    start_datetime = datetime.now(tz=pytz.utc)
     minute_interval = 60
-    response = await rmw_client.search_hub(start_datetime_str)
+    response = await rmw_client.search_hub(start_datetime)
 
     assert response == "Internal Server Error"
 
@@ -159,7 +160,7 @@ async def test_rmwhub_adapter_process_upload_insert_success(
         "super_secret_token",
         "er.destination.com",
     )
-    start_datetime_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    start_datetime = datetime.now()
     mock_log_activity = AsyncMock()
     mocker.patch("app.actions.rmwhub.log_action_activity", mock_log_activity)
 
@@ -191,7 +192,7 @@ async def test_rmwhub_adapter_process_upload_insert_success(
         return_value=1,
     )
 
-    observations, rmw_response = await rmw_adapter.process_upload(start_datetime_str)
+    observations, rmw_response = await rmw_adapter.process_upload(start_datetime)
 
     assert observations == 0
 
@@ -218,7 +219,7 @@ async def test_rmwhub_adapter_process_upload_insert_success(
         return_value=[],
     )
 
-    observations, rmw_response = await rmw_adapter.process_upload(start_datetime_str)
+    observations, rmw_response = await rmw_adapter.process_upload(start_datetime)
     assert observations == 5
     assert rmw_response["trap_count"] == 5
 
@@ -242,7 +243,7 @@ async def test_rmwhub_adapter_process_upload_insert_success(
         return_value=[],
     )
 
-    observations, rmw_response = await rmw_adapter.process_upload(start_datetime_str)
+    observations, rmw_response = await rmw_adapter.process_upload(start_datetime)
     assert observations == 0
     assert rmw_response["trap_count"] == 0
 
@@ -268,7 +269,7 @@ async def test_rmwhub_adapter_process_upload_update_success(
         "super_secret_token",
         "http://er.destination.com",
     )
-    start_datetime_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    start_datetime = datetime.now(tz=pytz.utc)
     mock_log_activity = AsyncMock()
     mocker.patch("app.actions.rmwhub.log_action_activity", mock_log_activity)
 
@@ -304,7 +305,7 @@ async def test_rmwhub_adapter_process_upload_update_success(
         return_value=0,
     )
 
-    observations, rmw_response = await rmw_adapter.process_upload(start_datetime_str)
+    observations, rmw_response = await rmw_adapter.process_upload(start_datetime)
 
     # Should make 4 and skip the 5th
     assert observations == 4
@@ -326,7 +327,7 @@ async def test_rmwhub_adapter_process_upload_failure(
         "super_secret_token",
         "er.destination.com",
     )
-    start_datetime_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    start_datetime = datetime.now(tz=pytz.utc)
     mock_log_activity = AsyncMock()
     mocker.patch("app.actions.rmwhub.log_action_activity", mock_log_activity)
 
@@ -349,7 +350,7 @@ async def test_rmwhub_adapter_process_upload_failure(
         return_value=[],
     )
 
-    observations, rmw_response = await rmw_adapter.process_upload(start_datetime_str)
+    observations, rmw_response = await rmw_adapter.process_upload(start_datetime)
     assert observations == 0
     assert rmw_response == {}
 

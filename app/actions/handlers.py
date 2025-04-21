@@ -56,9 +56,7 @@ async def action_pull_observations(
     current_datetime = datetime.now(timezone.utc)
     sync_interval_minutes = 30
     start_datetime = current_datetime - timedelta(minutes=sync_interval_minutes)
-    start_datetime_str = start_datetime.isoformat(timespec="seconds")
     end_datetime = current_datetime
-    end_datetime_str = end_datetime.isoformat(timespec="seconds")
 
     # TODO: Create sub-actions for each destination
     total_observations = []
@@ -84,11 +82,11 @@ async def action_pull_observations(
         )
 
         logger.info(
-            f"Downloading data from RMW Hub API...For the datetimes: {start_datetime_str} - {end_datetime_str}"
+            f"Downloading data from RMW Hub API...For the datetimes: {start_datetime.isoformat} - {end_datetime.isoformat}"
         )
-        rmwSets = await rmw_adapter.download_data(start_datetime_str)
+        rmwSets = await rmw_adapter.download_data(start_datetime)
         logger.info(
-            f"{len(rmwSets)} Gearsets Downloaded from RMW Hub API...For the datetimes: {start_datetime_str} - {end_datetime_str}"
+            f"{len(rmwSets)} Gearsets Downloaded from RMW Hub API...For the datetimes: {start_datetime.isoformat()} - {end_datetime.isoformat()}"
         )
 
         await log_action_activity(
@@ -97,8 +95,8 @@ async def action_pull_observations(
             level=LogLevel.INFO,
             title="Extracting observations with filter..",
             data={
-                "start_date_time": start_datetime_str,
-                "end_date_time": end_datetime_str,
+                "start_date_time": start_datetime.isoformat(),
+                "end_date_time": end_datetime.isoformat(),
                 "environment": str(environment),
                 "gear_sets_to_process": len(rmwSets),
             },
@@ -112,7 +110,7 @@ async def action_pull_observations(
                     f"Processing updates from RMW Hub API...Number of gearsets returned: {len(rmwSets)}"
                 )
                 observations = await rmw_adapter.process_download(
-                    rmwSets, start_datetime_str, sync_interval_minutes
+                    rmwSets, start_datetime, sync_interval_minutes
                 )
                 total_observations.extend(observations)
             else:
@@ -122,8 +120,8 @@ async def action_pull_observations(
                     level=LogLevel.INFO,
                     title="No gearsets returned from RMW Hub API.",
                     data={
-                        "start_date_time": start_datetime_str,
-                        "end_date_time": end_datetime_str,
+                        "start_date_time": start_datetime.isoformat(),
+                        "end_date_time": end_datetime.isoformat(),
                         "environment": str(environment),
                     },
                     config_data=action_config.dict(),
@@ -137,7 +135,7 @@ async def action_pull_observations(
             (
                 num_put_set_id_observations,
                 rmw_response,
-            ) = await rmw_adapter.process_upload(start_datetime_str)
+            ) = await rmw_adapter.process_upload(start_datetime)
 
             if rmw_response and "detail" in rmw_response:
                 await log_action_activity(
@@ -202,9 +200,7 @@ async def action_pull_observations_24_hour_sync(
     sync_interval_minutes = 1440  # 24 hours
     current_datetime = datetime.now(timezone.utc)
     start_datetime = current_datetime - timedelta(minutes=sync_interval_minutes)
-    start_datetime_str = start_datetime.isoformat(timespec="seconds")
     end_datetime = current_datetime
-    end_datetime_str = end_datetime.isoformat(timespec="seconds")
 
     # TODO: Create sub-actions for each destination
     total_observations = []
@@ -227,11 +223,11 @@ async def action_pull_observations_24_hour_sync(
         )
 
         logger.info(
-            f"Downloading data from RMW Hub API...For the dates: {start_datetime_str} - {end_datetime_str}"
+            f"Downloading data from RMW Hub API...For the dates: {start_datetime.isoformat()} - {end_datetime.isoformat()}"
         )
-        rmwSets = await rmw_adapter.download_data(start_datetime_str)
+        rmwSets = await rmw_adapter.download_data(start_datetime)
         logger.info(
-            f"{len(rmwSets)} Gearsets Downloaded from RMW Hub API...For the datetimes: {start_datetime_str} - {end_datetime_str}"
+            f"{len(rmwSets)} Gearsets Downloaded from RMW Hub API...For the datetimes: {start_datetime.isoformat()} - {end_datetime.isoformat()}"
         )
 
         # Optionally, log a custom messages to be shown in the portal
@@ -241,8 +237,8 @@ async def action_pull_observations_24_hour_sync(
             level=LogLevel.INFO,
             title="Extracting observations with filter..",
             data={
-                "start_date_time": start_datetime_str,
-                "end_date_time": end_datetime_str,
+                "start_date_time": start_datetime.isoformat(),
+                "end_date_time": end_datetime.isoformat(),
                 "environment": str(environment),
             },
             config_data=action_config.dict(),
@@ -255,7 +251,7 @@ async def action_pull_observations_24_hour_sync(
                     f"Processing updates from RMW Hub API...Number of gearsets returned: {len(rmwSets)}"
                 )
                 observations = await rmw_adapter.process_download(
-                    rmwSets, start_datetime_str, sync_interval_minutes
+                    rmwSets, start_datetime, sync_interval_minutes
                 )
                 total_observations.extend(observations)
             else:
@@ -265,8 +261,8 @@ async def action_pull_observations_24_hour_sync(
                     level=LogLevel.INFO,
                     title="No gearsets returned from RMW Hub API.",
                     data={
-                        "start_date_time": start_datetime_str,
-                        "end_date_time": end_datetime_str,
+                        "start_date_time": start_datetime.isoformat(),
+                        "end_date_time": end_datetime.isoformat(),
                         "environment": str(environment),
                     },
                     config_data=action_config.dict(),
@@ -280,7 +276,7 @@ async def action_pull_observations_24_hour_sync(
             (
                 num_put_set_id_observations,
                 rmw_response,
-            ) = await rmw_adapter.process_upload(start_datetime_str)
+            ) = await rmw_adapter.process_upload(start_datetime)
 
             if rmw_response and "detail" in rmw_response:
                 await log_action_activity(
