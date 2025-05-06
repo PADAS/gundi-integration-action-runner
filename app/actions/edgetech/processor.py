@@ -207,12 +207,15 @@ class EdgeTechProcessor:
             buoy_records = buoy_states_by_serial_number[serial_number]
             primary_subject_name = f"{self._prefix}{serial_number}_A"
             er_subject = er_subject_mapping.get(primary_subject_name)
+            secondary_subject_name = f"{self._prefix}{serial_number}_B"
 
             if er_subject is None:
                 logger.warning(
                     f"Primary ER subject not found for buoy {serial_number}. Skipping update."
                 )
                 continue
+
+            was_part_of_trawl = er_subject_mapping.get(secondary_subject_name)
 
             last_known_position, last_known_end_position = None, None
             buoys_observations = []
@@ -224,6 +227,7 @@ class EdgeTechProcessor:
                             er_subject.last_position_date,
                             last_known_position,
                             last_known_end_position,
+                            was_part_of_trawl,
                         )
                     )
                     buoys_observations.extend(new_obs)

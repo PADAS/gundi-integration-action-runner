@@ -32,6 +32,7 @@ def test_create_observations(
     # Assert
     assert observations == expected_observations
 
+
 @pytest.mark.usefixtures
 def test_create_observations_recored_at_same_as_current_state(
     get_mock_edgetech_data,

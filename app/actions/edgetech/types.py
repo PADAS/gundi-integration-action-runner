@@ -137,6 +137,7 @@ class Buoy(pydantic.BaseModel):
         start_lon: float,
         end_lat: Optional[float],
         end_lon: Optional[float],
+        was_part_of_trawl: bool = False,
     ) -> List[Dict[str, Any]]:
         """
         Return one or two observations for deployment or retrieval events,
@@ -153,7 +154,7 @@ class Buoy(pydantic.BaseModel):
             "a", start_lat, start_lon, subject_name_a, iso_time
         )
         devices.append(device_a)
-        if is_trawl:
+        if is_trawl or (not is_deployed and was_part_of_trawl):
             subject_name_b = f"{prefix}{self.serialNumber}_B"
             device_b = self._create_device_record(
                 "b", end_lat, end_lon, subject_name_b, iso_time
@@ -170,11 +171,11 @@ class Buoy(pydantic.BaseModel):
         )
         observations.append(observation_a)
 
-        if is_trawl:
+        if is_trawl or (not is_deployed and was_part_of_trawl):
             observation_b = self._create_observation_record(
                 subject_name=subject_name_b,
-                lat=end_lat,
-                lon=end_lon,
+                lat=end_lat or start_lat,
+                lon=end_lon or start_lon,
                 devices=devices,
                 is_active=is_deployed,
                 last_updated=iso_time,
@@ -277,6 +278,7 @@ class Buoy(pydantic.BaseModel):
         last_observation_timestamp: Optional[datetime] = None,
         last_know_position_previous_states: Optional[GeoLocation] = None,
         last_know_end_position_previous_states: Optional[GeoLocation] = None,
+        was_part_of_trawl: bool = False,
     ) -> List[Dict[str, Any]]:
         """
         Return observations from the current state or from changeRecords if available.
@@ -336,6 +338,7 @@ class Buoy(pydantic.BaseModel):
                 start_lon=start_lon,
                 end_lat=end_lat,
                 end_lon=end_lon,
+                was_part_of_trawl=was_part_of_trawl,
             )
         )
 
