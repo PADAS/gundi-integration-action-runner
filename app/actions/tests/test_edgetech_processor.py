@@ -61,7 +61,9 @@ async def test_edgetech_processor_inserting_buoys(
     expected_observations = (
         get_expected_observations_test_edgetech_processor_inserting_buoys
     )
-    expected_inserts_buoys = {buoy.serialNumber for buoy in buoys}
+
+    # Leave out the 88CE9978AE since it doesn't have a record with location info
+    expected_inserts_buoys = {"88CE999763", "88CE99D9CB", "88CE99C99A"}
 
     # Assert
     observations.sort(key=lambda x: x["recorded_at"])
