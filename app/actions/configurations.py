@@ -20,7 +20,6 @@ class EdgeTechAuthConfiguration(AuthActionConfiguration, ExecutableActionMixin):
     )
 
 
-
 class EdgeTechConfiguration(PullActionConfiguration):
     api_base_url: pydantic.AnyHttpUrl = pydantic.Field(
         ...,
@@ -32,8 +31,8 @@ class EdgeTechConfiguration(PullActionConfiguration):
 
     @property
     def v1_url(self):
-        return self.api_base_url + "/v1"
+        return f"{self.api_base_url}/v1"
 
     @property
     def database_dump_url(self):
-        return self.v1_url + "/database-dump/tasks"
+        return f"{self.v1_url}/database-dump/tasks"

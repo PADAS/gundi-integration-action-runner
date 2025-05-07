@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import pydantic
 
-from app.actions.buoy import BuoyClient
+from app.actions.buoy import BuoyClient, ObservationSubject
 from app.actions.edgetech.types import Buoy
 
 logger = logging.getLogger(__name__)
@@ -163,7 +163,7 @@ class EdgeTechProcessor:
 
     def _process_inserts(
         self, insert_buoys: set, buoy_states_by_serial_number: Dict[str, List[Buoy]]
-    ) -> List[dict]:
+    ) -> List[Dict[str, Any]]:
         """
         Creates observation events for buoys that need insertion.
         """
@@ -198,7 +198,7 @@ class EdgeTechProcessor:
         buoy_states_by_serial_number: Dict[str, List[Buoy]],
         er_subject_mapping: Dict[str, Any],
         noop_buoys: set,
-    ) -> List[dict]:
+    ) -> List[Dict[str, Any]]:
         """
         Creates observation events for buoys that need updating, skipping those with no changes (no-op).
         """
@@ -206,7 +206,9 @@ class EdgeTechProcessor:
         for serial_number in update_buoys:
             buoy_records = buoy_states_by_serial_number[serial_number]
             primary_subject_name = f"{self._prefix}{serial_number}_A"
-            er_subject = er_subject_mapping.get(primary_subject_name)
+            er_subject: ObservationSubject = er_subject_mapping.get(
+                primary_subject_name
+            )
             secondary_subject_name = f"{self._prefix}{serial_number}_B"
 
             if er_subject is None:
@@ -215,7 +217,7 @@ class EdgeTechProcessor:
                 )
                 continue
 
-            was_part_of_trawl = er_subject_mapping.get(secondary_subject_name)
+            was_part_of_trawl = secondary_subject_name in er_subject_mapping
 
             last_known_position, last_known_end_position = None, None
             buoys_observations = []
@@ -223,11 +225,12 @@ class EdgeTechProcessor:
                 try:
                     new_obs, last_known_position, last_known_end_position = (
                         buoy_record.create_observations(
-                            self._prefix,
-                            er_subject.last_position_date,
-                            last_known_position,
-                            last_known_end_position,
-                            was_part_of_trawl,
+                            prefix=self._prefix,
+                            subject_status=er_subject.last_position_date,
+                            last_observation_timestamp=last_known_position,
+                            last_know_position_previous_states=last_known_end_position,
+                            last_know_end_position_previous_states=was_part_of_trawl,
+                            was_part_of_trawl=was_part_of_trawl,
                         )
                     )
                     buoys_observations.extend(new_obs)
@@ -244,7 +247,7 @@ class EdgeTechProcessor:
 
         return observations
 
-    async def process(self) -> List[dict]:
+    async def process(self) -> Tuple[List[Dict[str, Any]], Set[str], Set[str]]:
         """
         Process buoy data to generate observation events for the ER system.
 
@@ -260,6 +263,8 @@ class EdgeTechProcessor:
 
         Returns:
             List[dict]: A list of dictionaries representing the observation events generated during processing.
+            Set[str]: A set of serial numbers for buoys that were inserted.
+            Set[str]: A set of serial numbers for buoys that were updated.
         Raises:
             pydantic.ValidationError: If validation fails while creating buoy observation events.
         """
