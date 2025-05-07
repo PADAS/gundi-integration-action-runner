@@ -137,8 +137,8 @@ class Buoy(pydantic.BaseModel):
         start_lon: float,
         end_lat: Optional[float],
         end_lon: Optional[float],
+        subject_status: bool,
         was_part_of_trawl: bool = False,
-        subject_status: bool = False,
     ) -> List[Dict[str, Any]]:
         """
         Return one or two observations for deployment or retrieval events,
@@ -221,7 +221,10 @@ class Buoy(pydantic.BaseModel):
         return observations
 
     def generate_observations_from_change_records(
-        self, prefix: str, last_observation_timestamp: Optional[datetime] = None
+        self,
+        prefix: str,
+        subject_status: bool,
+        last_observation_timestamp: Optional[datetime] = None,
     ) -> Tuple[List[Dict[str, Any]], Optional[GeoLocation], Optional[GeoLocation]]:
         """
         Generate observations from deployment or retrieval changes in the changeRecords.
@@ -303,6 +306,7 @@ class Buoy(pydantic.BaseModel):
                 start_lon=lon,
                 end_lat=end_lat,
                 end_lon=end_lon,
+                subject_status=subject_status,
             )
             observations.extend(event_observations)
 
@@ -311,11 +315,11 @@ class Buoy(pydantic.BaseModel):
     def create_observations(
         self,
         prefix: str,
+        subject_status: bool,
         last_observation_timestamp: Optional[datetime] = None,
         last_know_position_previous_states: Optional[GeoLocation] = None,
         last_know_end_position_previous_states: Optional[GeoLocation] = None,
         was_part_of_trawl: bool = False,
-        subject_status: bool = False,
     ) -> Tuple[List[Dict[str, Any]], Optional[GeoLocation], Optional[GeoLocation]]:
         """
         Return observations from the current state or from changeRecords if available.
@@ -327,7 +331,9 @@ class Buoy(pydantic.BaseModel):
         if self.changeRecords:
             observations, last_known_position, last_known_end_position = (
                 self.generate_observations_from_change_records(
-                    prefix, last_observation_timestamp
+                    prefix=prefix,
+                    last_observation_timestamp=last_observation_timestamp,
+                    subject_status=subject_status,
                 )
             )
 

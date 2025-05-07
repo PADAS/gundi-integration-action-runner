@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import pydantic
 
-from app.actions.buoy import BuoyClient
+from app.actions.buoy import BuoyClient, ObservationSubject
 from app.actions.edgetech.types import Buoy
 
 logger = logging.getLogger(__name__)
@@ -206,7 +206,9 @@ class EdgeTechProcessor:
         for serial_number in update_buoys:
             buoy_records = buoy_states_by_serial_number[serial_number]
             primary_subject_name = f"{self._prefix}{serial_number}_A"
-            er_subject = er_subject_mapping.get(primary_subject_name)
+            er_subject: ObservationSubject = er_subject_mapping.get(
+                primary_subject_name
+            )
             secondary_subject_name = f"{self._prefix}{serial_number}_B"
 
             if er_subject is None:
@@ -223,12 +225,12 @@ class EdgeTechProcessor:
                 try:
                     new_obs, last_known_position, last_known_end_position = (
                         buoy_record.create_observations(
-                            self._prefix,
-                            er_subject.last_position_date,
-                            last_known_position,
-                            last_known_end_position,
-                            was_part_of_trawl,
-                            er_subject.is_active,
+                            prefix=self._prefix,
+                            subject_status=er_subject.last_position_date,
+                            last_observation_timestamp=last_known_position,
+                            last_know_position_previous_states=last_known_end_position,
+                            last_know_end_position_previous_states=was_part_of_trawl,
+                            was_part_of_trawl=was_part_of_trawl,
                         )
                     )
                     buoys_observations.extend(new_obs)
