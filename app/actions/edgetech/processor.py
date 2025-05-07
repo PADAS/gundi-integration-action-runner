@@ -163,7 +163,7 @@ class EdgeTechProcessor:
 
     def _process_inserts(
         self, insert_buoys: set, buoy_states_by_serial_number: Dict[str, List[Buoy]]
-    ) -> List[dict]:
+    ) -> List[Dict[str, Any]]:
         """
         Creates observation events for buoys that need insertion.
         """
@@ -198,7 +198,7 @@ class EdgeTechProcessor:
         buoy_states_by_serial_number: Dict[str, List[Buoy]],
         er_subject_mapping: Dict[str, Any],
         noop_buoys: set,
-    ) -> List[dict]:
+    ) -> List[Dict[str, Any]]:
         """
         Creates observation events for buoys that need updating, skipping those with no changes (no-op).
         """
@@ -215,7 +215,7 @@ class EdgeTechProcessor:
                 )
                 continue
 
-            was_part_of_trawl = er_subject_mapping.get(secondary_subject_name)
+            was_part_of_trawl = secondary_subject_name in er_subject_mapping
 
             last_known_position, last_known_end_position = None, None
             buoys_observations = []
@@ -228,6 +228,7 @@ class EdgeTechProcessor:
                             last_known_position,
                             last_known_end_position,
                             was_part_of_trawl,
+                            er_subject.is_active,
                         )
                     )
                     buoys_observations.extend(new_obs)
@@ -244,7 +245,7 @@ class EdgeTechProcessor:
 
         return observations
 
-    async def process(self) -> List[dict]:
+    async def process(self) -> Tuple[List[Dict[str, Any]], Set[str], Set[str]]:
         """
         Process buoy data to generate observation events for the ER system.
 
@@ -260,6 +261,8 @@ class EdgeTechProcessor:
 
         Returns:
             List[dict]: A list of dictionaries representing the observation events generated during processing.
+            Set[str]: A set of serial numbers for buoys that were inserted.
+            Set[str]: A set of serial numbers for buoys that were updated.
         Raises:
             pydantic.ValidationError: If validation fails while creating buoy observation events.
         """

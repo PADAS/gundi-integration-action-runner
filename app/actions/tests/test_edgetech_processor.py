@@ -7,7 +7,10 @@ from app.actions.edgetech.types import Buoy
 
 @pytest.mark.asyncio
 async def test_edgetech_processor_updated_buoys(
-    mocker, get_mock_edgetech_data, get_er_subjects_updated_data
+    mocker,
+    get_mock_edgetech_data,
+    get_er_subjects_updated_data,
+    get_observations_update_buoys,
 ):
     """
     Test if the EdgeTechProcessor returns the correct updated buoys
@@ -28,9 +31,9 @@ async def test_edgetech_processor_updated_buoys(
     # Act
     processor = EdgeTechProcessor(buoys, "er_token", "er_token")
     observations, inserts_buoys, update_buoys = await processor.process()
-    assert observations == []
+    assert observations == get_observations_update_buoys
     assert inserts_buoys == set()
-    assert update_buoys == set()
+    assert update_buoys == {"88CE99DA78"}
 
 
 @pytest.mark.asyncio
@@ -63,7 +66,7 @@ async def test_edgetech_processor_inserting_buoys(
     )
 
     # Leave out the 88CE9978AE since it doesn't have a record with location info
-    expected_inserts_buoys = {"88CE999763", "88CE99D9CB", "88CE99C99A"}
+    expected_inserts_buoys = {"88CE999763", "88CE99D9CB", "88CE99C99A", "88CE99DA78"}
 
     # Assert
     observations.sort(key=lambda x: x["recorded_at"])

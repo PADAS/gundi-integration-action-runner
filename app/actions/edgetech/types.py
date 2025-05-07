@@ -1,7 +1,7 @@
 import hashlib
 import logging
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional, Tuple
 
 import pydantic
 
@@ -138,6 +138,7 @@ class Buoy(pydantic.BaseModel):
         end_lat: Optional[float],
         end_lon: Optional[float],
         was_part_of_trawl: bool = False,
+        subject_status: bool = False,
     ) -> List[Dict[str, Any]]:
         """
         Return one or two observations for deployment or retrieval events,
@@ -150,12 +151,15 @@ class Buoy(pydantic.BaseModel):
 
         devices = []
         subject_name_a = f"{prefix}{self.serialNumber}_A"
+        subject_name_b = f"{prefix}{self.serialNumber}_B"
         device_a = self._create_device_record(
             "a", start_lat, start_lon, subject_name_a, iso_time
         )
         devices.append(device_a)
         if is_trawl or (not is_deployed and was_part_of_trawl):
-            subject_name_b = f"{prefix}{self.serialNumber}_B"
+            if end_lat is None or end_lon is None:
+                end_lat = start_lat
+                end_lon = start_lon
             device_b = self._create_device_record(
                 "b", end_lat, end_lon, subject_name_b, iso_time
             )
@@ -182,11 +186,43 @@ class Buoy(pydantic.BaseModel):
             )
             observations.append(observation_b)
 
+        # If the subject status is True, is_deployed is True
+        # Add an observation a minute earlier hauling the buoy
+        if subject_status and is_deployed:
+            if was_part_of_trawl and len(devices) == 1:
+                # If the buoy was part of a trawl, we need to add the second device
+                # to the observation
+                device_b = self._create_device_record(
+                    "b", start_lat, start_lon, subject_name_b, iso_time
+                )
+                devices.append(device_b)
+
+            hauling_observation_timestamp = recorded_at - timedelta(minutes=1)
+            hauling_observation_a = self._create_observation_record(
+                subject_name=subject_name_a,
+                lat=start_lat,
+                lon=start_lon,
+                devices=devices,
+                is_active=False,
+                last_updated=hauling_observation_timestamp.isoformat(),
+            )
+            observations.append(hauling_observation_a)
+            if len(devices) > 1:
+                hauling_observation_b = self._create_observation_record(
+                    subject_name=subject_name_b,
+                    lat=start_lat,
+                    lon=start_lon,
+                    devices=devices,
+                    is_active=False,
+                    last_updated=hauling_observation_timestamp.isoformat(),
+                )
+                observations.append(hauling_observation_b)
+
         return observations
 
     def generate_observations_from_change_records(
         self, prefix: str, last_observation_timestamp: Optional[datetime] = None
-    ) -> List[Dict[str, Any]]:
+    ) -> Tuple[List[Dict[str, Any]], Optional[GeoLocation], Optional[GeoLocation]]:
         """
         Generate observations from deployment or retrieval changes in the changeRecords.
         Skips records that are older than or equal to last_observation_timestamp if provided.
@@ -279,12 +315,13 @@ class Buoy(pydantic.BaseModel):
         last_know_position_previous_states: Optional[GeoLocation] = None,
         last_know_end_position_previous_states: Optional[GeoLocation] = None,
         was_part_of_trawl: bool = False,
-    ) -> List[Dict[str, Any]]:
+        subject_status: bool = False,
+    ) -> Tuple[List[Dict[str, Any]], Optional[GeoLocation], Optional[GeoLocation]]:
         """
         Return observations from the current state or from changeRecords if available.
         Skips if the event is older than or equal to last_observation_timestamp when provided.
         """
-        observations = []
+        observations: List[Dict[str, Any]] = []
         last_known_position = last_know_position_previous_states
         last_known_end_position = last_know_end_position_previous_states
         if self.changeRecords:
@@ -339,6 +376,7 @@ class Buoy(pydantic.BaseModel):
                 end_lat=end_lat,
                 end_lon=end_lon,
                 was_part_of_trawl=was_part_of_trawl,
+                subject_status=subject_status,
             )
         )
 
