@@ -75,8 +75,11 @@ class Buoy(pydantic.BaseModel):
     @property
     def deployed(self) -> bool:
         isDeployed = self.currentState.isDeployed or False
-        isDeleted = self.currentState.isDeleted or False
-        return isDeployed and not isDeleted
+        # RF-976: Buoys that were expected to be shown weren't
+        # because they were marked as deleted in the database.
+        # This is a workaround to show them in the map.
+        # isDeleted = self.currentState.isDeleted or False
+        return isDeployed  # and not isDeleted
 
     def _create_device_record(
         self,
