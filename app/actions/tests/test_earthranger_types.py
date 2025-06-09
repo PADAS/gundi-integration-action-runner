@@ -88,7 +88,7 @@ def test_create_observations_happy_path(base_subject, is_active, event_type):
     assert obs["source"] == base_subject.name
     assert obs["type"] == base_subject.subject_type
     assert obs["subject_type"] == base_subject.subject_subtype
-    assert obs["recorded_at"] is recorded
+    assert obs["recorded_at"] == recorded.isoformat()
 
     # location
     assert obs["location"] == {"lat": lat, "lon": lon}
