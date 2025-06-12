@@ -119,7 +119,7 @@ class Buoy(pydantic.BaseModel):
         lon: float,
         devices: List[Dict[str, Any]],
         is_active: bool,
-        last_updated: str,
+        recorded_at: str,
     ) -> Dict[str, Any]:
         """Return an observation record with the given parameters."""
         devices_names = [device["device_id"] for device in devices]
@@ -132,7 +132,7 @@ class Buoy(pydantic.BaseModel):
             "type": SOURCE_TYPE,
             "subject_type": SUBJECT_SUBTYPE,
             "is_active": is_active,
-            "recorded_at": last_updated,
+            "recorded_at": recorded_at,
             "location": {"lat": lat, "lon": lon},
             "additional": {
                 "subject_name": subject_name,
@@ -161,19 +161,19 @@ class Buoy(pydantic.BaseModel):
         including associated device records.
         """
         observations = []
-        iso_time = recorded_at.isoformat()
+        recorded_at = recorded_at.isoformat()
 
         devices = []
         subject_name_a = f"{prefix}{self.serialNumber}_A"
         subject_name_b = f"{prefix}{self.serialNumber}_B"
         device_a = self._create_device_record(
-            "a", start_lat, start_lon, subject_name_a, iso_time
+            "a", start_lat, start_lon, subject_name_a, recorded_at
         )
         devices.append(device_a)
 
         if end_lat is not None and end_lon is not None:
             device_b = self._create_device_record(
-                "b", end_lat, end_lon, subject_name_b, iso_time
+                "b", end_lat, end_lon, subject_name_b, recorded_at
             )
             devices.append(device_b)
 
@@ -183,7 +183,7 @@ class Buoy(pydantic.BaseModel):
             lon=start_lon,
             devices=devices,
             is_active=is_deployed,
-            last_updated=iso_time,
+            recorded_at=recorded_at,
         )
         observations.append(observation_a)
 
@@ -194,7 +194,7 @@ class Buoy(pydantic.BaseModel):
                 lon=end_lon,
                 devices=devices,
                 is_active=is_deployed,
-                last_updated=iso_time,
+                recorded_at=recorded_at,
             )
             observations.append(observation_b)
 
@@ -212,8 +212,7 @@ class Buoy(pydantic.BaseModel):
         observations: List[Dict[str, Any]] = []
 
         state = self.currentState
-
-        recorded_at = (state.dateDeployed or state.lastUpdated).replace(microsecond=0)
+        recorded_at = state.lastUpdated.replace(microsecond=0)
 
         start_lat = state.latDeg
         start_lon = state.lonDeg

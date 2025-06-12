@@ -109,14 +109,12 @@ def test_create_observations_only_start_point(base_state):
 def test_create_observations_with_end_points(base_state):
     start = (11.0, 21.0)
     end = (12.0, 22.0)
-    deployed_time = datetime(2025, 2, 2, 8, 30, 15, 999999)
     state_kwargs = {
         **base_state,
         "latDeg": start[0],
         "lonDeg": start[1],
         "endLatDeg": end[0],
         "endLonDeg": end[1],
-        "dateDeployed": deployed_time,  # should use this over lastUpdated
     }
     state = CurrentState(**state_kwargs)
     buoy = Buoy(currentState=state, serialNumber="S123", changeRecords=[])
@@ -124,7 +122,7 @@ def test_create_observations_with_end_points(base_state):
     obs = buoy.create_observations(prefix="XX_", is_deployed=False)
     assert len(obs) == 2
 
-    iso = deployed_time.replace(microsecond=0).isoformat()
+    iso = state.lastUpdated.replace(microsecond=0).isoformat()
     subj_a = "XX_S123_A"
     subj_b = "XX_S123_B"
     # check devices list length

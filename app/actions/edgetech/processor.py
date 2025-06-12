@@ -152,9 +152,13 @@ class EdgeTechProcessor:
                 edgetech_buoy = serial_number_to_edgetech_buoy[serial_number]
 
                 # Check if the buoy's last updated time is more recent than the ER subject's last updated time.
-                if edgetech_buoy.currentState.lastUpdated.replace(
+                edgetech_buoy_last_updated = (
+                    edgetech_buoy.currentState.lastUpdated.replace(microsecond=0)
+                )
+                er_subject_last_position_date = er_subject.last_position_date.replace(
                     microsecond=0
-                ) > er_subject.last_position_date.replace(microsecond=0):
+                )
+                if edgetech_buoy_last_updated > er_subject_last_position_date:
                     to_update.add(serial_number)
 
         for subject_name in er_subjects_name_to_subject_mapping.keys():
