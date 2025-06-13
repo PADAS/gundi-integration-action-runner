@@ -217,9 +217,23 @@ class EdgeTechProcessor:
         for serial_number in to_deploy:
             edgetech_buoy = serial_number_to_edgetech_buoy[serial_number]
             try:
+                # Get end unit buoy if this is a two-unit line
+                end_unit_buoy = None
+                if edgetech_buoy.currentState.isTwoUnitLine and edgetech_buoy.currentState.endUnit:
+                    end_unit_buoy = serial_number_to_edgetech_buoy.get(edgetech_buoy.currentState.endUnit)
+                    if not end_unit_buoy:
+                        logger.warning(
+                            "End unit buoy %s not found for serial number %s, skipping deployment.",
+                            edgetech_buoy.currentState.endUnit,
+                            serial_number,
+                        )
+                        continue
+                
+
                 to_deploy_observations = edgetech_buoy.create_observations(
                     prefix=self._prefix,
                     is_deployed=True,
+                    end_unit_buoy=end_unit_buoy,
                 )
                 observations.extend(to_deploy_observations)
             except pydantic.ValidationError as ve:
@@ -250,9 +264,22 @@ class EdgeTechProcessor:
                 continue
 
             try:
+                # Get end unit buoy if this is a two-unit line
+                end_unit_buoy = None
+                if edgetech_buoy.currentState.isTwoUnitLine and edgetech_buoy.currentState.endUnit:
+                    end_unit_buoy = serial_number_to_edgetech_buoy.get(edgetech_buoy.currentState.endUnit)
+                    if not end_unit_buoy:
+                        logger.warning(
+                            "End unit buoy %s not found for serial number %s, skipping deployment.",
+                            edgetech_buoy.currentState.endUnit,
+                            serial_number,
+                        )
+                        continue
+                
                 to_update_observations = edgetech_buoy.create_observations(
                     prefix=self._prefix,
                     is_deployed=True,
+                    end_unit_buoy=end_unit_buoy,
                 )
                 observations.extend(to_update_observations)
             except pydantic.ValidationError as ve:

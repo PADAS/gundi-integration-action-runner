@@ -56,7 +56,9 @@ class CurrentState(pydantic.BaseModel):
     lonDeg: Optional[float]
     endLatDeg: Optional[float]
     endLonDeg: Optional[float]
-
+    isTwoUnitLine: Optional[bool]
+    endUnit: Optional[str]
+    startUnit: Optional[str]
     class Config:
         json_encoders = {datetime: lambda val: val.isoformat()}
 
@@ -155,6 +157,7 @@ class Buoy(pydantic.BaseModel):
         start_lon: float,
         end_lat: Optional[float],
         end_lon: Optional[float],
+        end_unit_serial: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Return one or two observations for deployment or retrieval events,
@@ -164,13 +167,19 @@ class Buoy(pydantic.BaseModel):
         recorded_at = recorded_at.isoformat()
 
         devices = []
-        subject_name_a = f"{prefix}{self.serialNumber}_A"
-        subject_name_b = f"{prefix}{self.serialNumber}_B"
+        if end_unit_serial:
+            subject_name_a = f"{prefix}{self.serialNumber}"
+            subject_name_b = f"{prefix}{end_unit_serial}"
+        else:
+            subject_name_a = f"{prefix}{self.serialNumber}_A"
+            subject_name_b = f"{prefix}{self.serialNumber}_B"
+
         device_a = self._create_device_record(
             "a", start_lat, start_lon, subject_name_a, recorded_at
         )
         devices.append(device_a)
 
+        # Handle both old and new structure for end unit location
         if end_lat is not None and end_lon is not None:
             device_b = self._create_device_record(
                 "b", end_lat, end_lon, subject_name_b, recorded_at
@@ -204,6 +213,7 @@ class Buoy(pydantic.BaseModel):
         self,
         prefix: str,
         is_deployed: bool,
+        end_unit_buoy: Optional["Buoy"] = None,
     ) -> List[Dict[str, Any]]:
         """
         Return observations from the current state or from changeRecords if available.
@@ -216,8 +226,12 @@ class Buoy(pydantic.BaseModel):
 
         start_lat = state.latDeg
         start_lon = state.lonDeg
-        end_lat = state.endLatDeg
-        end_lon = state.endLonDeg
+        if end_unit_buoy:
+            end_lat = end_unit_buoy.currentState.latDeg
+            end_lon = end_unit_buoy.currentState.lonDeg
+        else:
+            end_lat = state.endLatDeg
+            end_lon = state.endLonDeg
 
         if start_lat is None or start_lon is None:
             logger.warning(
@@ -235,6 +249,7 @@ class Buoy(pydantic.BaseModel):
                 start_lon=start_lon,
                 end_lat=end_lat,
                 end_lon=end_lon,
+                end_unit_serial=state.endUnit,
             )
         )
 
