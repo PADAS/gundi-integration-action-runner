@@ -40,19 +40,42 @@ class EdgeTechProcessor:
         """
         Generate default filter criteria for processing buoy data.
 
-        By default, this method defines a time window starting 180 days before the current UTC time
+        By default, this method defines a time window starting 30 minutes before the current UTC time
         and ending at the current UTC time.
 
         Returns:
             Dict[str, Any]: A dictionary with 'start_date' and 'end_date' keys defining the filter window.
         """
         end_date = datetime.now(timezone.utc)
-        start_date = end_date - timedelta(days=180)
+        start_date = end_date - timedelta(minutes=30)
         return {"start_date": start_date, "end_date": end_date}
+
+    def _should_skip_buoy(self, record: Buoy) -> Tuple[bool, Optional[str]]:
+        """
+        Determine if a buoy record should be skipped and why.
+
+        Args:
+            record (Buoy): The buoy record to check.
+
+        Returns:
+            Tuple[bool, Optional[str]]: A tuple containing:
+                - bool: True if the record should be skipped, False otherwise
+                - Optional[str]: The reason for skipping, or None if not skipped
+        """
+        if record.currentState.isDeleted:
+            return True, f"Skipping deleted buoy record with serial number {record.serialNumber}. Last updated at {record.currentState.lastUpdated}."
+
+        if not record.currentState.isDeployed:
+            return True, f"Skipping buoy record with serial number {record.serialNumber} that is not deployed. Last updated at {record.currentState.lastUpdated}."
+
+        if not record.has_location:
+            return True, f"Skipping buoy record with serial number {record.serialNumber} that has no location data. Last updated at {record.currentState.lastUpdated}."
+
+        return False, None
 
     def _filter_edgetech_buoys_data(self, data: List[Buoy]) -> List[Buoy]:
         """
-        Filter buoy data records based on their current state
+        Filter buoy data records based on their current state.
 
         Iterates over the parsed buoy data and selects records whose current state is not deleted
         and is deployed. If a record is deleted or not deployed, it is skipped.
@@ -62,28 +85,12 @@ class EdgeTechProcessor:
         """
         filtered_data: List[Buoy] = []
         skipped_serial_numbers: Set[str] = set()
+
         for record in data:
-            is_deleted = record.currentState.isDeleted
-            is_deployed = record.currentState.isDeployed
-
-            if is_deleted:
-                logger.warning(
-                    f"Skipping deleted buoy record with serial number {record.serialNumber}. Last updated at {record.currentState.lastUpdated}."
-                )
-                skipped_serial_numbers.add(record.serialNumber)
-                continue
-
-            if not is_deployed:
-                logger.warning(
-                    f"Skipping buoy record with serial number {record.serialNumber} that is not deployed. Last updated at {record.currentState.lastUpdated}."
-                )
-                skipped_serial_numbers.add(record.serialNumber)
-                continue
-
-            if not record.has_location:
-                logger.warning(
-                    f"Skipping buoy record with serial number {record.serialNumber} that has no location data. Last updated at {record.currentState.lastUpdated}."
-                )
+            should_skip, skip_reason = self._should_skip_buoy(record)
+            
+            if should_skip:
+                logger.warning(skip_reason)
                 skipped_serial_numbers.add(record.serialNumber)
                 continue
 
@@ -98,22 +105,15 @@ class EdgeTechProcessor:
         Returns:
             List[Buoy]: A list of Buoy objects representing the latest states.
         """
-
-        latest_buoy_states: Dict[str, Buoy] = {}
+        latest: Dict[str, Buoy] = {}
 
         for record in data:
-            serial_number = record.serialNumber
-            if serial_number not in latest_buoy_states:
-                latest_buoy_states[serial_number] = record
-            else:
-                existing_record = latest_buoy_states[serial_number]
-                if (
-                    record.currentState.lastUpdated
-                    > existing_record.currentState.lastUpdated
-                ):
-                    latest_buoy_states[serial_number] = record
+            key = record.serialNumber
+            prev = latest.get(key)
+            if prev is None or record.currentState.lastUpdated > prev.currentState.lastUpdated:
+                latest[key] = record
 
-        return list(latest_buoy_states.values())
+        return list(latest.values())
 
     async def _identify_buoys(
         self,
@@ -282,7 +282,7 @@ class EdgeTechProcessor:
                     end_unit_buoy=end_unit_buoy,
                 )
                 observations.extend(to_update_observations)
-            except pydantic.ValidationError as ve:
+            except Exception as e:
                 logger.exception(
                     "Failed to create BuoyEvent for %s. Error: %s",
                     serial_number,
@@ -301,7 +301,7 @@ class EdgeTechProcessor:
 
             er_subject = er_subject_name_to_subject_mapping[primary_subject_name]
             try:
-                to_haul_observation = er_subject.create_observations(
+                to_haul_observation = er_subject.create_observation(
                     recorded_at=datetime.now(timezone.utc),
                 )
                 observations.append(to_haul_observation)

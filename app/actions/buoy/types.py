@@ -1,5 +1,5 @@
 import hashlib
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
@@ -91,7 +91,7 @@ class ObservationSubject(BaseModel):
             raise ValueError("Last position is not available.")
         return self.last_position.geometry.coordinates[0]
 
-    def create_observations(self, recorded_at: Optional[datetime]) -> Dict[str, Any]:
+    def create_observation(self, recorded_at: Optional[datetime]) -> Dict[str, Any]:
         """
         Create observations based on the subject's last position and status.
         Returns a list of observation records.
@@ -112,7 +112,7 @@ class ObservationSubject(BaseModel):
             "source": self.name,
             "type": self.subject_type,
             "subject_type": self.subject_subtype,
-            "recorded_at": recorded_at.isoformat() or datetime.now().isoformat(),
+            "recorded_at": recorded_at.isoformat() or datetime.now(timezone.utc).isoformat(),
             "location": {"lat": self.latitude, "lon": self.longitude},
             "additional": {
                 "subject_name": self.name,

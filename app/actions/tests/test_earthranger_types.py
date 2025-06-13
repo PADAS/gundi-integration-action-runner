@@ -30,7 +30,7 @@ def base_subject():
     subj.subject_type = "buoy"
     subj.subject_subtype = "gps"
     subj.is_active = True
-    # last_position_date, url, etc. are not used by create_observations
+    # last_position_date, url, etc. are not used by create_observation
     return subj
 
 
@@ -38,7 +38,7 @@ def test_no_last_position_raises(base_subject):
     base_subject.last_position = None
     base_subject.additional = {"devices": [{"device_id": "d1"}]}
     with pytest.raises(ValueError) as exc:
-        base_subject.create_observations(datetime.utcnow())
+        base_subject.create_observation(datetime.utcnow())
     assert "Last position is not available." in str(exc.value)
 
 
@@ -49,7 +49,7 @@ def test_last_position_without_geometry_raises(base_subject):
     base_subject.last_position = NoGeom()
     base_subject.additional = {"devices": [{"device_id": "d1"}]}
     with pytest.raises(ValueError) as exc:
-        base_subject.create_observations(datetime.utcnow())
+        base_subject.create_observation(datetime.utcnow())
     assert "Last position is not available." in str(exc.value)
 
 
@@ -57,7 +57,7 @@ def test_no_devices_raises(base_subject):
     base_subject.last_position = DummyPosition([10.0, 20.0])
     base_subject.additional = {"devices": []}
     with pytest.raises(ValueError) as exc:
-        base_subject.create_observations(datetime.utcnow())
+        base_subject.create_observation(datetime.utcnow())
     assert "No devices available in additional information." in str(exc.value)
 
 
@@ -68,7 +68,7 @@ def test_no_devices_raises(base_subject):
         (False, GEAR_RETRIEVED_EVENT),
     ],
 )
-def test_create_observations_happy_path(base_subject, is_active, event_type):
+def test_create_observation_happy_path(base_subject, is_active, event_type):
     # setup
     base_subject.is_active = is_active
     lon, lat = -122.5, 37.7
@@ -81,7 +81,7 @@ def test_create_observations_happy_path(base_subject, is_active, event_type):
     recorded = datetime(2025, 6, 8, 12, 0, 0)
 
     # invoke
-    obs = base_subject.create_observations(recorded)
+    obs = base_subject.create_observation(recorded)
 
     # verify top‐level keys
     assert obs["name"] == base_subject.name

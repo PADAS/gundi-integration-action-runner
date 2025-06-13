@@ -5,9 +5,9 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 from freezegun import freeze_time
 
-from app.actions import edgetech
 from app.actions.buoy import ObservationSubject
 from app.actions.edgetech.processor import EdgeTechProcessor
+from app.actions.edgetech.types import Buoy
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +57,7 @@ async def test_process_new_edgetech_trawl(mocker, a_new_edgetech_trawl_record):
                         "last_updated": "2025-05-25T17:53:19+00:00",
                     },
                 ],
+                "raw": Buoy.parse_obj(data[0]).dict()
             },
         },
         {
@@ -87,9 +88,11 @@ async def test_process_new_edgetech_trawl(mocker, a_new_edgetech_trawl_record):
                         "last_updated": "2025-05-25T17:53:19+00:00",
                     },
                 ],
+                "raw": Buoy.parse_obj(data[0]).dict()
             },
         },
     ]
+
     assert observations == expected_observvations
 
 

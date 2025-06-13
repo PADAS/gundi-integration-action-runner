@@ -145,6 +145,7 @@ class Buoy(pydantic.BaseModel):
                 if is_active
                 else GEAR_RETRIEVED_EVENT,
                 "devices": devices,
+                "raw": self.dict(),
             },
         }
 
