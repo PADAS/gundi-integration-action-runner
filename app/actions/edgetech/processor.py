@@ -40,15 +40,13 @@ class EdgeTechProcessor:
         """
         Generate default filter criteria for processing buoy data.
 
-        By default, this method defines a time window starting 30 minutes before the current UTC time
-        and ending at the current UTC time.
+        By default, this method defines a time window starting 30 minutes before the current UTC time.
 
         Returns:
-            Dict[str, Any]: A dictionary with 'start_date' and 'end_date' keys defining the filter window.
+            Dict[str, Any]: A dictionary with 'start_datetime' keys defining the filter window.
         """
-        end_date = datetime.now(timezone.utc)
-        start_date = end_date - timedelta(minutes=30)
-        return {"start_date": start_date, "end_date": end_date}
+        start_datetime = datetime.now(timezone.utc) - timedelta(minutes=30)
+        return {"start_datetime": start_datetime}
 
     def _should_skip_buoy(self, record: Buoy) -> Tuple[bool, Optional[str]]:
         """
@@ -196,7 +194,7 @@ class EdgeTechProcessor:
         er_subjects = await self._er_client.get_er_subjects(
             params={
                 "include_details": "true",
-                "position_updated_since": self._filters["start_date"].isoformat(),
+                "position_updated_since": self._filters["start_datetime"].isoformat(),
             }
         )
 

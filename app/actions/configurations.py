@@ -29,6 +29,12 @@ class EdgeTechConfiguration(PullActionConfiguration):
 
     num_get_retry: int = 60
 
+    minutes_to_sync: int = pydantic.Field(
+        title="Minutes to Sync",
+        description = "Number of minutes of data to pull from Edgetech",
+        default = 30
+    )
+
     @property
     def v1_url(self):
         return f"{self.api_base_url}/v1"

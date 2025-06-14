@@ -1,6 +1,6 @@
-import json
 import logging
-from typing import Dict, List, Tuple
+from datetime import datetime, timedelta
+from typing import Dict, List, Tuple, Optional
 
 from gundi_client_v2 import GundiClient
 from gundi_core import schemas
@@ -56,6 +56,7 @@ async def process_destination(
     integration: Integration,
     data: List[dict],
     destination: ConnectionIntegration,
+    start_datetime: Optional[datetime] = None,
 ) -> None:
     """
     Process a single destination: retrieve credentials, run the EdgeTech processor,
@@ -65,6 +66,7 @@ async def process_destination(
     :param integration: Integration object.
     :param data: Raw data from EdgeTechClient.
     :param destination: Destination object.
+    :param start_datetime: Optional datetime to filter observations from.
     :return: Length of the observations list.
     """
     logger.info(
@@ -73,7 +75,12 @@ async def process_destination(
     er_destination_token, er_destination_url = await get_destination_credentials(
         gundi_client, destination
     )
-    processor = EdgeTechProcessor(data, er_destination_token, er_destination_url)
+    
+    filters = None
+    if start_datetime:
+        filters = {"start_datetime": start_datetime}
+        
+    processor = EdgeTechProcessor(data, er_destination_token, er_destination_url, filters=filters)
     observations = await processor.process()
 
     for batch in generate_batches(observations):
@@ -139,12 +146,14 @@ async def action_pull_edgetech_observations(
     )
     auth_config = EdgeTechAuthConfiguration.parse_obj(auth_config_data.data)
     edgetech_client = EdgeTechClient(auth_config=auth_config, pull_config=action_config)
-    data = await edgetech_client.download_data()
+    
+    start_datetime = datetime.utcnow() - timedelta(minutes=action_config.minutes_to_sync)
+    data = await edgetech_client.download_data(start_datetime=start_datetime)
 
     destination_result = {}
     for destination in connection_details.destinations:
         observations = await process_destination(
-            gundi_client, integration, data, destination
+            gundi_client, integration, data, destination, start_datetime
         )
         destination_key = f"{destination.id}_{destination.name}"
         destination_result[destination_key] = {
