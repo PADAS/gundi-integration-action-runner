@@ -1,6 +1,6 @@
 import logging
-from datetime import datetime, timedelta
-from typing import Dict, List, Tuple, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Dict, List, Optional, Tuple
 
 from gundi_client_v2 import GundiClient
 from gundi_core import schemas
@@ -146,8 +146,10 @@ async def action_pull_edgetech_observations(
     )
     auth_config = EdgeTechAuthConfiguration.parse_obj(auth_config_data.data)
     edgetech_client = EdgeTechClient(auth_config=auth_config, pull_config=action_config)
-    
-    start_datetime = datetime.utcnow() - timedelta(minutes=action_config.minutes_to_sync)
+
+    start_datetime = datetime.now(timezone.utc) - timedelta(
+        minutes=action_config.minutes_to_sync
+    )
     data = await edgetech_client.download_data(start_datetime=start_datetime)
 
     destination_result = {}

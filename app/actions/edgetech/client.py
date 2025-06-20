@@ -202,10 +202,7 @@ class EdgeTechClient:
         
         if start_datetime:
             buoys = [
-                buoy
-                for buoy in buoys
-                if buoy.currentState.lastUpdated.astimezone(timezone.utc)
-                > start_datetime
+                buoy for buoy in buoys if buoy.currentState.lastUpdated > start_datetime
             ]
             
         return buoys
