@@ -5,8 +5,8 @@ import json
 import logging
 import re
 import time
+from datetime import datetime, timezone
 from typing import List, Optional
-from datetime import datetime
 
 import aiohttp
 
@@ -201,6 +201,11 @@ class EdgeTechClient:
         buoys = [Buoy.parse_obj(item) for item in data]
         
         if start_datetime:
-            buoys = [buoy for buoy in buoys if buoy.currentState.lastUpdated > start_datetime]
+            buoys = [
+                buoy
+                for buoy in buoys
+                if buoy.currentState.lastUpdated.astimezone(timezone.utc)
+                > start_datetime
+            ]
             
         return buoys

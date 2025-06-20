@@ -284,7 +284,7 @@ class EdgeTechProcessor:
                 logger.exception(
                     "Failed to create BuoyEvent for %s. Error: %s",
                     serial_number,
-                    ve.json(),
+                    e.json(),
                 )
 
         for serial_number in to_haul:
