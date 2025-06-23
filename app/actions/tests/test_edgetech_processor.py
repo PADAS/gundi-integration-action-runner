@@ -1,8 +1,8 @@
-import pytest
-
 import logging
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
+
+import pytest
 from freezegun import freeze_time
 
 from app.actions.buoy import ObservationSubject
@@ -57,7 +57,7 @@ async def test_process_new_edgetech_trawl(mocker, a_new_edgetech_trawl_record):
                         "last_updated": "2025-05-25T17:53:19+00:00",
                     },
                 ],
-                "raw": Buoy.parse_obj(data[0]).dict()
+                "raw": Buoy.parse_obj(data[0]).dict(),
             },
         },
         {
@@ -88,7 +88,7 @@ async def test_process_new_edgetech_trawl(mocker, a_new_edgetech_trawl_record):
                         "last_updated": "2025-05-25T17:53:19+00:00",
                     },
                 ],
-                "raw": Buoy.parse_obj(data[0]).dict()
+                "raw": Buoy.parse_obj(data[0]).dict(),
             },
         },
     ]

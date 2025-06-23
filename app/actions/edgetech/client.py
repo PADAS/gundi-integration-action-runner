@@ -116,7 +116,9 @@ class EdgeTechClient:
 
         return self._token_json
 
-    async def download_data(self, start_datetime: Optional[datetime] = None) -> List[Buoy]:
+    async def download_data(
+        self, start_datetime: Optional[datetime] = None
+    ) -> List[Buoy]:
         """
         Download buoy data from the EdgeTech API.
 
@@ -199,10 +201,10 @@ class EdgeTechClient:
                         break
 
         buoys = [Buoy.parse_obj(item) for item in data]
-        
+
         if start_datetime:
             buoys = [
                 buoy for buoy in buoys if buoy.currentState.lastUpdated > start_datetime
             ]
-            
+
         return buoys

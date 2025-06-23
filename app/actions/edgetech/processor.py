@@ -61,13 +61,22 @@ class EdgeTechProcessor:
                 - Optional[str]: The reason for skipping, or None if not skipped
         """
         if record.currentState.isDeleted:
-            return True, f"Skipping deleted buoy record with serial number {record.serialNumber}. Last updated at {record.currentState.lastUpdated}."
+            return (
+                True,
+                f"Skipping deleted buoy record with serial number {record.serialNumber}. Last updated at {record.currentState.lastUpdated}.",
+            )
 
         if not record.currentState.isDeployed:
-            return True, f"Skipping buoy record with serial number {record.serialNumber} that is not deployed. Last updated at {record.currentState.lastUpdated}."
+            return (
+                True,
+                f"Skipping buoy record with serial number {record.serialNumber} that is not deployed. Last updated at {record.currentState.lastUpdated}.",
+            )
 
         if not record.has_location:
-            return True, f"Skipping buoy record with serial number {record.serialNumber} that has no location data. Last updated at {record.currentState.lastUpdated}."
+            return (
+                True,
+                f"Skipping buoy record with serial number {record.serialNumber} that has no location data. Last updated at {record.currentState.lastUpdated}.",
+            )
 
         return False, None
 
@@ -86,7 +95,7 @@ class EdgeTechProcessor:
 
         for record in data:
             should_skip, skip_reason = self._should_skip_buoy(record)
-            
+
             if should_skip:
                 logger.warning(skip_reason)
                 skipped_serial_numbers.add(record.serialNumber)
@@ -108,7 +117,10 @@ class EdgeTechProcessor:
         for record in data:
             key = record.serialNumber
             prev = latest.get(key)
-            if prev is None or record.currentState.lastUpdated > prev.currentState.lastUpdated:
+            if (
+                prev is None
+                or record.currentState.lastUpdated > prev.currentState.lastUpdated
+            ):
                 latest[key] = record
 
         return list(latest.values())
@@ -217,8 +229,13 @@ class EdgeTechProcessor:
             try:
                 # Get end unit buoy if this is a two-unit line
                 end_unit_buoy = None
-                if edgetech_buoy.currentState.isTwoUnitLine and edgetech_buoy.currentState.endUnit:
-                    end_unit_buoy = serial_number_to_edgetech_buoy.get(edgetech_buoy.currentState.endUnit)
+                if (
+                    edgetech_buoy.currentState.isTwoUnitLine
+                    and edgetech_buoy.currentState.endUnit
+                ):
+                    end_unit_buoy = serial_number_to_edgetech_buoy.get(
+                        edgetech_buoy.currentState.endUnit
+                    )
                     if not end_unit_buoy:
                         logger.warning(
                             "End unit buoy %s not found for serial number %s, skipping deployment.",
@@ -226,7 +243,6 @@ class EdgeTechProcessor:
                             serial_number,
                         )
                         continue
-                
 
                 to_deploy_observations = edgetech_buoy.create_observations(
                     prefix=self._prefix,
@@ -264,16 +280,22 @@ class EdgeTechProcessor:
             try:
                 # Get end unit buoy if this is a two-unit line
                 end_unit_buoy = None
-                if edgetech_buoy.currentState.isTwoUnitLine and edgetech_buoy.currentState.endUnit:
-                    end_unit_buoy = serial_number_to_edgetech_buoy.get(edgetech_buoy.currentState.endUnit)
-                    if not end_unit_buoy:
-                        logger.warning(
-                            "End unit buoy %s not found for serial number %s, skipping deployment.",
-                            edgetech_buoy.currentState.endUnit,
-                            serial_number,
+                if edgetech_buoy.currentState.isTwoUnitLine:
+                    if edgetech_buoy.currentState.endUnit:
+                        end_unit_buoy = serial_number_to_edgetech_buoy.get(
+                            edgetech_buoy.currentState.endUnit
                         )
+                        if not end_unit_buoy:
+                            logger.warning(
+                                "End unit buoy %s not found for serial number %s, skipping deployment.",
+                                edgetech_buoy.currentState.endUnit,
+                                serial_number,
+                            )
+                            continue
+                    if edgetech_buoy.currentState.startUnit:
+                        # This record it's for the end unit, so we skip it since it will be handled by the start unit buoy
                         continue
-                
+
                 to_update_observations = edgetech_buoy.create_observations(
                     prefix=self._prefix,
                     is_deployed=True,
