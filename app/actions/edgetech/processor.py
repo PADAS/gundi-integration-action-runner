@@ -229,10 +229,7 @@ class EdgeTechProcessor:
             try:
                 # Get end unit buoy if this is a two-unit line
                 end_unit_buoy = None
-                if (
-                    edgetech_buoy.currentState.isTwoUnitLine
-                    and edgetech_buoy.currentState.endUnit
-                ):
+                if edgetech_buoy.currentState.isTwoUnitLine:
                     end_unit_buoy = serial_number_to_edgetech_buoy.get(
                         edgetech_buoy.currentState.endUnit
                     )
@@ -242,6 +239,9 @@ class EdgeTechProcessor:
                             edgetech_buoy.currentState.endUnit,
                             serial_number,
                         )
+                        continue
+                    if edgetech_buoy.currentState.startUnit:
+                        # This record it's for the end unit, so we skip it since it will be handled by the start unit buoy
                         continue
 
                 to_deploy_observations = edgetech_buoy.create_observations(
@@ -331,5 +331,7 @@ class EdgeTechProcessor:
                     serial_number,
                     ve.json(),
                 )
+        import json
 
-        return observations
+        print(json.dumps(observations, indent=2, default=str))
+        return []

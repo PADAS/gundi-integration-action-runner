@@ -128,6 +128,9 @@ class Buoy(pydantic.BaseModel):
         concatenated = "".join(devices_names)
         display_id = hashlib.sha256(concatenated.encode("utf-8")).hexdigest()[:12]
 
+        raw = self.dict()
+        raw.pop("changeRecords", None)
+
         return {
             "name": subject_name,
             "source": subject_name,
@@ -145,7 +148,7 @@ class Buoy(pydantic.BaseModel):
                 if is_active
                 else GEAR_RETRIEVED_EVENT,
                 "devices": devices,
-                "raw": self.dict(),
+                "raw": raw,
             },
         }
 
