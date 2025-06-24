@@ -331,7 +331,5 @@ class EdgeTechProcessor:
                     serial_number,
                     ve.json(),
                 )
-        import json
 
-        print(json.dumps(observations, indent=2, default=str))
-        return []
+        return observations
