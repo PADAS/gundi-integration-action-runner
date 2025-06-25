@@ -312,15 +312,27 @@ class EdgeTechProcessor:
 
         for serial_number in to_haul:
             subject_name_two_unit_trawl = f"{self._prefix}{serial_number}"
-            subject_name_single_unit_trawl = f"{self._prefix}{serial_number}_A"
+            primary_subject_name_single_unit_trawl = f"{self._prefix}{serial_number}_A"
+            secondary_subject_name_single_unit_trawl = (
+                f"{self._prefix}{serial_number}_A"
+            )
 
-            primary_subject_name = None
+            subjects_to_haul = []
 
-            if subject_name_single_unit_trawl in er_subject_name_to_subject_mapping:
-                primary_subject_name = subject_name_single_unit_trawl
-            elif subject_name_two_unit_trawl in er_subject_name_to_subject_mapping:
-                primary_subject_name = subject_name_two_unit_trawl
-            else:
+            if (
+                primary_subject_name_single_unit_trawl
+                in er_subject_name_to_subject_mapping
+            ):
+                subjects_to_haul.append(primary_subject_name_single_unit_trawl)
+            if (
+                secondary_subject_name_single_unit_trawl
+                in er_subject_name_to_subject_mapping
+            ):
+                subjects_to_haul.append(secondary_subject_name_single_unit_trawl)
+            if subject_name_two_unit_trawl in er_subject_name_to_subject_mapping:
+                subjects_to_haul.append(subject_name_two_unit_trawl)
+
+            if not subjects_to_haul:
                 logger.warning(
                     "No ER subject found for serial number %s, skipping haul.",
                     serial_number,
