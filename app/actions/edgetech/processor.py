@@ -1,3 +1,4 @@
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -180,7 +181,7 @@ class EdgeTechProcessor:
 
         logger.info(f"Buoys to deploy: {to_deploy}")
         logger.info(f"Buoys to haul: {to_haul}")
-        logger.info(f"Buoys to update: {to_haul}")
+        logger.info(f"Buoys to update: {to_update}")
 
         return to_deploy, to_haul, to_update
 
@@ -331,5 +332,11 @@ class EdgeTechProcessor:
                     serial_number,
                     ve.json(),
                 )
+
+        logger.info(
+            "Sending %d observations:\n%s",
+            len(observations),
+            json.dumps(observations, indent=4, default=str),
+        )
 
         return observations
