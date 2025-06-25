@@ -339,19 +339,20 @@ class EdgeTechProcessor:
                 )
                 continue
 
-            er_subject = er_subject_name_to_subject_mapping[primary_subject_name]
-            try:
-                to_haul_observation = er_subject.create_observation(
-                    recorded_at=datetime.now(timezone.utc),
-                    is_active=False,
-                )
-                observations.append(to_haul_observation)
-            except pydantic.ValidationError as ve:
-                logger.exception(
-                    "Failed to create haul observation for %s. Error: %s",
-                    serial_number,
-                    ve.json(),
-                )
+            for primery_subject_name in subjects_to_haul:
+                er_subject = er_subject_name_to_subject_mapping[primery_subject_name]
+                try:
+                    to_haul_observation = er_subject.create_observation(
+                        recorded_at=datetime.now(timezone.utc),
+                        is_active=False,
+                    )
+                    observations.append(to_haul_observation)
+                except pydantic.ValidationError as ve:
+                    logger.exception(
+                        "Failed to create haul observation for %s. Error: %s",
+                        serial_number,
+                        ve.json(),
+                    )
 
         logger.info(
             "Sending %d observations:\n%s",
