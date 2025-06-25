@@ -91,7 +91,9 @@ class ObservationSubject(BaseModel):
             raise ValueError("Last position is not available.")
         return self.last_position.geometry.coordinates[0]
 
-    def create_observation(self, recorded_at: Optional[datetime]) -> Dict[str, Any]:
+    def create_observation(
+        self, recorded_at: Optional[datetime], is_active: Optional[bool] = None
+    ) -> Dict[str, Any]:
         """
         Create observations based on the subject's last position and status.
         Returns a list of observation records.
@@ -106,21 +108,22 @@ class ObservationSubject(BaseModel):
         devices_names = [device["device_id"] for device in devices]
         concatenated = "".join(devices_names)
         display_id = hashlib.sha256(concatenated.encode("utf-8")).hexdigest()[:12]
-
+        is_active = is_active if is_active is not None else self.is_active
         observation = {
             "name": self.name,
             "source": self.name,
             "type": self.subject_type,
             "subject_type": self.subject_subtype,
-            "recorded_at": recorded_at.isoformat() or datetime.now(timezone.utc).isoformat(),
+            "recorded_at": recorded_at.isoformat()
+            or datetime.now(timezone.utc).isoformat(),
             "location": {"lat": self.latitude, "lon": self.longitude},
             "additional": {
                 "subject_name": self.name,
                 "edgetech_serial_number": self.additional.get("edgetech_serial_number"),
                 "display_id": display_id,
-                "subject_is_active": self.is_active,
+                "subject_is_active": is_active,
                 "event_type": (
-                    GEAR_DEPLOYED_EVENT if self.is_active else GEAR_RETRIEVED_EVENT
+                    GEAR_DEPLOYED_EVENT if is_active else GEAR_RETRIEVED_EVENT
                 ),
                 "devices": self.additional.get("devices", []),
             },
