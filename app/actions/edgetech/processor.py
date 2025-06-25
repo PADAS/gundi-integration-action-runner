@@ -324,6 +324,7 @@ class EdgeTechProcessor:
             try:
                 to_haul_observation = er_subject.create_observation(
                     recorded_at=datetime.now(timezone.utc),
+                    is_active=False,
                 )
                 observations.append(to_haul_observation)
             except pydantic.ValidationError as ve:
