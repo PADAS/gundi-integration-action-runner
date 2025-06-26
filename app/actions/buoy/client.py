@@ -18,20 +18,14 @@ class BuoyClient:
         }
 
     async def get_er_subjects(
-        self, start_datetime: Optional[str] = None
+        self,
+        params: Optional[dict] = None,
     ) -> List[ObservationSubject]:
-        query_params = {
-            "include_details": "true",
-            "include_inactive": "true",
-        }
-        if start_datetime:
-            query_params["updated_since"] = start_datetime
-
         url = f"{self.er_site}api/v1.0/subjects/"
 
         async with aiohttp.ClientSession() as session:
             async with session.get(
-                url, headers=self.headers, params=query_params
+                url, headers=self.headers, params=params
             ) as response:
                 if response.status != 200:
                     logger.error(

@@ -5,7 +5,8 @@ import json
 import logging
 import re
 import time
-from typing import List
+from datetime import datetime, timezone
+from typing import List, Optional
 
 import aiohttp
 
@@ -115,7 +116,9 @@ class EdgeTechClient:
 
         return self._token_json
 
-    async def download_data(self) -> List[Buoy]:
+    async def download_data(
+        self, start_datetime: Optional[datetime] = None
+    ) -> List[Buoy]:
         """
         Download buoy data from the EdgeTech API.
 
@@ -125,6 +128,11 @@ class EdgeTechClient:
             3. Follows redirection to download the compressed data file.
             4. Decompresses the downloaded gzip data and loads it as JSON.
             5. Parses the JSON data into a list of Buoy objects.
+            6. Optionally filters Buoy objects based on their lastUpdated timestamp.
+
+        Args:
+            start_datetime (Optional[datetime]): If provided, only return Buoy objects with lastUpdated
+                timestamp after this datetime.
 
         Returns:
             List[Buoy]: A list of Buoy objects parsed from the downloaded data.
@@ -192,4 +200,11 @@ class EdgeTechClient:
                                 data = json.load(fo)
                         break
 
-        return [Buoy.parse_obj(item) for item in data]
+        buoys = [Buoy.parse_obj(item) for item in data]
+
+        if start_datetime:
+            buoys = [
+                buoy for buoy in buoys if buoy.currentState.lastUpdated > start_datetime
+            ]
+
+        return buoys
