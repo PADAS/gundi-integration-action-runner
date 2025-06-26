@@ -57,7 +57,43 @@ async def test_process_new_edgetech_trawl(mocker, a_new_edgetech_trawl_record):
                         "last_updated": "2025-05-25T17:53:19+00:00",
                     },
                 ],
-                "raw": Buoy.parse_obj(data[0]).dict(),
+                "raw": {
+                    "currentState": {
+                        "etag": "1748195599731",
+                        "isDeleted": False,
+                        "serialNumber": "8899CEDAAA",
+                        "releaseCommand": "C8AB8C75AA",
+                        "statusCommand": "8899CEDAAA",
+                        "idCommand": "CCCCCCCCCC",
+                        "isNfcTag": False,
+                        "modelNumber": "",
+                        "dateOfManufacture": None,
+                        "dateOfBatteryChange": None,
+                        "dateDeployed": datetime(
+                            2025, 5, 25, 17, 53, 19, 517000, tzinfo=timezone.utc
+                        ),
+                        "isDeployed": True,
+                        "dateRecovered": None,
+                        "recoveredLatDeg": None,
+                        "recoveredLonDeg": None,
+                        "recoveredRangeM": None,
+                        "dateStatus": None,
+                        "statusRangeM": None,
+                        "statusIsTilted": None,
+                        "statusBatterySoC": None,
+                        "lastUpdated": datetime(
+                            2025, 5, 25, 17, 53, 19, 731000, tzinfo=timezone.utc
+                        ),
+                        "latDeg": 44.358265,
+                        "lonDeg": -68.16757,
+                        "endLatDeg": 44.3591792,
+                        "endLonDeg": -68.167191,
+                        "isTwoUnitLine": None,
+                        "endUnit": None,
+                        "startUnit": None,
+                    },
+                    "serialNumber": "8899CEDAAA",
+                },
             },
         },
         {
@@ -88,11 +124,47 @@ async def test_process_new_edgetech_trawl(mocker, a_new_edgetech_trawl_record):
                         "last_updated": "2025-05-25T17:53:19+00:00",
                     },
                 ],
-                "raw": Buoy.parse_obj(data[0]).dict(),
+                "raw": {
+                    "currentState": {
+                        "etag": "1748195599731",
+                        "isDeleted": False,
+                        "serialNumber": "8899CEDAAA",
+                        "releaseCommand": "C8AB8C75AA",
+                        "statusCommand": "8899CEDAAA",
+                        "idCommand": "CCCCCCCCCC",
+                        "isNfcTag": False,
+                        "modelNumber": "",
+                        "dateOfManufacture": None,
+                        "dateOfBatteryChange": None,
+                        "dateDeployed": datetime(
+                            2025, 5, 25, 17, 53, 19, 517000, tzinfo=timezone.utc
+                        ),
+                        "isDeployed": True,
+                        "dateRecovered": None,
+                        "recoveredLatDeg": None,
+                        "recoveredLonDeg": None,
+                        "recoveredRangeM": None,
+                        "dateStatus": None,
+                        "statusRangeM": None,
+                        "statusIsTilted": None,
+                        "statusBatterySoC": None,
+                        "lastUpdated": datetime(
+                            2025, 5, 25, 17, 53, 19, 731000, tzinfo=timezone.utc
+                        ),
+                        "latDeg": 44.358265,
+                        "lonDeg": -68.16757,
+                        "endLatDeg": 44.3591792,
+                        "endLonDeg": -68.167191,
+                        "isTwoUnitLine": None,
+                        "endUnit": None,
+                        "startUnit": None,
+                    },
+                    "serialNumber": "8899CEDAAA",
+                },
             },
         },
     ]
-
+    logger.info(observations)
     assert observations == expected_observvations
 
 
@@ -131,8 +203,8 @@ async def test_process_deployed_in_er_missing_in_edgetech(
                 "subject_name": "edgetech_88CE999CAA_A",
                 "edgetech_serial_number": "88CE999CAA",
                 "display_id": "aa1b1aefc7d0",
-                "subject_is_active": True,
-                "event_type": "gear_deployed",
+                "subject_is_active": False,
+                "event_type": "gear_retrieved",
                 "devices": [
                     {
                         "label": "a",

@@ -212,7 +212,9 @@ class EdgeTechProcessor:
         )
 
         er_subject_name_to_subject_mapping = {
-            subject.name: subject for subject in er_subjects
+            subject.name: subject
+            for subject in er_subjects
+            if subject.name.startswith(self._prefix)
         }
         serial_number_to_edgetech_buoy = {
             buoy.serialNumber: buoy for buoy in edgetech_deployed_buoys
