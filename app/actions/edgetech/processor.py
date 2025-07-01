@@ -207,6 +207,7 @@ class EdgeTechProcessor:
         er_subjects = await self._er_client.get_er_subjects(
             params={
                 "include_details": "true",
+                "position_updated_since": self._filters["start_datetime"].isoformat(),
             }
         )
 
@@ -218,6 +219,20 @@ class EdgeTechProcessor:
         serial_number_to_edgetech_buoy = {
             buoy.serialNumber: buoy for buoy in edgetech_deployed_buoys
         }
+
+        # Handle corner cases: fetch subjects not updated recently but existing in ER
+        for serial_number in serial_number_to_edgetech_buoy:
+            primary_name = f"{self._prefix}{serial_number}_A"
+            if primary_name not in er_subject_name_to_subject_mapping:
+                corner_subjects = await self._er_client.get_er_subjects(
+                    params={
+                        "include_details": "true",
+                        "name": primary_name,
+                    }
+                )
+                for subject in corner_subjects:
+                    if subject.name.startswith(self._prefix):
+                        er_subject_name_to_subject_mapping[subject.name] = subject
 
         to_deploy, to_haul, to_update = await self._identify_buoys(
             er_subject_name_to_subject_mapping,
