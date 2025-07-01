@@ -207,7 +207,6 @@ class EdgeTechProcessor:
         er_subjects = await self._er_client.get_er_subjects(
             params={
                 "include_details": "true",
-                "position_updated_since": self._filters["start_datetime"].isoformat(),
             }
         )
 
@@ -315,7 +314,9 @@ class EdgeTechProcessor:
         for serial_number in to_haul:
             subject_name_two_unit_trawl = f"{self._prefix}{serial_number}"
             primary_subject_name_single_unit_trawl = f"{subject_name_two_unit_trawl}_A"
-            secondary_subject_name_single_unit_trawl = f"{subject_name_two_unit_trawl}_B"
+            secondary_subject_name_single_unit_trawl = (
+                f"{subject_name_two_unit_trawl}_B"
+            )
 
             subjects_to_haul = []
 
