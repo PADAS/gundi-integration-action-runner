@@ -223,7 +223,11 @@ class EdgeTechProcessor:
         # Handle corner cases: fetch subjects not updated recently but existing in ER
         for serial_number in serial_number_to_edgetech_buoy:
             primary_name = f"{self._prefix}{serial_number}_A"
-            if primary_name not in er_subject_name_to_subject_mapping:
+            standard_name = f"{self._prefix}{serial_number}"
+            if (
+                primary_name not in er_subject_name_to_subject_mapping
+                and standard_name not in er_subject_name_to_subject_mapping
+            ):
                 corner_subjects = await self._er_client.get_er_subjects(
                     params={
                         "include_details": "true",
