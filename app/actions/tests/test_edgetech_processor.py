@@ -245,5 +245,5 @@ async def test_process_deployed_in_er_missing_in_edgetech(
             },
         }
     ]
-    logger.info(observations)
+    # Removed redundant logger.info call to avoid cluttering test output.
     assert observations == expected_observations
