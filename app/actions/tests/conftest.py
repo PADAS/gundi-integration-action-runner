@@ -16,6 +16,7 @@ def a_new_edgetech_trawl_record():
     """Fixture to create a sample EdgeTech record."""
     return {
         "serialNumber": "8899CEDAAA",
+        "userId": "7889ad74-aab3-4044-bcf4-13d6f9586a82",
         "currentState": {
             "etag": "1748195599731",
             "isDeleted": False,

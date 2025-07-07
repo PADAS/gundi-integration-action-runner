@@ -59,14 +59,24 @@ def base_state():
 def test_has_location_variants(base_state, override, expected):
     state_kwargs = {**base_state, **override}
     state = CurrentState(**state_kwargs)
-    buoy = Buoy(currentState=state, serialNumber="S123", changeRecords=[])
+    buoy = Buoy(
+        userId="7889ad74-aab3-4044-bcf4-13d6f9586a82",
+        currentState=state,
+        serialNumber="S123",
+        changeRecords=[],
+    )
     assert buoy.has_location is expected
 
 def test_create_observations_skips_when_no_start_location(caplog, base_state):
     # Neither latDeg nor lonDeg set → no observations
     state_kwargs = {**base_state, "latDeg": None, "lonDeg": None}
     state = CurrentState(**state_kwargs)
-    buoy = Buoy(currentState=state, serialNumber="S123", changeRecords=[])
+    buoy = Buoy(
+        userId="7889ad74-aab3-4044-bcf4-13d6f9586a82",
+        currentState=state,
+        serialNumber="S123",
+        changeRecords=[],
+    )
 
     caplog.set_level(logging.WARNING)
     obs = buoy.create_observations(prefix="pre_", is_deployed=True)
@@ -84,14 +94,19 @@ def test_create_observations_only_start_point(base_state):
         "dateDeployed": None,  # fallback to lastUpdated
     }
     state = CurrentState(**state_kwargs)
-    buoy = Buoy(currentState=state, serialNumber="S123", changeRecords=[])
+    buoy = Buoy(
+        userId="7889ad74-aab3-4044-bcf4-13d6f9586a82",
+        currentState=state,
+        serialNumber="S123",
+        changeRecords=[],
+    )
 
     obs = buoy.create_observations(prefix="pf_", is_deployed=True)
     assert len(obs) == 1
 
     o = obs[0]
     iso = state.lastUpdated.replace(microsecond=0).isoformat()
-    subj = "pf_S123_A"
+    subj = "pf_S123_7889ad74-aab3-4044-bcf4-13d6f9586a82_A"
     # device record embedded
     device = o["additional"]["devices"][0]
     assert device == {
@@ -120,14 +135,19 @@ def test_create_observations_with_end_points(base_state):
         "endLonDeg": end[1],
     }
     state = CurrentState(**state_kwargs)
-    buoy = Buoy(currentState=state, serialNumber="S123", changeRecords=[])
+    buoy = Buoy(
+        userId="7889ad74-aab3-4044-bcf4-13d6f9586a82",
+        currentState=state,
+        serialNumber="S123",
+        changeRecords=[],
+    )
 
     obs = buoy.create_observations(prefix="XX_", is_deployed=False)
     assert len(obs) == 2
 
     iso = state.lastUpdated.replace(microsecond=0).isoformat()
-    subj_a = "XX_S123_A"
-    subj_b = "XX_S123_B"
+    subj_a = "XX_S123_7889ad74-aab3-4044-bcf4-13d6f9586a82_A"
+    subj_b = "XX_S123_7889ad74-aab3-4044-bcf4-13d6f9586a82_B"
     # check devices list length
     devices = obs[0]["additional"]["devices"]
     assert len(devices) == 2
@@ -157,7 +177,12 @@ def test_create_observations_with_two_unit_line_new_structure(base_state):
         "endUnit": "S456",
     }
     start_state = CurrentState(**start_state_kwargs)
-    start_buoy = Buoy(currentState=start_state, serialNumber="S123", changeRecords=[])
+    start_buoy = Buoy(
+        userId="7889ad74-aab3-4044-bcf4-13d6f9586a82",
+        currentState=start_state,
+        serialNumber="S123",
+        changeRecords=[],
+    )
 
     # Create end unit state
     end_state_kwargs = {
@@ -168,15 +193,20 @@ def test_create_observations_with_two_unit_line_new_structure(base_state):
         "startUnit": "S123",
     }
     end_state = CurrentState(**end_state_kwargs)
-    end_buoy = Buoy(currentState=end_state, serialNumber="S456", changeRecords=[])
+    end_buoy = Buoy(
+        userId="7889ad74-aab3-4044-bcf4-13d6f9586a82",
+        currentState=end_state,
+        serialNumber="S456",
+        changeRecords=[],
+    )
 
     # Create observations using the new structure
     obs = start_buoy.create_observations(prefix="XX_", is_deployed=True, end_unit_buoy=end_buoy)
     assert len(obs) == 2
 
     iso = start_state.lastUpdated.replace(microsecond=0).isoformat()
-    subj_a = "XX_S123"
-    subj_b = "XX_S456"
+    subj_a = "XX_S123_7889ad74-aab3-4044-bcf4-13d6f9586a82"
+    subj_b = "XX_S456_7889ad74-aab3-4044-bcf4-13d6f9586a82"
     
     # Check devices list length
     devices = obs[0]["additional"]["devices"]
@@ -206,7 +236,12 @@ def test_create_observations_with_two_unit_line_missing_end_unit(caplog, base_st
         "endUnit": "S456",  # End unit that doesn't exist
     }
     state = CurrentState(**state_kwargs)
-    buoy = Buoy(currentState=state, serialNumber="S123", changeRecords=[])
+    buoy = Buoy(
+        userId="7889ad74-aab3-4044-bcf4-13d6f9586a82",
+        currentState=state,
+        serialNumber="S123",
+        changeRecords=[],
+    )
 
     caplog.set_level(logging.WARNING)
     obs = buoy.create_observations(prefix="XX_", is_deployed=True, end_unit_buoy=None)
@@ -214,7 +249,7 @@ def test_create_observations_with_two_unit_line_missing_end_unit(caplog, base_st
     # Should still create observation for start unit
     assert len(obs) == 1
     assert obs[0]["location"] == {"lat": start[0], "lon": start[1]}
-    assert obs[0]["name"] == "XX_S123"
+    assert obs[0]["name"] == "XX_S123_7889ad74-aab3-4044-bcf4-13d6f9586a82"
 
 def test_create_observations_with_two_unit_line_old_structure(base_state):
     """Test creating observations for a two-unit line using the old structure."""
@@ -229,14 +264,19 @@ def test_create_observations_with_two_unit_line_old_structure(base_state):
         "isTwoUnitLine": True,
     }
     state = CurrentState(**state_kwargs)
-    buoy = Buoy(currentState=state, serialNumber="S123", changeRecords=[])
+    buoy = Buoy(
+        userId="7889ad74-aab3-4044-bcf4-13d6f9586a82",
+        currentState=state,
+        serialNumber="S123",
+        changeRecords=[],
+    )
 
     obs = buoy.create_observations(prefix="XX_", is_deployed=True)
     assert len(obs) == 2
 
     iso = state.lastUpdated.replace(microsecond=0).isoformat()
-    subj_a = "XX_S123_A"
-    subj_b = "XX_S123_B"
+    subj_a = "XX_S123_7889ad74-aab3-4044-bcf4-13d6f9586a82_A"
+    subj_b = "XX_S123_7889ad74-aab3-4044-bcf4-13d6f9586a82_B"
     
     # Check devices list length
     devices = obs[0]["additional"]["devices"]

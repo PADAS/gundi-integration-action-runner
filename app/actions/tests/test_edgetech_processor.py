@@ -28,32 +28,32 @@ async def test_process_new_edgetech_trawl(mocker, a_new_edgetech_trawl_record):
 
     # Assert
     logger.info(f"Processed observations: {observations}")
-    expected_observvations = [
+    expected_observations = [
         {
-            "name": "edgetech_8899CEDAAA_A",
-            "source": "edgetech_8899CEDAAA_A",
+            "name": "edgetech_8899CEDAAA_7889ad74-aab3-4044-bcf4-13d6f9586a82_A",
+            "source": "edgetech_8899CEDAAA_7889ad74-aab3-4044-bcf4-13d6f9586a82_A",
             "type": "ropeless_buoy",
             "subject_type": "ropeless_buoy_device",
             "is_active": True,
             "recorded_at": "2025-05-25T17:53:19+00:00",
             "location": {"lat": 44.358265, "lon": -68.16757},
             "additional": {
-                "subject_name": "edgetech_8899CEDAAA_A",
+                "subject_name": "edgetech_8899CEDAAA_7889ad74-aab3-4044-bcf4-13d6f9586a82_A",
                 "edgetech_serial_number": "8899CEDAAA",
-                "display_id": "12daa93d83a5",
+                "display_id": "f4ca7c991959",
                 "subject_is_active": True,
                 "event_type": "gear_deployed",
                 "devices": [
                     {
                         "label": "a",
                         "location": {"latitude": 44.358265, "longitude": -68.16757},
-                        "device_id": "edgetech_8899CEDAAA_A",
+                        "device_id": "edgetech_8899CEDAAA_7889ad74-aab3-4044-bcf4-13d6f9586a82_A",
                         "last_updated": "2025-05-25T17:53:19+00:00",
                     },
                     {
                         "label": "b",
                         "location": {"latitude": 44.3591792, "longitude": -68.167191},
-                        "device_id": "edgetech_8899CEDAAA_B",
+                        "device_id": "edgetech_8899CEDAAA_7889ad74-aab3-4044-bcf4-13d6f9586a82_B",
                         "last_updated": "2025-05-25T17:53:19+00:00",
                     },
                 ],
@@ -70,7 +70,14 @@ async def test_process_new_edgetech_trawl(mocker, a_new_edgetech_trawl_record):
                         "dateOfManufacture": None,
                         "dateOfBatteryChange": None,
                         "dateDeployed": datetime(
-                            2025, 5, 25, 17, 53, 19, 517000, tzinfo=timezone.utc
+                            2025,
+                            5,
+                            25,
+                            17,
+                            53,
+                            19,
+                            517000,
+                            tzinfo=timezone.utc,
                         ),
                         "isDeployed": True,
                         "dateRecovered": None,
@@ -82,7 +89,14 @@ async def test_process_new_edgetech_trawl(mocker, a_new_edgetech_trawl_record):
                         "statusIsTilted": None,
                         "statusBatterySoC": None,
                         "lastUpdated": datetime(
-                            2025, 5, 25, 17, 53, 19, 731000, tzinfo=timezone.utc
+                            2025,
+                            5,
+                            25,
+                            17,
+                            53,
+                            19,
+                            731000,
+                            tzinfo=timezone.utc,
                         ),
                         "latDeg": 44.358265,
                         "lonDeg": -68.16757,
@@ -93,34 +107,35 @@ async def test_process_new_edgetech_trawl(mocker, a_new_edgetech_trawl_record):
                         "startUnit": None,
                     },
                     "serialNumber": "8899CEDAAA",
+                    "userId": "7889ad74-aab3-4044-bcf4-13d6f9586a82",
                 },
             },
         },
         {
-            "name": "edgetech_8899CEDAAA_B",
-            "source": "edgetech_8899CEDAAA_B",
+            "name": "edgetech_8899CEDAAA_7889ad74-aab3-4044-bcf4-13d6f9586a82_B",
+            "source": "edgetech_8899CEDAAA_7889ad74-aab3-4044-bcf4-13d6f9586a82_B",
             "type": "ropeless_buoy",
             "subject_type": "ropeless_buoy_device",
             "is_active": True,
             "recorded_at": "2025-05-25T17:53:19+00:00",
             "location": {"lat": 44.3591792, "lon": -68.167191},
             "additional": {
-                "subject_name": "edgetech_8899CEDAAA_B",
+                "subject_name": "edgetech_8899CEDAAA_7889ad74-aab3-4044-bcf4-13d6f9586a82_B",
                 "edgetech_serial_number": "8899CEDAAA",
-                "display_id": "12daa93d83a5",
+                "display_id": "f4ca7c991959",
                 "subject_is_active": True,
                 "event_type": "gear_deployed",
                 "devices": [
                     {
                         "label": "a",
                         "location": {"latitude": 44.358265, "longitude": -68.16757},
-                        "device_id": "edgetech_8899CEDAAA_A",
+                        "device_id": "edgetech_8899CEDAAA_7889ad74-aab3-4044-bcf4-13d6f9586a82_A",
                         "last_updated": "2025-05-25T17:53:19+00:00",
                     },
                     {
                         "label": "b",
                         "location": {"latitude": 44.3591792, "longitude": -68.167191},
-                        "device_id": "edgetech_8899CEDAAA_B",
+                        "device_id": "edgetech_8899CEDAAA_7889ad74-aab3-4044-bcf4-13d6f9586a82_B",
                         "last_updated": "2025-05-25T17:53:19+00:00",
                     },
                 ],
@@ -137,7 +152,14 @@ async def test_process_new_edgetech_trawl(mocker, a_new_edgetech_trawl_record):
                         "dateOfManufacture": None,
                         "dateOfBatteryChange": None,
                         "dateDeployed": datetime(
-                            2025, 5, 25, 17, 53, 19, 517000, tzinfo=timezone.utc
+                            2025,
+                            5,
+                            25,
+                            17,
+                            53,
+                            19,
+                            517000,
+                            tzinfo=timezone.utc,
                         ),
                         "isDeployed": True,
                         "dateRecovered": None,
@@ -149,7 +171,14 @@ async def test_process_new_edgetech_trawl(mocker, a_new_edgetech_trawl_record):
                         "statusIsTilted": None,
                         "statusBatterySoC": None,
                         "lastUpdated": datetime(
-                            2025, 5, 25, 17, 53, 19, 731000, tzinfo=timezone.utc
+                            2025,
+                            5,
+                            25,
+                            17,
+                            53,
+                            19,
+                            731000,
+                            tzinfo=timezone.utc,
                         ),
                         "latDeg": 44.358265,
                         "lonDeg": -68.16757,
@@ -160,12 +189,12 @@ async def test_process_new_edgetech_trawl(mocker, a_new_edgetech_trawl_record):
                         "startUnit": None,
                     },
                     "serialNumber": "8899CEDAAA",
+                    "userId": "7889ad74-aab3-4044-bcf4-13d6f9586a82",
                 },
             },
         },
     ]
-    logger.info(observations)
-    assert observations == expected_observvations
+    assert observations == expected_observations
 
 
 @pytest.mark.asyncio
@@ -216,4 +245,5 @@ async def test_process_deployed_in_er_missing_in_edgetech(
             },
         }
     ]
+    logger.info(observations)
     assert observations == expected_observations

@@ -72,6 +72,7 @@ class Buoy(pydantic.BaseModel):
 
     currentState: CurrentState
     serialNumber: str
+    userId: str
     changeRecords: List[ChangeRecord]
 
     @property
@@ -172,11 +173,11 @@ class Buoy(pydantic.BaseModel):
 
         devices = []
         if end_unit_serial:
-            subject_name_a = f"{prefix}{self.serialNumber}"
-            subject_name_b = f"{prefix}{end_unit_serial}"
+            subject_name_a = f"{prefix}{self.serialNumber}_{self.userId}"
+            subject_name_b = f"{prefix}{end_unit_serial}_{self.userId}"
         else:
-            subject_name_a = f"{prefix}{self.serialNumber}_A"
-            subject_name_b = f"{prefix}{self.serialNumber}_B"
+            subject_name_a = f"{prefix}{self.serialNumber}_{self.userId}_A"
+            subject_name_b = f"{prefix}{self.serialNumber}_{self.userId}_B"
 
         device_a = self._create_device_record(
             "a", start_lat, start_lon, subject_name_a, recorded_at
