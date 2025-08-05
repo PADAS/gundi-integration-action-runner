@@ -96,6 +96,26 @@ async def execute(
     return {}
 
 
+@app.post(
+    "/push-data",
+    summary="Process messages from PubSub and run push actions",
+)
+async def execute(
+    request: Request,
+):
+    body = await request.body()
+    print(f"Message Received. RAW body: {body}")
+    json_body = await request.json()
+    print(f"JSON: {json_body}")
+    payload = base64.b64decode(json_body["message"]["data"]).decode("utf-8").strip()
+    print(f"Payload: {payload}")
+    json_payload = json.loads(payload)
+    attributes = json_body["message"].get("attributes", {})
+    await execute_action(
+        integration_id=attributes.get("destination_id"),
+        data=json_payload,
+    )
+
 app.include_router(
     actions.router, prefix="/v1/actions", tags=["actions"], responses={}
 )
