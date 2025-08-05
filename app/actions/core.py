@@ -36,7 +36,6 @@ class GenericActionConfiguration(ActionConfiguration):
 
 def discover_actions(module_name, prefix):
     action_handlers = {}
-
     # Import the module using importlib
     module = importlib.import_module(module_name)
     all_members = inspect.getmembers(module)
@@ -49,9 +48,14 @@ def discover_actions(module_name, prefix):
                 config_model = config_annotation
             else:
                 config_model = GenericActionConfiguration
-            action_handlers[key] = (func, config_model)
+            if key.startswith("push_") and (data_annotation := inspect.signature(func).parameters.get("data").annotation) != inspect._empty:
+                data_model = data_annotation
+            else:
+                data_model = None
+            action_handlers[key] = (func, config_model, data_model)
 
     return action_handlers
+
 
 
 def get_actions():
