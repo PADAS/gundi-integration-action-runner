@@ -92,7 +92,7 @@ async def execute_action(integration_id: str, action_id: Optional[str] = None, c
                 integration_id, action_id,
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY
             )
-    elif data_type := data.get("event_type"):  # Push data actions
+    elif data and (data_type := data.get("event_type")):  # Push data actions
         try:  # Get the action handler by data type
             action_id, handler, config_model, DataModel = get_action_handler_by_data_type(type_name=data_type)
         except ValueError:
