@@ -43,13 +43,20 @@ def discover_actions(module_name, prefix):
     # Iterate through the members and filter functions by prefix
     for name, func in all_members:
         if name.startswith(prefix) and inspect.isfunction(func):
+            signature = inspect.signature(func)
             key = name[len(prefix):]  # Remove prefix
-            if (config_annotation := inspect.signature(func).parameters.get("action_config").annotation) != inspect._empty:
+            if (config_annotation := signature.parameters.get("action_config").annotation) != inspect._empty:
                 config_model = config_annotation
             else:
                 config_model = GenericActionConfiguration
-            if key.startswith("push_") and (data_param := inspect.signature(func).parameters.get("data")) and (data_annotation := data_param.annotation) != inspect._empty:
-                data_model = data_annotation
+            if issubclass(config_model, PushActionConfiguration):  # Push actions
+                if data_param := signature.parameters.get("data"):
+                    if (data_annotation := data_param.annotation) != inspect._empty:
+                        data_model = data_annotation
+                    else:
+                        raise ValueError(f"Push action '{key}' must have a 'data' parameter.")
+                else:
+                    raise ValueError(f"The 'data' parameter in action '{key}' must me annotated with a data model.")
             else:
                 data_model = None
             action_handlers[key] = (func, config_model, data_model)
