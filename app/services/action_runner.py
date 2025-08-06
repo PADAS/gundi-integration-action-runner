@@ -73,10 +73,9 @@ async def _handle_error(
     )
 
 
-async def execute_action(integration_id: str, action_id: Optional[str] = None, config_overrides: dict = None,
-                         data: dict = None):
-    logger.info(f"Executing action '{action_id}' for integration '{integration_id}'...")
-
+async def execute_action(
+        integration_id: str, action_id: Optional[str] = None, config_overrides: dict = None, data: dict = None
+):
     try:  # Get the integration details to pass it to the action handler
         integration = await config_manager.get_integration_details(integration_id)
     except Exception as e:
@@ -107,6 +106,9 @@ async def execute_action(integration_id: str, action_id: Optional[str] = None, c
             integration_id, action_id,
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY
         )
+
+    logger.info(f"Executing action '{action_id}' for integration '{integration_id}'...")
+
     # Get the configuration needed to execute the action
     action_config = await config_manager.get_action_configuration(integration_id, action_id)
     if not action_config and not config_overrides:
