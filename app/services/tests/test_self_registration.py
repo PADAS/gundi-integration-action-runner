@@ -72,7 +72,22 @@ async def test_register_integration_with_slug_setting(
                         "month_of_year": "*",
                         "tz_offset": -5
                     },
+                },
+                {
+                    "type": "push",
+                    "name": "Push Observations",
+                    "value": "push_observations",
+                    "description": "X Tracker Push Observations action",
+                    "schema": {
+                        "title": "MockPushActionConfiguration",
+                        "type": "object",
+                        "properties": {},
+                        "definitions": {}
+                    },
+                    "ui_schema": {},
+                    "is_periodic_action": False
                 }
+
             ],
             "webhook": {
                 "name": "X Tracker Webhook",
@@ -171,6 +186,20 @@ async def test_register_integration_with_slug_arg(
                         "month_of_year": "*",
                         "tz_offset": -5
                     },
+                },
+                {
+                    "type": "push",
+                    "name": "Push Observations",
+                    "value": "push_observations",
+                    "description": "X Tracker Push Observations action",
+                    "schema": {
+                        "title": "MockPushActionConfiguration",
+                        "type": "object",
+                        "properties": {},
+                        "definitions": {}
+                    },
+                    "ui_schema": {},
+                    "is_periodic_action": False
                 }
             ],
             "webhook": {
@@ -272,6 +301,20 @@ async def test_register_integration_with_service_url_arg(
                         "month_of_year": "*",
                         "tz_offset": -5
                     },
+                },
+                {
+                    "type": "push",
+                    "name": "Push Observations",
+                    "value": "push_observations",
+                    "description": "X Tracker Push Observations action",
+                    "schema": {
+                        "title": "MockPushActionConfiguration",
+                        "type": "object",
+                        "properties": {},
+                        "definitions": {}
+                    },
+                    "ui_schema": {},
+                    "is_periodic_action": False
                 }
             ],
             "webhook": {
@@ -376,6 +419,20 @@ async def test_register_integration_with_service_url_setting(
                         "month_of_year": "*",
                         "tz_offset": -5
                     },
+                },
+                {
+                    "type": "push",
+                    "name": "Push Observations",
+                    "value": "push_observations",
+                    "description": "X Tracker Push Observations action",
+                    "schema": {
+                        "title": "MockPushActionConfiguration",
+                        "type": "object",
+                        "properties": {},
+                        "definitions": {}
+                    },
+                    "ui_schema": {},
+                    "is_periodic_action": False
                 }
             ],
             "webhook": {
