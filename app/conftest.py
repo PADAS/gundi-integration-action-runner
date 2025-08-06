@@ -236,6 +236,14 @@ def integration_v2_as_dict():
                         "description": "EarthRanger sites support sending Events (a.k.a Reports)",
                         "schema": {},
                     },
+                    {
+                        "id": "9f211f31-e693-404c-b6ee-20fde6019fa5",
+                        "type": "push",
+                        "name": "Push Observations",
+                        "value": "push_observations",
+                        "description": "EarthRanger sites support sending Events (a.k.a Reports)",
+                        "schema": {},
+                    },
                 ],
             },
             "owner": {
@@ -968,15 +976,33 @@ class MockPushActionConfiguration(PushActionConfiguration):
 
 
 @pytest.fixture
-def mock_action_handlers(mocker):
+def mock_pull_observations_action_handler():
     mock_pull_observations_action_handler = AsyncMock()
     mock_pull_observations_action_handler.return_value = {"observations_extracted": 10}
     mock_pull_observations_action_handler.crontab_schedule = CrontabSchedule.parse_obj_from_crontab("*/10 * * * * -5")
+    return mock_pull_observations_action_handler
+
+
+@pytest.fixture
+def mock_pull_observations_by_date_action_handler():
     mock_pull_observations_by_date_action_handler = AsyncMock()
     mock_pull_observations_by_date_action_handler.return_value = {"observations_extracted": 10}
     del mock_pull_observations_by_date_action_handler.crontab_schedule
+    return mock_pull_observations_by_date_action_handler
+
+
+@pytest.fixture
+def mock_push_observations_handler():
     mock_push_observations_handler = AsyncMock()
     mock_push_observations_handler.return_value = {"observations_pushed": 1}
+    return mock_push_observations_handler
+
+
+@pytest.fixture
+def mock_action_handlers(
+        mock_pull_observations_action_handler,
+        mock_pull_observations_by_date_action_handler, mock_push_observations_handler
+):
     mock_action_handlers = {
         "pull_observations": (mock_pull_observations_action_handler, MockPullActionConfiguration, None),
         "pull_observations_by_date": (mock_pull_observations_by_date_action_handler, MockSubActionConfiguration, None),
@@ -1090,7 +1116,7 @@ def mock_api_key():
 
 
 @pytest.fixture
-def event_v2_pubsub_payload():
+def run_pull_action_pubsub_payload():
     timestamp = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     return {
         "message": {
@@ -1105,7 +1131,36 @@ def event_v2_pubsub_payload():
 
 
 @pytest.fixture
-def event_v2_pubsub_payload_with_config_overrides():
+def run_push_action_pubsub_payload(integration_v2):
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    return {
+        'message': {
+            'data': 'eyJldmVudF9pZCI6ICI0OGJkMDczYS04ZTM1LTQzY2YtOTFjMi1jN2I0Yjg3YTI2ZDciLCAidGltZXN0YW1wIjogIjIwMjQtMDctMjQgMTM6MjM6NDMuOTUyMDU2KzAwOjAwIiwgInNjaGVtYV92ZXJzaW9uIjogInYxIiwgInBheWxvYWQiOiB7Im1hbnVmYWN0dXJlcl9pZCI6ICJ0ZXN0LWRldmljZSIsICJzb3VyY2VfdHlwZSI6ICJ0cmFja2luZy1kZXZpY2UiLCAic3ViamVjdF9uYW1lIjogIk1hcmlhbm8iLCAic3ViamVjdF90eXBlIjogIm1tLXRyYWNrZXIiLCAic3ViamVjdF9zdWJ0eXBlIjogIm1tLXRyYWNrZXIiLCAicmVjb3JkZWRfYXQiOiAiMjAyNC0wNy0yMiAxMTo1MTowNSswMDowMCIsICJsb2NhdGlvbiI6IHsibG9uIjogLTcyLjcwNDQ1OSwgImxhdCI6IC01MS42ODgyNDZ9LCAiYWRkaXRpb25hbCI6IHsic3BlZWRfa21waCI6IDMwfX0sICJldmVudF90eXBlIjogIk9ic2VydmF0aW9uVHJhbnNmb3JtZWRFUiJ9',
+            'attributes': {
+                "gundi_version": "v2",
+                "provider_key": "awt",
+                "gundi_id": "23ca4b15-18b6-4cf4-9da6-36dd69c6f638",
+                "related_to": "None",
+                "stream_type": "obv",
+                "source_id": "afa0d606-c143-4705-955d-68133645db6d",
+                "external_source_id": "Xyz123",
+                "destination_id": str(integration_v2.id),
+                "data_provider_id": "ddd0946d-15b0-4308-b93d-e0470b6d33b6",
+                "annotations": "{}",
+                "tracing_context": "{}"
+            },
+            "messageId": "11937923011474846",
+            "message_id": "11937923011474846",
+            "orderingKey": "",
+            "publishTime": f"{timestamp}",
+            "publish_time": f"{timestamp}"
+        },
+        'subscription': 'projects/MY-PROJECT/subscriptions/MY-SUB'
+    }
+
+
+@pytest.fixture
+def run_pull_action_pubsub_payload_with_config_overrides():
     timestamp = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     return {
         "message": {
