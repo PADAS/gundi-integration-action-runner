@@ -971,8 +971,8 @@ def mock_action_handlers(mocker):
     mock_pull_observations_by_date_action_handler.return_value = {"observations_extracted": 10}
     del mock_pull_observations_by_date_action_handler.crontab_schedule
     mock_action_handlers = {
-        "pull_observations": (mock_pull_observations_action_handler, MockPullActionConfiguration),
-        "pull_observations_by_date": (mock_pull_observations_by_date_action_handler, MockSubActionConfiguration)
+        "pull_observations": (mock_pull_observations_action_handler, MockPullActionConfiguration, None),
+        "pull_observations_by_date": (mock_pull_observations_by_date_action_handler, MockSubActionConfiguration, None)
     }
     return mock_action_handlers
 
@@ -1043,7 +1043,7 @@ def mock_action_handlers_with_request_errors(
     else:
         handler = mock_pull_observations_handler_with_generic_error
     mock_action_handlers = {
-        "pull_observations": (handler, MockPullActionConfiguration)
+        "pull_observations": (handler, MockPullActionConfiguration, None)
     }
     return mock_action_handlers
 
@@ -1056,7 +1056,7 @@ def mock_auth_action_handlers():
         "password": "something-fancy",
     }
     mock_action_handlers = {
-        "auth": (mock_action_handler, MockAuthenticateActionConfiguration)
+        "auth": (mock_action_handler, MockAuthenticateActionConfiguration, None)
     }
     return mock_action_handlers
 

@@ -40,7 +40,7 @@ async def test_execute_action_from_pubsub(
     action_id = payload_dict.get("action_id")
     assert mock_config_manager.get_integration_details.called
     mock_config_manager.get_integration_details.assert_called_with(integration_id)
-    mock_action_handler, mock_config = mock_action_handlers[action_id]
+    mock_action_handler, mock_config, mock_datamodel = mock_action_handlers[action_id]
     assert mock_action_handler.called
 
 
@@ -69,7 +69,7 @@ async def test_execute_action_from_api(
     assert not mock_gundi_client_v2.get_integration_details.called
     assert mock_config_manager.get_integration_details.called
     mock_config_manager.get_integration_details.assert_called_with(integration_id)
-    mock_action_handler, mock_config = mock_action_handlers[action_id]
+    mock_action_handler, mock_config, mock_datamodel = mock_action_handlers[action_id]
     assert mock_action_handler.called
 
 
@@ -97,7 +97,7 @@ async def test_execute_action_from_api_with_config_overrides(
     assert response.status_code == 200
     assert mock_config_manager.get_integration_details.called
     assert not mock_gundi_client_v2.get_integration_details.called
-    mock_action_handler, mock_config = mock_action_handlers["pull_observations"]
+    mock_action_handler, mock_config, mock_datamodel = mock_action_handlers["pull_observations"]
     assert mock_action_handler.called
     for k, v in config_overrides.items():
         config = mock_action_handler.call_args.kwargs["action_config"]
@@ -124,7 +124,7 @@ async def test_execute_action_from_pubsub_with_config_overrides(
     assert response.status_code == 200
     assert mock_config_manager.get_integration_details.called
     assert not mock_gundi_client_v2.get_integration_details.called
-    mock_action_handler, mock_config = mock_action_handlers["pull_observations"]
+    mock_action_handler, mock_config, mock_datamodel = mock_action_handlers["pull_observations"]
     assert mock_action_handler.called
     encoded_data = event_v2_pubsub_payload_with_config_overrides["message"]["data"]
     decoded_data = base64.b64decode(encoded_data).decode("utf-8")
@@ -184,7 +184,7 @@ async def test_trigger_subaction(
     )
 
     # Check that the action was not executed directly
-    mock_action_handler, mock_config = mock_action_handlers[action_id]
+    mock_action_handler, mock_config, mock_datamodel = mock_action_handlers[action_id]
     assert not mock_action_handler.called
     # Check that a command was published in the right topic to trigger the action
     assert mock_publish_event.call_count == 1
@@ -223,7 +223,7 @@ async def test_trigger_subaction_sync(
     )
 
     # Check that the action was executed directly
-    mock_action_handler, mock_config = mock_action_handlers[action_id]
+    mock_action_handler, mock_config, mock_datamodel = mock_action_handlers[action_id]
     assert mock_action_handler.called
     assert not mock_publish_event.called
 
@@ -256,7 +256,7 @@ async def test_execute_action_with_handler_error(
     assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
     # Check that extra details related to the error are returned when available
     response_data = response.json()
-    mock_handler, _ = mock_action_handlers_with_request_errors["pull_observations"]
+    mock_handler, _, _ = mock_action_handlers_with_request_errors["pull_observations"]
     expected_error = mock_handler.side_effect
     assert "detail" in response_data
     error_details = response_data["detail"]
