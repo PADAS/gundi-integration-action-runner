@@ -8,7 +8,7 @@ def setup_action_handlers():
 def get_action_handler_by_data_type(type_name: str):
     for action_id, value in action_handlers.items():
         func, config_model, data_model = value
-        if data_model and data_model.__name__.lower() == type_name.strip().lower():
+        if data_model and data_model.__name__ == type_name.strip():
             return action_id, func, config_model, data_model
     else:
         raise ValueError(f"No action handler found for data type '{type_name}'.")
