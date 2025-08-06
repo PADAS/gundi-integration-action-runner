@@ -73,13 +73,12 @@ async def execute(
     background_tasks: BackgroundTasks
 ):
     body = await request.body()
-    print(f"Message Received. RAW body: {body}")
+    logging.debug(f"Message Received. RAW body: {body}")
     json_data = await request.json()
-    print(f"JSON: {json_data}")
+    logging.debug(f"JSON: {json_data}")
     payload = base64.b64decode(json_data["message"]["data"]).decode("utf-8").strip()
-    print(f"Payload: {payload}")
     json_payload = json.loads(payload)
-    print(f"JSON Payload: {json_payload}")
+    logging.debug(f"JSON Payload: {json_payload}")
     if settings.PROCESS_PUBSUB_MESSAGES_IN_BACKGROUND:
         background_tasks.add_task(
             execute_action,
@@ -100,21 +99,23 @@ async def execute(
     "/push-data",
     summary="Process messages from PubSub and run push actions",
 )
-async def execute(
+async def push_data(
     request: Request,
 ):
     body = await request.body()
-    print(f"Message Received. RAW body: {body}")
+    logger.debug(f"Message Received. RAW body: {body}")
     json_body = await request.json()
-    print(f"JSON: {json_body}")
+    logger.debug(f"JSON: {json_body}")
     payload = base64.b64decode(json_body["message"]["data"]).decode("utf-8").strip()
-    print(f"Payload: {payload}")
+    logger.debug(f"Payload: {payload}")
     json_payload = json.loads(payload)
     attributes = json_body["message"].get("attributes", {})
+    logger.debug(f"Attributes: {attributes}")
     await execute_action(
         integration_id=attributes.get("destination_id"),
         data=json_payload,
     )
+    return {}
 
 app.include_router(
     actions.router, prefix="/v1/actions", tags=["actions"], responses={}

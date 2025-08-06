@@ -85,7 +85,7 @@ async def execute_action(integration_id: str, action_id: Optional[str] = None, c
     # Find the action handler based on the action ID or data type
     if action_id:
         try:  # There must be one action handler implemented for the action
-            handler, config_model, data_model = action_handlers[action_id]
+            handler, config_model, DataModel = action_handlers[action_id]
         except KeyError:
             return await _handle_error(
                 KeyError(f"Action '{action_id}' is not supported"),
