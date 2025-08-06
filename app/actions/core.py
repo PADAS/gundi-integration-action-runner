@@ -48,7 +48,7 @@ def discover_actions(module_name, prefix):
                 config_model = config_annotation
             else:
                 config_model = GenericActionConfiguration
-            if key.startswith("push_") and (data_annotation := inspect.signature(func).parameters.get("data").annotation) != inspect._empty:
+            if key.startswith("push_") and (data_param := inspect.signature(func).parameters.get("data")) and (data_annotation := data_param.annotation) != inspect._empty:
                 data_model = data_annotation
             else:
                 data_model = None
