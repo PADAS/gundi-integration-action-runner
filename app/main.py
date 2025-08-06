@@ -72,8 +72,6 @@ async def execute(
     request: Request,
     background_tasks: BackgroundTasks
 ):
-    body = await request.body()
-    logger.debug(f"Message Received. RAW body: {body}")
     json_data = await request.json()
     logger.debug(f"JSON: {json_data}")
     payload = base64.b64decode(json_data["message"]["data"]).decode("utf-8").strip()
@@ -102,8 +100,6 @@ async def execute(
 async def push_data(
     request: Request,
 ):
-    body = await request.body()
-    logger.debug(f"Message Received. RAW body: {body}")
     json_body = await request.json()
     logger.debug(f"JSON: {json_body}")
     payload = base64.b64decode(json_body["message"]["data"]).decode("utf-8").strip()
