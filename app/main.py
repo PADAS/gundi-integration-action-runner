@@ -73,12 +73,12 @@ async def execute(
     background_tasks: BackgroundTasks
 ):
     body = await request.body()
-    logging.debug(f"Message Received. RAW body: {body}")
+    logger.debug(f"Message Received. RAW body: {body}")
     json_data = await request.json()
-    logging.debug(f"JSON: {json_data}")
+    logger.debug(f"JSON: {json_data}")
     payload = base64.b64decode(json_data["message"]["data"]).decode("utf-8").strip()
     json_payload = json.loads(payload)
-    logging.debug(f"JSON Payload: {json_payload}")
+    logger.debug(f"JSON Payload: {json_payload}")
     if settings.PROCESS_PUBSUB_MESSAGES_IN_BACKGROUND:
         background_tasks.add_task(
             execute_action,
