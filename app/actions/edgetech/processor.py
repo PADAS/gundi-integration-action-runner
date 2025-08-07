@@ -5,8 +5,10 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import pydantic
 
-from app.actions.buoy import BuoyClient, ObservationSubject
+from app.actions.buoy import BuoyClient
+from app.actions.buoy.types import BuoyGear
 from app.actions.edgetech.types import Buoy
+from app.actions.utils import get_hashed_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +118,7 @@ class EdgeTechProcessor:
         latest: Dict[str, Buoy] = {}
 
         for record in data:
-            key = record.serialNumber
+            key = f"{record.serialNumber}{record.userId}"
             prev = latest.get(key)
             if (
                 prev is None
@@ -128,7 +130,7 @@ class EdgeTechProcessor:
 
     async def _identify_buoys(
         self,
-        er_subjects_name_to_subject_mapping: Dict[str, ObservationSubject],
+        er_gears_devices_id_to_gear: Dict[str, BuoyGear],
         serial_number_to_edgetech_buoy: Dict[str, Buoy],
     ) -> Tuple[Set[str], Set[str], Set[str]]:
         """
@@ -152,32 +154,40 @@ class EdgeTechProcessor:
         to_haul: Set[str] = set()
         to_update: Set[str] = set()
 
-        for serial_number in serial_number_to_edgetech_buoy.keys():
-            primary_subject_name = f"{self._prefix}{serial_number}_A"
+        for serial_number_user_id in serial_number_to_edgetech_buoy.keys():
+            serial_number, hashed_user_id = serial_number_user_id.split("/", 2)
+            primary_subject_name = f"{serial_number}_{hashed_user_id}_A"
+            standard_subject_name = f"{serial_number}_{hashed_user_id}"
 
-            if primary_subject_name not in er_subjects_name_to_subject_mapping:
-                to_deploy.add(serial_number)
+            if (
+                primary_subject_name not in er_gears_devices_id_to_gear
+                and standard_subject_name not in er_gears_devices_id_to_gear
+            ):
+                to_deploy.add(serial_number_user_id)
             else:
                 # If the buoy is already in the ER system, we check if it needs to be updated.
-                er_subject = er_subjects_name_to_subject_mapping[primary_subject_name]
-                edgetech_buoy = serial_number_to_edgetech_buoy[serial_number]
+                er_gear = er_gears_devices_id_to_gear.get(
+                    primary_subject_name
+                ) or er_gears_devices_id_to_gear.get(standard_subject_name)
+
+                edgetech_buoy = serial_number_to_edgetech_buoy[serial_number_user_id]
 
                 # Check if the buoy's last updated time is more recent than the ER subject's last updated time.
                 edgetech_buoy_last_updated = (
                     edgetech_buoy.currentState.lastUpdated.replace(microsecond=0)
                 )
-                er_subject_last_position_date = er_subject.last_position_date.replace(
-                    microsecond=0
-                )
-                if edgetech_buoy_last_updated > er_subject_last_position_date:
-                    to_update.add(serial_number)
+                er_gear_last_updated = er_gear.last_updated.replace(microsecond=0)
+                if edgetech_buoy_last_updated > er_gear_last_updated:
+                    to_update.add(serial_number_user_id)
 
-        for subject_name in er_subjects_name_to_subject_mapping.keys():
-            subject_name = subject_name.replace(self._prefix, "")
-            subject_serial_number = subject_name.split("_")[0]
-            # If the subject_serial_number is not one of the currently deployed buoys in the Edgetech data, it means it has been hauled.
-            if subject_serial_number not in serial_number_to_edgetech_buoy:
-                to_haul.add(subject_serial_number)
+        for device_id_user_id in er_gears_devices_id_to_gear.keys():
+            device_id, user_id = device_id_user_id.split("_", 1)
+
+            device_id = device_id.replace(self._prefix, "")
+            device_serial_number = device_id.split("_")[0]
+            # If the device_serial_number is not one of the currently deployed buoys in the Edgetech data, it means it has been hauled.
+            if device_serial_number not in serial_number_to_edgetech_buoy:
+                to_haul.add(device_id_user_id)
 
         logger.info(f"Buoys to deploy: {to_deploy}")
         logger.info(f"Buoys to haul: {to_haul}")
@@ -204,61 +214,43 @@ class EdgeTechProcessor:
         """
         edgetech_deployed_buoys = self._filter_edgetech_buoys_data(self._data)
         edgetech_deployed_buoys = self._get_latest_buoy_states(edgetech_deployed_buoys)
-        er_subjects = await self._er_client.get_er_subjects(
-            params={
-                "include_details": "true",
-                "position_updated_since": self._filters["start_datetime"].isoformat(),
-            }
-        )
 
-        er_subject_name_to_subject_mapping = {
-            subject.name: subject
-            for subject in er_subjects
-            if subject.name.startswith(self._prefix)
-        }
         serial_number_to_edgetech_buoy = {
-            buoy.serialNumber: buoy for buoy in edgetech_deployed_buoys
+            f"{buoy.serialNumber}/{get_hashed_user_id(buoy.userId)}": buoy
+            for buoy in edgetech_deployed_buoys
         }
 
-        # Handle corner cases: fetch subjects not updated recently but existing in ER
-        for serial_number in serial_number_to_edgetech_buoy:
-            primary_name = f"{self._prefix}{serial_number}_A"
-            standard_name = f"{self._prefix}{serial_number}"
-            if (
-                primary_name not in er_subject_name_to_subject_mapping
-                and standard_name not in er_subject_name_to_subject_mapping
-            ):
-                corner_subjects = await self._er_client.get_er_subjects(
-                    params={
-                        "include_details": "true",
-                        "name": primary_name,
-                    }
-                )
-                for subject in corner_subjects:
-                    if subject.name.startswith(self._prefix):
-                        er_subject_name_to_subject_mapping[subject.name] = subject
+        er_gears = await self._er_client.get_er_gears()
+
+        er_gears_devices_id_to_gear = {
+            device.device_id: gear
+            for gear in er_gears
+            if gear.manufacturer == "edgetech"
+            for device in gear.devices
+        }
 
         to_deploy, to_haul, to_update = await self._identify_buoys(
-            er_subject_name_to_subject_mapping,
+            er_gears_devices_id_to_gear,
             serial_number_to_edgetech_buoy,
         )
 
         observations = []
 
-        for serial_number in to_deploy:
-            edgetech_buoy = serial_number_to_edgetech_buoy[serial_number]
+        for serial_number_user_id in to_deploy:
+            edgetech_buoy = serial_number_to_edgetech_buoy[serial_number_user_id]
             try:
                 # Get end unit buoy if this is a two-unit line
                 end_unit_buoy = None
                 if edgetech_buoy.currentState.isTwoUnitLine:
+                    end_unit_buoy_key = f"{edgetech_buoy.currentState.endUnit}/{get_hashed_user_id(edgetech_buoy.userId)}"
                     end_unit_buoy = serial_number_to_edgetech_buoy.get(
-                        edgetech_buoy.currentState.endUnit
+                        end_unit_buoy_key
                     )
                     if not end_unit_buoy:
                         logger.warning(
                             "End unit buoy %s not found for serial number %s, skipping deployment.",
                             edgetech_buoy.currentState.endUnit,
-                            serial_number,
+                            serial_number_user_id,
                         )
                         continue
                     if edgetech_buoy.currentState.startUnit:
@@ -266,7 +258,6 @@ class EdgeTechProcessor:
                         continue
 
                 to_deploy_observations = edgetech_buoy.create_observations(
-                    prefix=self._prefix,
                     is_deployed=True,
                     end_unit_buoy=end_unit_buoy,
                 )
@@ -274,27 +265,35 @@ class EdgeTechProcessor:
             except pydantic.ValidationError as ve:
                 logger.exception(
                     "Failed to create BuoyEvent for %s. Error: %s",
-                    serial_number,
+                    serial_number_user_id,
                     ve.json(),
                 )
 
-        for serial_number in to_update:
-            edgetech_buoy = serial_number_to_edgetech_buoy[serial_number]
+        for serial_number_user_id in to_update:
+            edgetech_buoy = serial_number_to_edgetech_buoy[serial_number_user_id]
             edgetech_buoy_lat = edgetech_buoy.currentState.latDeg
             edgetech_buoy_long = edgetech_buoy.currentState.lonDeg
 
-            primary_subject_name = f"{self._prefix}{serial_number}_A"
-            er_subject = er_subject_name_to_subject_mapping[primary_subject_name]
-            er_subject_lat, er_subject_long = er_subject.location
-
+            primary_device_name = f"{serial_number_user_id.replace('/', '_')}_A"
+            single_device_name = f"{serial_number_user_id.replace('/', '_')}"
+            er_gear = er_gears_devices_id_to_gear.get(
+                primary_device_name
+            ) or er_gears_devices_id_to_gear.get(single_device_name)
+            for er_device in er_gear.devices:
+                if (
+                    er_device.device_id == primary_device_name
+                    or er_device.device_id == single_device_name
+                ):
+                    er_device_lat, er_device_long = er_device.location
+                    break
             if (
-                er_subject_lat == edgetech_buoy_lat
-                and er_subject_long == edgetech_buoy_long
+                er_device_lat == edgetech_buoy_lat
+                and er_device_long == edgetech_buoy_long
             ):
                 # No change in location, skip update
                 logger.info(
                     "No change in location for buoy %s, skipping update.",
-                    serial_number,
+                    serial_number_user_id,
                 )
                 continue
 
@@ -310,7 +309,7 @@ class EdgeTechProcessor:
                             logger.warning(
                                 "End unit buoy %s not found for serial number %s, skipping deployment.",
                                 edgetech_buoy.currentState.endUnit,
-                                serial_number,
+                                serial_number_user_id,
                             )
                             continue
                     if edgetech_buoy.currentState.startUnit:
@@ -326,45 +325,41 @@ class EdgeTechProcessor:
             except Exception as e:
                 logger.exception(
                     "Failed to create BuoyEvent for %s. Error: %s",
-                    serial_number,
+                    serial_number_user_id,
                     e.json(),
                 )
 
         for serial_number in to_haul:
-            subject_name_two_unit_trawl = f"{self._prefix}{serial_number}"
-            primary_subject_name_single_unit_trawl = f"{subject_name_two_unit_trawl}_A"
+            subject_name_two_unit_trawl = (
+                f"{serial_number}_{get_hashed_user_id(edgetech_buoy.userId)}"
+            )
+            primary_source_name_single_unit_trawl = f"{subject_name_two_unit_trawl}_A"
             secondary_subject_name_single_unit_trawl = (
                 f"{subject_name_two_unit_trawl}_B"
             )
 
-            subjects_to_haul = []
+            sources_to_haul = []
 
-            if (
-                primary_subject_name_single_unit_trawl
-                in er_subject_name_to_subject_mapping
-            ):
-                subjects_to_haul.append(primary_subject_name_single_unit_trawl)
-            if (
-                secondary_subject_name_single_unit_trawl
-                in er_subject_name_to_subject_mapping
-            ):
-                subjects_to_haul.append(secondary_subject_name_single_unit_trawl)
-            if subject_name_two_unit_trawl in er_subject_name_to_subject_mapping:
-                subjects_to_haul.append(subject_name_two_unit_trawl)
-
-            if not subjects_to_haul:
+            if primary_source_name_single_unit_trawl in er_gears_devices_id_to_gear:
+                sources_to_haul.append(primary_source_name_single_unit_trawl)
+            if secondary_subject_name_single_unit_trawl in er_gears_devices_id_to_gear:
+                sources_to_haul.append(secondary_subject_name_single_unit_trawl)
+            if subject_name_two_unit_trawl in er_gears_devices_id_to_gear:
+                sources_to_haul.append(subject_name_two_unit_trawl)
+            if serial_number in er_gears_devices_id_to_gear:
+                sources_to_haul.append(serial_number)
+            if not sources_to_haul:
                 logger.warning(
                     "No ER subject found for serial number %s, skipping haul.",
                     serial_number,
                 )
                 continue
 
-            for primery_subject_name in subjects_to_haul:
-                er_subject = er_subject_name_to_subject_mapping[primery_subject_name]
+            for source_name in sources_to_haul:
+                er_gear = er_gears_devices_id_to_gear[source_name]
                 try:
-                    to_haul_observation = er_subject.create_observation(
+                    to_haul_observation = er_gear.create_haul_observation(
                         recorded_at=datetime.now(timezone.utc),
-                        is_active=False,
                     )
                     observations.append(to_haul_observation)
                 except pydantic.ValidationError as ve:

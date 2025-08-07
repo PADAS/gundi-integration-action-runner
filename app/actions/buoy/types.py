@@ -5,7 +5,48 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, HttpUrl
 
-from app.actions.edgetech.types import GEAR_DEPLOYED_EVENT, GEAR_RETRIEVED_EVENT
+
+class DeviceLocation(BaseModel):
+    latitude: float
+    longitude: float
+
+
+class BuoyDevice(BaseModel):
+    device_id: str
+    label: str
+    location: DeviceLocation
+    last_updated: datetime
+    last_deployed: Optional[datetime]
+
+
+class BuoyGear(BaseModel):
+    id: UUID
+    display_id: str
+    status: str
+    last_updated: datetime
+    devices: List[BuoyDevice]
+    type: str
+    manufacturer: str
+
+    def create_haul_observation(self, recorded_at: datetime) -> Dict[str, Any]:
+        """
+        Create an observation record for the buoy gear.
+        """
+        return [
+            {
+                "subject_name": self.display_id,
+                "manufacturer_id": device.device_id,
+                "subject_is_active": False,
+                "source_type": "ropeless_gear",
+                "subject_subtype": "ropeless_buoy_gearset",
+                "location": {
+                    "lat": device.location.latitude,
+                    "lon": device.location.longitude,
+                },
+                "recorded_at": recorded_at,
+            }
+            for device in self.devices
+        ]
 
 
 class LastPositionStatus(BaseModel):
@@ -98,6 +139,8 @@ class ObservationSubject(BaseModel):
         Create observations based on the subject's last position and status.
         Returns a list of observation records.
         """
+        from app.actions.edgetech.types import GEAR_DEPLOYED_EVENT, GEAR_RETRIEVED_EVENT
+
         if not self.last_position or not self.last_position.geometry:
             raise ValueError("Last position is not available.")
 
