@@ -107,11 +107,10 @@ async def push_data(
     json_payload = json.loads(payload)
     attributes = json_body["message"].get("attributes", {})
     logger.debug(f"Attributes: {attributes}")
-    await execute_action(
+    return await execute_action(
         integration_id=attributes.get("destination_id"),
         data=json_payload,
     )
-    return {}
 
 app.include_router(
     actions.router, prefix="/v1/actions", tags=["actions"], responses={}
