@@ -56,7 +56,7 @@ def discover_actions(module_name, prefix):
                     else:
                         raise ValueError(f"Push action '{key}' must have a 'data' parameter.")
                 else:
-                    raise ValueError(f"The 'data' parameter in action '{key}' must me annotated with a data model.")
+                    raise ValueError(f"The 'data' parameter in action '{key}' must be annotated with a data model.")
             else:
                 data_model = None
             action_handlers[key] = (func, config_model, data_model)
