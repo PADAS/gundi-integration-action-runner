@@ -97,3 +97,41 @@ async def send_observations_to_gundi(observations: List[dict], **kwargs) -> dict
     assert integration_id, "integration_id is required"
     sensors_api_client = await _get_sensors_api_client(integration_id=str(integration_id))
     return await sensors_api_client.post_observations(data=observations)
+
+
+@stamina.retry(on=httpx.HTTPError, wait_initial=1.0, wait_jitter=5.0, wait_max=32.0)
+async def send_messages_to_gundi(messages: List[dict], **kwargs) -> dict:
+    """
+    Send Messages to Gundi using the REST API v2
+    :param messages: A list of messages in the following format:
+    [
+        {
+            "sender": "2075752244",
+            "recipients": ["admin@sitex.pamdas.org"],
+            "text": "Help! I need assistance.",
+            "recorded_at": "2025-08-09 09:54:10-0300",
+            "location": {
+                "latitude": -51.689,
+                "longitude": -72.705
+            },
+            "additional": {
+                "gpsFix": 2,
+                "course": 45,
+                "speed": 50,
+                "status": {
+                    "autonomous": 0,
+                    "lowBattery": 1,
+                    "intervalChange": 0,
+                    "resetDetected": 0
+                }
+            }
+        },
+        ...
+    ]
+    :param kwargs: integration_id: The UUID of the related integration
+    :return: A dict with the response from the API
+    """
+    integration_id = kwargs.get("integration_id")
+    assert integration_id, "integration_id is required"
+    sensors_api_client = await _get_sensors_api_client(integration_id=str(integration_id))
+    return await sensors_api_client.post_messages(data=messages)
