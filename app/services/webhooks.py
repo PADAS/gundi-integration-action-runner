@@ -56,7 +56,7 @@ async def process_webhook(request: Request):
                 else:
                     parsed_payload = payload_model.parse_obj(json_content)
             except Exception as e:
-                message = f"Error parsing payload: {str(e)}. Please review configurations."
+                message = f"Error parsing payload: {type(e).__name__}: {str(e)}. Please review configurations."
                 logger.exception(message)
                 await publish_event(
                     event=IntegrationWebhookFailed(
@@ -87,7 +87,7 @@ async def process_webhook(request: Request):
             topic_name=settings.INTEGRATION_EVENTS_TOPIC,
         )
     except Exception as e:
-        message = f"Error processing webhook: {str(e)}"
+        message = f"Error processing webhook: {type(e).__name__}: {str(e)}"
         logger.exception(message)
         await publish_event(
             event=IntegrationWebhookFailed(

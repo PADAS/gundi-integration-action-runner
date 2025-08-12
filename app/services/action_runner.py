@@ -2,13 +2,14 @@ import asyncio
 import logging
 import time
 import traceback
+from typing import Optional
 
 import httpx
 import pydantic
 import stamina
 from gundi_client_v2 import GundiClient
 
-from app.actions import action_handlers
+from app.actions import action_handlers, get_action_handler_by_data_type
 from app import settings
 from fastapi import status
 from fastapi.encoders import jsonable_encoder
@@ -25,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 async def _handle_error(
-        exc: Exception, integration_id: str, action_id: str,
+        exc: Exception, integration_id: str, action_id: Optional[str] = None,
         config_data=None, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
 ):
     """
@@ -72,13 +73,41 @@ async def _handle_error(
     )
 
 
-async def execute_action(integration_id: str, action_id: str, config_overrides: dict = None):
-    logger.info(f"Executing action '{action_id}' for integration '{integration_id}'...")
-
+async def execute_action(
+        integration_id: str, action_id: Optional[str] = None, config_overrides: dict = None, data: dict = None
+):
     try:  # Get the integration details to pass it to the action handler
         integration = await config_manager.get_integration_details(integration_id)
     except Exception as e:
         return await _handle_error(e, integration_id, action_id)
+
+    # Find the action handler based on the action ID or data type
+    if action_id:
+        try:  # There must be one action handler implemented for the action
+            handler, config_model, DataModel = action_handlers[action_id]
+        except KeyError:
+            return await _handle_error(
+                KeyError(f"Action '{action_id}' is not supported"),
+                integration_id, action_id,
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+    elif data and (data_type := data.get("event_type")):  # Push data actions
+        try:  # Get the action handler by data type
+            action_id, handler, config_model, DataModel = get_action_handler_by_data_type(type_name=data_type)
+        except ValueError:
+            return await _handle_error(
+                ValueError(f"Data type '{data_type}' is not supported"),
+                integration_id, action_id,
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+    else:
+        return await _handle_error(
+            ValueError("No action handler found by action ID or data type"),
+            integration_id, action_id,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY
+        )
+
+    logger.info(f"Executing action '{action_id}' for integration '{integration_id}'...")
 
     # Get the configuration needed to execute the action
     action_config = await config_manager.get_action_configuration(integration_id, action_id)
@@ -91,16 +120,6 @@ async def execute_action(integration_id: str, action_id: str, config_overrides: 
             status_code=status.HTTP_404_NOT_FOUND
         )
 
-    try:  # There must be one action handler implemented for the action
-        handler, config_model = action_handlers[action_id]
-    except KeyError:
-        return await _handle_error(
-            KeyError(f"Action '{action_id}' is not supported"),
-            integration_id, action_id,
-            config_data=action_config,
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY
-        )
-
     try:  # Parse the action configuration
         config_data = action_config.data if action_config else {}
         if config_overrides:
@@ -109,10 +128,23 @@ async def execute_action(integration_id: str, action_id: str, config_overrides: 
     except pydantic.ValidationError as e:
         return await _handle_error(e, integration_id, action_id, config_data, status.HTTP_422_UNPROCESSABLE_ENTITY)
 
+    parsed_data = None
+    if data and DataModel:
+        try:  # Parse the input data if a data model is defined for the action
+            parsed_data = DataModel(**data)
+        except pydantic.ValidationError as e:
+            return await _handle_error(e, integration_id, action_id, data, status.HTTP_422_UNPROCESSABLE_ENTITY)
+
     try:  # Execute the action handler with a timeout
         start_time = time.monotonic()
+        handler_kwargs = {
+            "integration": integration,
+            "action_config": parsed_config,
+        }
+        if parsed_data:
+            handler_kwargs["data"] = parsed_data
         result = await asyncio.wait_for(
-            handler(integration=integration, action_config=parsed_config),
+            handler(**handler_kwargs),
             timeout=settings.MAX_ACTION_EXECUTION_TIME
         )
     except asyncio.TimeoutError:

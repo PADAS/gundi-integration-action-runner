@@ -5,7 +5,7 @@ import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, status, BackgroundTasks
 from fastapi.encoders import jsonable_encoder
-from fastapi.exceptions import RequestValidationError
+from fastapi.exceptions import RequestValidationError, HTTPException
 from fastapi.responses import JSONResponse
 from app.routers import actions, webhooks, config_events
 import app.settings as settings
@@ -72,14 +72,11 @@ async def execute(
     request: Request,
     background_tasks: BackgroundTasks
 ):
-    body = await request.body()
-    print(f"Message Received. RAW body: {body}")
     json_data = await request.json()
-    print(f"JSON: {json_data}")
+    logger.debug(f"JSON: {json_data}")
     payload = base64.b64decode(json_data["message"]["data"]).decode("utf-8").strip()
-    print(f"Payload: {payload}")
     json_payload = json.loads(payload)
-    print(f"JSON Payload: {json_payload}")
+    logger.debug(f"JSON Payload: {json_payload}")
     if settings.PROCESS_PUBSUB_MESSAGES_IN_BACKGROUND:
         background_tasks.add_task(
             execute_action,
@@ -95,6 +92,31 @@ async def execute(
         )
     return {}
 
+
+@app.post(
+    "/push-data",
+    summary="Process messages from PubSub and run push actions",
+)
+async def push_data(
+    request: Request,
+):
+    json_body = await request.json()
+    logger.debug(f"JSON: {json_body}")
+    payload = base64.b64decode(json_body["message"]["data"]).decode("utf-8").strip()
+    logger.debug(f"Payload: {payload}")
+    json_payload = json.loads(payload)
+    attributes = json_body["message"].get("attributes", {})
+    logger.debug(f"Attributes: {attributes}")
+    destination_id = attributes.get("destination_id")
+    if not destination_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing required attribute: 'destination_id'"
+        )
+    return await execute_action(
+        integration_id=destination_id,
+        data=json_payload,
+    )
 
 app.include_router(
     actions.router, prefix="/v1/actions", tags=["actions"], responses={}
