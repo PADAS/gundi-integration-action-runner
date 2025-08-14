@@ -81,6 +81,9 @@ async def test_execute_push_action_from_pubsub(
     data = call_kwargs.get("data")
     assert isinstance(data, ObservationTransformedER)
     assert data == ObservationTransformedER.parse_obj(payload_dict)
+    metadata = call_kwargs.get("metadata")
+    assert isinstance(metadata, dict)
+    assert metadata == attributes
 
 
 @pytest.mark.asyncio
