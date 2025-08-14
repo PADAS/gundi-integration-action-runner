@@ -116,6 +116,7 @@ async def push_data(
     return await execute_action(
         integration_id=destination_id,
         data=json_payload,
+        metadata=attributes
     )
 
 app.include_router(

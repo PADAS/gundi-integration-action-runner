@@ -54,9 +54,11 @@ def discover_actions(module_name, prefix):
                     if (data_annotation := data_param.annotation) != inspect._empty:
                         data_model = data_annotation
                     else:
-                        raise ValueError(f"Push action '{key}' must have a 'data' parameter.")
+                        raise ValueError(f"The 'data' parameter in action '{key}' must be annotated with a data model.")
                 else:
-                    raise ValueError(f"The 'data' parameter in action '{key}' must be annotated with a data model.")
+                    raise ValueError(f"Push action '{key}' must accept a 'data' parameter.")
+                if not signature.parameters.get("metadata"):
+                    raise ValueError(f"Push action '{key}' must accept a 'metadata' parameter.")
             else:
                 data_model = None
             action_handlers[key] = (func, config_model, data_model)

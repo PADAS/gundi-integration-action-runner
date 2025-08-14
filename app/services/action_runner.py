@@ -74,7 +74,8 @@ async def _handle_error(
 
 
 async def execute_action(
-        integration_id: str, action_id: Optional[str] = None, config_overrides: dict = None, data: dict = None
+        integration_id: str, action_id: Optional[str] = None, config_overrides: dict = None,
+        data: dict = None, metadata: dict = None
 ):
     try:  # Get the integration details to pass it to the action handler
         integration = await config_manager.get_integration_details(integration_id)
@@ -143,6 +144,8 @@ async def execute_action(
         }
         if parsed_data:
             handler_kwargs["data"] = parsed_data
+        if metadata:
+            handler_kwargs["metadata"] = metadata
         result = await asyncio.wait_for(
             handler(**handler_kwargs),
             timeout=settings.MAX_ACTION_EXECUTION_TIME
