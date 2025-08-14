@@ -59,7 +59,7 @@ class BuoyClient:
                 ) as response:
                     if response.status != 200:
                         logger.error(
-                            f"Failed to make request. Status code: {response.status}"
+                            f"Failed to make request. Status code: {response.status} Body: {await response.text()}"
                         )
                         break
 
@@ -80,7 +80,6 @@ class BuoyClient:
                     items.extend(results)
 
                     url = page_data.get("next")
-                    params = None
 
         if len(items) == 0:
             logger.error("No gears found")

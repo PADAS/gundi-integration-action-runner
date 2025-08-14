@@ -1,9 +1,12 @@
 import hashlib
+from curses.ascii import SO
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
 from pydantic import BaseModel, Field, HttpUrl
+
+from app.actions.edgetech.types import SOURCE_TYPE, SUBJECT_SUBTYPE
 
 
 class DeviceLocation(BaseModel):
@@ -37,8 +40,8 @@ class BuoyGear(BaseModel):
                 "subject_name": self.display_id,
                 "manufacturer_id": device.device_id,
                 "subject_is_active": False,
-                "source_type": "ropeless_gear",
-                "subject_subtype": "ropeless_buoy_gearset",
+                "source_type": SOURCE_TYPE,
+                "subject_subtype": SUBJECT_SUBTYPE,
                 "location": {
                     "lat": device.location.latitude,
                     "lon": device.location.longitude,
