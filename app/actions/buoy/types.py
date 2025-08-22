@@ -6,8 +6,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, HttpUrl
 
-from app.actions.edgetech.types import SOURCE_TYPE, SUBJECT_SUBTYPE
-
 
 class DeviceLocation(BaseModel):
     latitude: float
@@ -35,6 +33,8 @@ class BuoyGear(BaseModel):
         """
         Create an observation record for the buoy gear.
         """
+        from app.actions.edgetech.types import SOURCE_TYPE, SUBJECT_SUBTYPE
+
         return [
             {
                 "subject_name": self.display_id,

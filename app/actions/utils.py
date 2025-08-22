@@ -1,7 +1,7 @@
 from hashids import Hashids
 
 
-def get_hashed_user_id(user_id: str, salt: str) -> str:
+def get_hashed_user_id(user_id: str) -> str:
     """
     Generate a hashed user ID for the buoy.
 

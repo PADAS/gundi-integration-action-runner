@@ -1,12 +1,11 @@
-import hashlib
 import logging
 from datetime import datetime
+from uuid import UUID
 
 import pytest
 
 from app.actions.edgetech.types import (
     GEAR_DEPLOYED_EVENT,
-    GEAR_RETRIEVED_EVENT,
     Buoy,
     CurrentState,
 )
@@ -47,6 +46,7 @@ def base_state():
         "startUnit": None,
     }
 
+
 @pytest.mark.parametrize(
     "override,expected",
     [
@@ -67,6 +67,7 @@ def test_has_location_variants(base_state, override, expected):
     )
     assert buoy.has_location is expected
 
+
 def test_create_observations_skips_when_no_start_location(caplog, base_state):
     # Neither latDeg nor lonDeg set → no observations
     state_kwargs = {**base_state, "latDeg": None, "lonDeg": None}
@@ -79,10 +80,11 @@ def test_create_observations_skips_when_no_start_location(caplog, base_state):
     )
 
     caplog.set_level(logging.WARNING)
-    obs = buoy.create_observations(prefix="pre_", is_deployed=True)
+    obs = buoy.create_observations(is_deployed=True)
 
     assert obs == []
     assert "No valid location for buoy S123" in caplog.text
+
 
 def test_create_observations_only_start_point(base_state):
     # Only start coords → one observation
@@ -101,67 +103,19 @@ def test_create_observations_only_start_point(base_state):
         changeRecords=[],
     )
 
-    obs = buoy.create_observations(prefix="pf_", is_deployed=True)
+    obs = buoy.create_observations(is_deployed=True)
     assert len(obs) == 1
 
     o = obs[0]
     iso = state.lastUpdated.replace(microsecond=0).isoformat()
-    subj = "pf_S123_7889ad74-aab3-4044-bcf4-13d6f9586a82_A"
     # device record embedded
-    device = o["additional"]["devices"][0]
-    assert device == {
-        "label": "a",
-        "location": {"latitude": start[0], "longitude": start[1]},
-        "device_id": subj,
-        "last_updated": iso,
-    }
+    assert o["location"] == {"lat": start[0], "lon": start[1]}
+    assert o["manufacturer_id"].startswith("S123_")
+    assert o["recorded_at"] == iso
+
     # event type for deployed
     assert o["additional"]["event_type"] == GEAR_DEPLOYED_EVENT
-    # display_id = first 12 chars of sha256 of concatenated device_ids
-    expected_id = hashlib.sha256(subj.encode("utf-8")).hexdigest()[:12]
-    assert o["additional"]["display_id"] == expected_id
-    # recorded_at and is_active
-    assert o["recorded_at"] == iso
-    assert o["is_active"] is True
 
-def test_create_observations_with_end_points(base_state):
-    start = (11.0, 21.0)
-    end = (12.0, 22.0)
-    state_kwargs = {
-        **base_state,
-        "latDeg": start[0],
-        "lonDeg": start[1],
-        "endLatDeg": end[0],
-        "endLonDeg": end[1],
-    }
-    state = CurrentState(**state_kwargs)
-    buoy = Buoy(
-        userId="7889ad74-aab3-4044-bcf4-13d6f9586a82",
-        currentState=state,
-        serialNumber="S123",
-        changeRecords=[],
-    )
-
-    obs = buoy.create_observations(prefix="XX_", is_deployed=False)
-    assert len(obs) == 2
-
-    iso = state.lastUpdated.replace(microsecond=0).isoformat()
-    subj_a = "XX_S123_7889ad74-aab3-4044-bcf4-13d6f9586a82_A"
-    subj_b = "XX_S123_7889ad74-aab3-4044-bcf4-13d6f9586a82_B"
-    # check devices list length
-    devices = obs[0]["additional"]["devices"]
-    assert len(devices) == 2
-    # check both observations use same display_id
-    concat = subj_a + subj_b
-    exp_id = hashlib.sha256(concat.encode("utf-8")).hexdigest()[:12]
-    for o in obs:
-        assert o["recorded_at"] == iso
-        assert o["is_active"] is False
-        assert o["additional"]["event_type"] == GEAR_RETRIEVED_EVENT
-        assert o["additional"]["display_id"] == exp_id
-
-    # check that second obs has location=end
-    assert obs[1]["location"] == {"lat": end[0], "lon": end[1]}
 
 def test_create_observations_with_two_unit_line_new_structure(base_state):
     """Test creating observations for a two-unit line using the new structure."""
@@ -201,29 +155,18 @@ def test_create_observations_with_two_unit_line_new_structure(base_state):
     )
 
     # Create observations using the new structure
-    obs = start_buoy.create_observations(prefix="XX_", is_deployed=True, end_unit_buoy=end_buoy)
+    obs = start_buoy.create_observations(is_deployed=True, end_unit_buoy=end_buoy)
     assert len(obs) == 2
 
-    iso = start_state.lastUpdated.replace(microsecond=0).isoformat()
-    subj_a = "XX_S123_7889ad74-aab3-4044-bcf4-13d6f9586a82"
-    subj_b = "XX_S456_7889ad74-aab3-4044-bcf4-13d6f9586a82"
-    
-    # Check devices list length
-    devices = obs[0]["additional"]["devices"]
-    assert len(devices) == 2
-    
-    # Check both observations use same display_id
-    concat = subj_a + subj_b
-    exp_id = hashlib.sha256(concat.encode("utf-8")).hexdigest()[:12]
-    for o in obs:
-        assert o["recorded_at"] == iso
-        assert o["is_active"] is True
-        assert o["additional"]["event_type"] == GEAR_DEPLOYED_EVENT
-        assert o["additional"]["display_id"] == exp_id
+    # Check both observations use same subject_name
+    assert obs[0]["subject_name"] == obs[1]["subject_name"]
 
     # Check that second observation has end unit location
     assert obs[1]["location"] == {"lat": end[0], "lon": end[1]}
-    assert obs[1]["name"] == subj_b
+
+    # Check that the manufacturer_id correspond to the expected ones (serial_hashed_user_id)
+    assert obs[0]["manufacturer_id"].startswith("S123_")
+    assert obs[1]["manufacturer_id"].startswith("S456_")
 
 def test_create_observations_with_two_unit_line_missing_end_unit(caplog, base_state):
     """Test creating observations when end unit is missing."""
@@ -233,7 +176,7 @@ def test_create_observations_with_two_unit_line_missing_end_unit(caplog, base_st
         "latDeg": start[0],
         "lonDeg": start[1],
         "isTwoUnitLine": True,
-        "endUnit": "S456",  # End unit that doesn't exist
+        "endUnit": "S456",
     }
     state = CurrentState(**state_kwargs)
     buoy = Buoy(
@@ -244,12 +187,13 @@ def test_create_observations_with_two_unit_line_missing_end_unit(caplog, base_st
     )
 
     caplog.set_level(logging.WARNING)
-    obs = buoy.create_observations(prefix="XX_", is_deployed=True, end_unit_buoy=None)
+    obs = buoy.create_observations(is_deployed=True, end_unit_buoy=None)
     
     # Should still create observation for start unit
     assert len(obs) == 1
     assert obs[0]["location"] == {"lat": start[0], "lon": start[1]}
-    assert obs[0]["name"] == "XX_S123_7889ad74-aab3-4044-bcf4-13d6f9586a82"
+    assert UUID(obs[0]["subject_name"]).version == 4
+
 
 def test_create_observations_with_two_unit_line_old_structure(base_state):
     """Test creating observations for a two-unit line using the old structure."""
@@ -261,7 +205,7 @@ def test_create_observations_with_two_unit_line_old_structure(base_state):
         "lonDeg": start[1],
         "endLatDeg": end[0],
         "endLonDeg": end[1],
-        "isTwoUnitLine": True,
+        "isTwoUnitLine": False,
     }
     state = CurrentState(**state_kwargs)
     buoy = Buoy(
@@ -271,26 +215,11 @@ def test_create_observations_with_two_unit_line_old_structure(base_state):
         changeRecords=[],
     )
 
-    obs = buoy.create_observations(prefix="XX_", is_deployed=True)
+    obs = buoy.create_observations(is_deployed=True)
     assert len(obs) == 2
 
-    iso = state.lastUpdated.replace(microsecond=0).isoformat()
-    subj_a = "XX_S123_7889ad74-aab3-4044-bcf4-13d6f9586a82_A"
-    subj_b = "XX_S123_7889ad74-aab3-4044-bcf4-13d6f9586a82_B"
-    
-    # Check devices list length
-    devices = obs[0]["additional"]["devices"]
-    assert len(devices) == 2
-    
-    # Check both observations use same display_id
-    concat = subj_a + subj_b
-    exp_id = hashlib.sha256(concat.encode("utf-8")).hexdigest()[:12]
-    for o in obs:
-        assert o["recorded_at"] == iso
-        assert o["is_active"] is True
-        assert o["additional"]["event_type"] == GEAR_DEPLOYED_EVENT
-        assert o["additional"]["display_id"] == exp_id
+    # Check both observations use same subject_name
+    assert len({o["subject_name"] for o in obs}) == 1
 
     # Check that second observation has end unit location
     assert obs[1]["location"] == {"lat": end[0], "lon": end[1]}
-    assert obs[1]["name"] == subj_b

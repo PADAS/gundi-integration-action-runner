@@ -138,6 +138,9 @@ class Buoy(pydantic.BaseModel):
             "manufacturer_id": source_name,
             "is_active": is_active,
             "location": {"lat": lat, "lon": lon},
+            "additional": {
+                "event_type": "gear_deployed" if is_active else "gear_retrieved",
+            },
             "source_additional": {"raw": raw},
         }
 
@@ -167,7 +170,7 @@ class Buoy(pydantic.BaseModel):
             source_name_a = f"{self.serialNumber}_{hashed_user_id}_A"
             source_name_b = f"{self.serialNumber}_{hashed_user_id}_B"
 
-        subject_name = uuid.uuid4()
+        subject_name = str(uuid.uuid4())
 
         observation_a = self._create_observation_record(
             subject_name=subject_name,
