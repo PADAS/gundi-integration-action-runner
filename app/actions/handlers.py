@@ -15,6 +15,11 @@ from .state import IntegrationState
 from app.services.state import IntegrationStateManager
 from gundi_core.schemas.v2.gundi import LogLevel
 
+from app.actions.configurations import (
+    AuthenticateConfig,
+    PullObservationsConfig,
+    get_auth_config
+)
 
 
 logger = logging.getLogger(__name__)
@@ -25,7 +30,7 @@ state_manager = IntegrationStateManager()
 
 async def action_auth(integration, action_config: AuthenticateConfig):
     logger.info(f"Executing auth action with integration {integration} and action_config {action_config}...")
-    if action_config.password == "valid_password" and action_config.username == "valid_username":
+    if action_config.password.get_secret_value() == "valid_password" and action_config.username == "valid_username":
         return {"valid_credentials": True}
     else:
         return {"valid_credentials": False}
@@ -63,7 +68,8 @@ async def action_fetch_samples(integration, action_config: PullObservationsConfi
                 }
             }]
 
-    if action_config.password == "valid_password" and action_config.username == "valid_username":
+    auth_config = get_auth_config(integration)
+    if auth_config.password.get_secret_value() == "valid_password" and auth_config.username == "valid_username":
         return {
             "observations_extracted": len(observations),
             "observations": observations

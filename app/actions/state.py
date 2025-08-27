@@ -1,9 +1,9 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import pydantic
 
 def default_last_run():
     '''Default for a new configuration is to pretend the last run was 7 days ago'''
-    return datetime.now(tz=datetime.timezone.utc) - datetime.timedelta(days=7)
+    return datetime.now(tz=timezone.utc) - timedelta(days=7)
 
 class IntegrationState(pydantic.BaseModel):
     last_run: datetime = pydantic.Field(default_factory=default_last_run, alias='last_run')
