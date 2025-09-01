@@ -220,7 +220,7 @@ class EdgeTechProcessor:
             for buoy in edgetech_deployed_buoys
         }
 
-        er_gears = await self._er_client.get_er_gears()
+        er_gears = await self._er_client.get_er_gears(params={"page_size": 10000})
 
         er_gears_devices_id_to_gear = {
             device.device_id: gear
@@ -317,41 +317,34 @@ class EdgeTechProcessor:
                         continue
 
                 to_update_observations = edgetech_buoy.create_observations(
-                    prefix=self._prefix,
                     is_deployed=True,
                     end_unit_buoy=end_unit_buoy,
                 )
                 observations.extend(to_update_observations)
+            except pydantic.ValidationError as ve:
+                logger.exception(
+                    "Failed to create BuoyEvent for %s. Error: %s",
+                    serial_number_user_id,
+                    ve.json(),
+                )
             except Exception as e:
                 logger.exception(
                     "Failed to create BuoyEvent for %s. Error: %s",
                     serial_number_user_id,
-                    e.json(),
+                    str(e),
                 )
 
-        for serial_number in to_haul:
-            subject_name_two_unit_trawl = (
-                f"{serial_number}_{get_hashed_user_id(edgetech_buoy.userId)}"
-            )
-            primary_source_name_single_unit_trawl = f"{subject_name_two_unit_trawl}_A"
-            secondary_subject_name_single_unit_trawl = (
-                f"{subject_name_two_unit_trawl}_B"
-            )
-
+        for device_id_user_id in to_haul:
             sources_to_haul = []
 
-            if primary_source_name_single_unit_trawl in er_gears_devices_id_to_gear:
-                sources_to_haul.append(primary_source_name_single_unit_trawl)
-            if secondary_subject_name_single_unit_trawl in er_gears_devices_id_to_gear:
-                sources_to_haul.append(secondary_subject_name_single_unit_trawl)
-            if subject_name_two_unit_trawl in er_gears_devices_id_to_gear:
-                sources_to_haul.append(subject_name_two_unit_trawl)
-            if serial_number in er_gears_devices_id_to_gear:
-                sources_to_haul.append(serial_number)
+            # Check if the device exists in ER
+            if device_id_user_id in er_gears_devices_id_to_gear:
+                sources_to_haul.append(device_id_user_id)
+
             if not sources_to_haul:
                 logger.warning(
-                    "No ER subject found for serial number %s, skipping haul.",
-                    serial_number,
+                    "No ER subject found for device %s, skipping haul.",
+                    device_id_user_id,
                 )
                 continue
 
@@ -365,7 +358,7 @@ class EdgeTechProcessor:
                 except pydantic.ValidationError as ve:
                     logger.exception(
                         "Failed to create haul observation for %s. Error: %s",
-                        serial_number,
+                        device_id_user_id,
                         ve.json(),
                     )
 

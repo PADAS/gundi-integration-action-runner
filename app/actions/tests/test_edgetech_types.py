@@ -223,3 +223,32 @@ def test_create_observations_with_two_unit_line_old_structure(base_state):
 
     # Check that second observation has end unit location
     assert obs[1]["location"] == {"lat": end[0], "lon": end[1]}
+
+
+def test_create_device_record(base_state):
+    """Test the _create_device_record method."""
+    state = CurrentState(**base_state)
+    buoy = Buoy(
+        userId="7889ad74-aab3-4044-bcf4-13d6f9586a82",
+        currentState=state,
+        serialNumber="S123",
+        changeRecords=[],
+    )
+
+    # Test the _create_device_record method directly
+    device_record = buoy._create_device_record(
+        label="Test Device",
+        latitude=42.123,
+        longitude=-71.456,
+        subject_name="test_subject_123",
+        last_updated="2025-01-01T12:00:00Z",
+    )
+
+    expected_record = {
+        "label": "Test Device",
+        "location": {"latitude": 42.123, "longitude": -71.456},
+        "device_id": "test_subject_123",
+        "last_updated": "2025-01-01T12:00:00Z",
+    }
+
+    assert device_record == expected_record
