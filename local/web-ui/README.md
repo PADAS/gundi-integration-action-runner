@@ -5,6 +5,7 @@ This is a React-based web application that provides a friendly user interface fo
 ## Features
 
 - **Actions List**: View all available actions from the FastAPI service
+- **Dynamic Forms**: Automatically generate forms based on action configuration schemas
 - **Action Execution**: Execute actions with custom parameters
 - **Real-time Results**: See execution results in real-time
 - **Modern UI**: Built with Material-UI for a clean, professional look
@@ -49,6 +50,7 @@ The web UI is configured to run as part of the local Docker Compose setup. It wi
 The web UI communicates with the FastAPI service through the following endpoints:
 
 - `GET /v1/actions/` - List all available actions
+- `GET /v1/actions/{action_id}/schema` - Get configuration schema for an action
 - `POST /v1/actions/execute` - Execute an action with parameters
 
 ## Configuration
@@ -62,10 +64,23 @@ The web UI uses the following environment variables:
 1. Navigate to the web UI at `http://localhost:3000`
 2. View the list of available actions
 3. Click "Execute" on any action to configure and run it
-4. Fill in the required parameters (Integration ID, etc.)
-5. Add any configuration overrides if needed
+4. Choose between:
+   - **Dynamic Form**: Automatically generated form based on the action's configuration schema
+   - **Manual Configuration**: Manually add configuration overrides
+5. Fill in the required parameters (Integration ID, etc.)
 6. Click "Execute Action" to run the action
 7. View the results in the response section
+
+### Dynamic Forms
+
+The web UI automatically generates forms based on the Pydantic models used by each action. The forms include:
+
+- **Field validation** based on the schema requirements
+- **Password fields** for sensitive data
+- **Boolean switches** for true/false values
+- **Number inputs** for numeric values
+- **Dropdown selects** for enum values
+- **Help text** from field descriptions
 
 ## Troubleshooting
 

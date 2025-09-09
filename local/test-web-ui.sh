@@ -16,6 +16,16 @@ else
     echo "❌ FastAPI is not responding"
 fi
 
+# Test 2.5: Check if schema endpoint is working
+echo "📋 Testing schema endpoint..."
+if curl -s http://localhost:8080/v1/actions/auth/schema > /dev/null; then
+    echo "✅ Schema endpoint is working"
+    echo "📋 Auth action schema:"
+    curl -s http://localhost:8080/v1/actions/auth/schema | jq -r '.config_schema.properties | keys[]' | sed 's/^/  - /'
+else
+    echo "❌ Schema endpoint is not working"
+fi
+
 # Test 3: Check if web UI is serving
 echo "🌐 Testing web UI..."
 if curl -s http://localhost:3000 > /dev/null; then

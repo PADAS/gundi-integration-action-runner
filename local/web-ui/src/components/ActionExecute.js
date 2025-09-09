@@ -17,6 +17,7 @@ import {
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import axios from 'axios';
+import DynamicForm from './DynamicForm';
 
 const ActionExecute = () => {
   const { actionId } = useParams();
@@ -27,6 +28,7 @@ const ActionExecute = () => {
     run_in_background: false,
     config_overrides: {}
   });
+  const [showDynamicForm, setShowDynamicForm] = useState(false);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
@@ -73,6 +75,30 @@ const ActionExecute = () => {
     }
   };
 
+  const handleDynamicFormSubmit = async (formData) => {
+    setLoading(true);
+    setError(null);
+    setResult(null);
+
+    try {
+      const requestData = {
+        integration_id: formData.integration_id,
+        action_id: actionId,
+        run_in_background: formData.run_in_background,
+        config_overrides: formData.config_overrides
+      };
+      
+      const response = await axios.post('http://localhost:8080/v1/actions/execute', requestData);
+      setResult(response.data);
+      setShowDynamicForm(false);
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Failed to execute action');
+      console.error('Error executing action:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const addConfigOverride = () => {
     const key = prompt('Enter config key:');
     if (key) {
@@ -109,9 +135,16 @@ const ActionExecute = () => {
         Execute Action: {actionId}
       </Typography>
 
-      <Card sx={{ mb: 3 }}>
-        <CardContent>
-          <form onSubmit={handleSubmit}>
+      {!showDynamicForm ? (
+        <Card sx={{ mb: 3 }}>
+          <CardContent>
+            <Typography variant="h6" gutterBottom>
+              Basic Configuration
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Choose how to configure this action
+            </Typography>
+
             <TextField
               fullWidth
               label="Integration ID"
@@ -130,13 +163,28 @@ const ActionExecute = () => {
                 />
               }
               label="Run in Background"
-              sx={{ mb: 2 }}
+              sx={{ mb: 3 }}
             />
+
+            <Box sx={{ display: 'flex', gap: 2, mb: 3 }}>
+              <Button
+                variant="contained"
+                onClick={() => setShowDynamicForm(true)}
+              >
+                Use Dynamic Form
+              </Button>
+              <Button
+                variant="outlined"
+                onClick={() => setShowDynamicForm(false)}
+              >
+                Use Manual Configuration
+              </Button>
+            </Box>
 
             <Divider sx={{ my: 2 }} />
 
             <Typography variant="h6" gutterBottom>
-              Configuration Overrides
+              Manual Configuration Overrides
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
               Add custom configuration parameters for this action
@@ -177,18 +225,37 @@ const ActionExecute = () => {
 
             <Box sx={{ display: 'flex', gap: 2 }}>
               <Button
-                type="submit"
+                onClick={handleSubmit}
                 variant="contained"
                 startIcon={loading ? <CircularProgress size={20} /> : <PlayArrowIcon />}
-                disabled={loading}
+                disabled={loading || !formData.integration_id}
                 size="large"
               >
                 {loading ? 'Executing...' : 'Execute Action'}
               </Button>
             </Box>
-          </form>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      ) : (
+        <Box sx={{ mb: 3 }}>
+          <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
+            <Button
+              variant="outlined"
+              onClick={() => setShowDynamicForm(false)}
+            >
+              Back to Manual Configuration
+            </Button>
+          </Box>
+          
+          <DynamicForm
+            actionId={actionId}
+            onSubmit={handleDynamicFormSubmit}
+            onCancel={() => setShowDynamicForm(false)}
+            initialIntegrationId={formData.integration_id}
+            initialRunInBackground={formData.run_in_background}
+          />
+        </Box>
+      )}
 
       {error && (
         <Alert severity="error" sx={{ mb: 2 }}>

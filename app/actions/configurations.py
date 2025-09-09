@@ -8,6 +8,8 @@ class AuthenticateConfig(AuthActionConfiguration):
     password: pydantic.SecretStr = pydantic.Field(..., title = "Password", 
                                 description = "Password for Onyesha account",
                                 format="password")
+    project_id: str = pydantic.Field(..., title = "Project ID",
+                                description = "Project ID for Onyesha account")
 
 
 class PullObservationsConfig(PullActionConfiguration):
