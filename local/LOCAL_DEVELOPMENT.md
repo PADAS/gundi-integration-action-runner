@@ -31,11 +31,33 @@ Once these steps are complete you can visit:
 - http://localhost:8080/docs to see your Action Runner's browsable API
 - **http://localhost:3000** to access the web UI for a friendly interface to execute actions
 
+## Authentication
+
+The web UI now includes OpenID Connect authentication to access the Gundi API. By default, the app will redirect to a login page since authentication is required.
+
+### Configuration
+
+To configure authentication, edit `local/web-ui/src/config/auth.js` and update:
+
+- `authority`: Your OIDC provider URL
+- `client_id`: Your registered OIDC client ID
+- `apiBaseUrl`: The Gundi API base URL
+
+### Features
+
+- **Login/Logout**: Secure authentication with the Gundi API
+- **Protected Routes**: All main features require authentication
+- **Token Management**: Automatic token renewal and management
+- **API Integration**: Access to Gundi API connections and data
+- **User Profile**: Display user information in the header
+
+For detailed setup instructions, see `local/web-ui/AUTHENTICATION.md`.
+
 ## Web UI
 
 The local deployment now includes a React-based web UI that provides a user-friendly interface for:
 - Viewing all available actions
-- Executing actions with custom parameters
+ this - Executing actions with custom parameters
 - Viewing execution results in real-time
 
 The web UI is automatically built and served when you run `docker compose up --build`.

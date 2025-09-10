@@ -4,10 +4,13 @@ This is a React-based web application that provides a friendly user interface fo
 
 ## Features
 
+- **Authentication**: OpenID Connect integration with Gundi API
 - **Actions List**: View all available actions from the FastAPI service
 - **Dynamic Forms**: Automatically generate forms based on action configuration schemas
 - **Action Execution**: Execute actions with custom parameters
+- **Connections Viewer**: Access and view Gundi API connections
 - **Real-time Results**: See execution results in real-time
+- **User Management**: Login/logout with user profile display
 - **Modern UI**: Built with Material-UI for a clean, professional look
 
 ## Development
@@ -47,29 +50,43 @@ The web UI is configured to run as part of the local Docker Compose setup. It wi
 
 ## API Integration
 
-The web UI communicates with the FastAPI service through the following endpoints:
+The web UI communicates with multiple services:
 
+### Local FastAPI Service
 - `GET /v1/actions/` - List all available actions
 - `GET /v1/actions/{action_id}/schema` - Get configuration schema for an action
 - `POST /v1/actions/execute` - Execute an action with parameters
 
+### Gundi API (Authenticated)
+- `GET /v2/connections` - List all connections from Gundi API
+- Authentication via OpenID Connect with automatic token management
+
 ## Configuration
 
-The web UI uses the following environment variables:
-
+### Environment Variables
 - `REACT_APP_API_URL` - URL of the FastAPI service (defaults to `http://localhost:8080`)
+
+### Authentication Configuration
+Edit `src/config/auth.js` to configure OpenID Connect settings:
+- `authority` - OIDC provider URL
+- `client_id` - Registered OIDC client ID
+- `apiBaseUrl` - Gundi API base URL
+
+See `AUTHENTICATION.md` for detailed setup instructions.
 
 ## Usage
 
 1. Navigate to the web UI at `http://localhost:3000`
-2. View the list of available actions
-3. Click "Execute" on any action to configure and run it
-4. Choose between:
+2. **Login**: You'll be redirected to the login page for Gundi API authentication
+3. **Actions**: View the list of available actions and execute them
+4. **Connections**: Access the "Connections" tab to view Gundi API data
+5. **Execute Actions**: Click "Execute" on any action to configure and run it
+6. Choose between:
    - **Dynamic Form**: Automatically generated form based on the action's configuration schema
    - **Manual Configuration**: Manually add configuration overrides
-5. Fill in the required parameters (Integration ID, etc.)
-6. Click "Execute Action" to run the action
-7. View the results in the response section
+7. Fill in the required parameters (Integration ID, etc.)
+8. Click "Execute Action" to run the action
+9. View the results in the response section
 
 ### Dynamic Forms
 

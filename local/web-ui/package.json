@@ -16,7 +16,8 @@
     "@mui/icons-material": "^5.11.16",
     "@emotion/react": "^11.11.0",
     "@emotion/styled": "^11.11.0",
-    "web-vitals": "^2.1.4"
+    "web-vitals": "^2.1.4",
+    "oidc-client": "^1.11.5"
   },
   "scripts": {
     "start": "react-scripts start",
