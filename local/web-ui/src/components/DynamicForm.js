@@ -17,8 +17,10 @@ import {
   Divider
 } from '@mui/material';
 import axios from 'axios';
+import { useConnection } from '../contexts/ConnectionContext';
 
 const DynamicForm = ({ actionId, onSubmit, onCancel, initialIntegrationId = '', initialRunInBackground = false }) => {
+  const { selectedConnection } = useConnection();
   const [schema, setSchema] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -32,6 +34,16 @@ const DynamicForm = ({ actionId, onSubmit, onCancel, initialIntegrationId = '', 
   useEffect(() => {
     fetchSchema();
   }, [actionId]);
+
+  // Update integration_id when selected connection changes
+  useEffect(() => {
+    if (selectedConnection?.id) {
+      setFormData(prev => ({
+        ...prev,
+        integration_id: selectedConnection.id
+      }));
+    }
+  }, [selectedConnection]);
 
   const fetchSchema = async () => {
     try {

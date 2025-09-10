@@ -4,6 +4,7 @@ import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import { Container, Box } from '@mui/material';
 import { AuthProvider } from './contexts/AuthContext';
+import { ConnectionProvider } from './contexts/ConnectionContext';
 import Header from './components/Header';
 import Login from './components/Login';
 import Callback from './components/Callback';
@@ -30,7 +31,8 @@ function App() {
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <AuthProvider>
-        <Router>
+        <ConnectionProvider>
+          <Router>
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/callback" element={<Callback />} />
@@ -50,7 +52,8 @@ function App() {
               </ProtectedRoute>
             } />
           </Routes>
-        </Router>
+          </Router>
+        </ConnectionProvider>
       </AuthProvider>
     </ThemeProvider>
   );

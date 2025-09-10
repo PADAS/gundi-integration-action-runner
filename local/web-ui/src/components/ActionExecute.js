@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Card,
@@ -14,18 +14,21 @@ import {
   Paper,
   Divider,
   Tabs,
-  Tab
+  Tab,
+  Chip
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import axios from 'axios';
 import DynamicForm from './DynamicForm';
+import { useConnection } from '../contexts/ConnectionContext';
 
 const ActionExecute = () => {
   const { actionId } = useParams();
   const navigate = useNavigate();
+  const { selectedConnection } = useConnection();
   const [formData, setFormData] = useState({
-    integration_id: '',
+    integration_id: selectedConnection?.id || '',
     action_id: actionId,
     run_in_background: false,
     config_overrides: {}
@@ -34,6 +37,16 @@ const ActionExecute = () => {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
+
+  // Update integration_id when selected connection changes
+  useEffect(() => {
+    if (selectedConnection?.id) {
+      setFormData(prev => ({
+        ...prev,
+        integration_id: selectedConnection.id
+      }));
+    }
+  }, [selectedConnection]);
 
   const handleInputChange = (field) => (event) => {
     setFormData({
@@ -139,6 +152,35 @@ const ActionExecute = () => {
       <Typography variant="h4" component="h1" gutterBottom>
         Execute Action: {actionId}
       </Typography>
+
+      {selectedConnection ? (
+        <Alert severity="success" sx={{ mb: 3 }}>
+          <Typography variant="body2">
+            <strong>Using Connection:</strong> {selectedConnection.provider?.name || selectedConnection.name || `Connection ${selectedConnection.id}`}
+            <Chip 
+              label={selectedConnection.provider?.type?.name || 'Unknown Type'} 
+              size="small" 
+              sx={{ ml: 1 }} 
+            />
+            <Typography component="span" variant="caption" sx={{ ml: 1, opacity: 0.7 }}>
+              (ID: {selectedConnection.id})
+            </Typography>
+          </Typography>
+        </Alert>
+      ) : (
+        <Alert severity="warning" sx={{ mb: 3 }}>
+          <Typography variant="body2">
+            No connection selected. Please select a connection from the <Button 
+              variant="text" 
+              size="small" 
+              onClick={() => navigate('/configurations')}
+              sx={{ p: 0, minWidth: 'auto', textTransform: 'none' }}
+            >
+              Connections page
+            </Button> to use stored configuration.
+          </Typography>
+        </Alert>
+      )}
 
       <Card sx={{ mb: 3 }}>
         <Tabs 

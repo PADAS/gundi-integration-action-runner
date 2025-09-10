@@ -26,14 +26,18 @@ import {
   Search as SearchIcon,
   Settings as SettingsIcon,
   Visibility as VisibilityIcon,
-  ContentCopy as CopyIcon
+  ContentCopy as CopyIcon,
+  CheckCircle as CheckCircleIcon,
+  RadioButtonUnchecked as RadioButtonUncheckedIcon
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
+import { useConnection } from '../contexts/ConnectionContext';
 import { authConfig } from '../config/auth';
 import axios from 'axios';
 
 const ConfigViewer = () => {
   const { getApiHeaders, isAuthenticated } = useAuth();
+  const { selectedConnection, selectConnection } = useConnection();
   const [configurations, setConfigurations] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -225,6 +229,34 @@ const ConfigViewer = () => {
         </Button>
       </Box>
 
+      {selectedConnection && (
+        <Alert 
+          severity="info" 
+          sx={{ mb: 3 }}
+          action={
+            <Button 
+              color="inherit" 
+              size="small" 
+              onClick={() => selectConnection(null)}
+            >
+              Clear Selection
+            </Button>
+          }
+        >
+          <Typography variant="body2">
+            <strong>Selected Connection:</strong> {selectedConnection.provider?.name || selectedConnection.name || `Connection ${selectedConnection.id}`} 
+            <Chip 
+              label={selectedConnection.provider?.type?.name || 'Unknown Type'} 
+              size="small" 
+              sx={{ ml: 1 }} 
+            />
+            <Typography component="span" variant="caption" sx={{ ml: 1, opacity: 0.7 }}>
+              (ID: {selectedConnection.id})
+            </Typography>
+          </Typography>
+        </Alert>
+      )}
+
       <Card sx={{ mb: 3 }}>
         <CardContent>
           <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -354,13 +386,25 @@ const ConfigViewer = () => {
                           }
                         />
                         <ListItemSecondaryAction>
-                          <IconButton
-                            edge="end"
-                            onClick={() => handleViewConfig(config)}
-                            title="View details"
-                          >
-                            <VisibilityIcon />
-                          </IconButton>
+                          <Box sx={{ display: 'flex', gap: 1 }}>
+                            <IconButton
+                              onClick={() => selectConnection(config)}
+                              title={selectedConnection?.id === config.id ? "Selected connection" : "Select this connection"}
+                              color={selectedConnection?.id === config.id ? "primary" : "default"}
+                            >
+                              {selectedConnection?.id === config.id ? (
+                                <CheckCircleIcon />
+                              ) : (
+                                <RadioButtonUncheckedIcon />
+                              )}
+                            </IconButton>
+                            <IconButton
+                              onClick={() => handleViewConfig(config)}
+                              title="View details"
+                            >
+                              <VisibilityIcon />
+                            </IconButton>
+                          </Box>
                         </ListItemSecondaryAction>
                       </ListItem>
                       {index < filteredConfigurations.length - 1 && <Divider />}
