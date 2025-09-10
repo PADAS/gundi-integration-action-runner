@@ -12,7 +12,9 @@ import {
   FormControlLabel,
   Switch,
   Paper,
-  Divider
+  Divider,
+  Tabs,
+  Tab
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
@@ -28,7 +30,7 @@ const ActionExecute = () => {
     run_in_background: false,
     config_overrides: {}
   });
-  const [showDynamicForm, setShowDynamicForm] = useState(false);
+  const [tabValue, setTabValue] = useState(0);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
@@ -55,6 +57,10 @@ const ActionExecute = () => {
         [key]: event.target.value
       }
     });
+  };
+
+  const handleTabChange = (event, newValue) => {
+    setTabValue(newValue);
   };
 
   const handleSubmit = async (event) => {
@@ -90,7 +96,6 @@ const ActionExecute = () => {
       
       const response = await axios.post('http://localhost:8080/v1/actions/execute', requestData);
       setResult(response.data);
-      setShowDynamicForm(false);
     } catch (err) {
       setError(err.response?.data?.detail || 'Failed to execute action');
       console.error('Error executing action:', err);
@@ -135,14 +140,35 @@ const ActionExecute = () => {
         Execute Action: {actionId}
       </Typography>
 
-      {!showDynamicForm ? (
-        <Card sx={{ mb: 3 }}>
+      <Card sx={{ mb: 3 }}>
+        <Tabs 
+          value={tabValue} 
+          onChange={handleTabChange}
+          sx={{ borderBottom: 1, borderColor: 'divider' }}
+        >
+          <Tab label="Dynamic Form" />
+          <Tab label="Use Stored Configuration" />
+        </Tabs>
+
+        {tabValue === 0 && (
+          <Box sx={{ p: 3 }}>
+            <DynamicForm
+              actionId={actionId}
+              onSubmit={handleDynamicFormSubmit}
+              onCancel={() => setTabValue(1)}
+              initialIntegrationId={formData.integration_id}
+              initialRunInBackground={formData.run_in_background}
+            />
+          </Box>
+        )}
+
+        {tabValue === 1 && (
           <CardContent>
             <Typography variant="h6" gutterBottom>
               Basic Configuration
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              Choose how to configure this action
+              Configure this action using stored configuration
             </Typography>
 
             <TextField
@@ -165,21 +191,6 @@ const ActionExecute = () => {
               label="Run in Background"
               sx={{ mb: 3 }}
             />
-
-            <Box sx={{ display: 'flex', gap: 2, mb: 3 }}>
-              <Button
-                variant="contained"
-                onClick={() => setShowDynamicForm(true)}
-              >
-                Use Dynamic Form
-              </Button>
-              <Button
-                variant="outlined"
-                onClick={() => setShowDynamicForm(false)}
-              >
-                Use Manual Configuration
-              </Button>
-            </Box>
 
             <Divider sx={{ my: 2 }} />
 
@@ -235,27 +246,8 @@ const ActionExecute = () => {
               </Button>
             </Box>
           </CardContent>
-        </Card>
-      ) : (
-        <Box sx={{ mb: 3 }}>
-          <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
-            <Button
-              variant="outlined"
-              onClick={() => setShowDynamicForm(false)}
-            >
-              Back to Manual Configuration
-            </Button>
-          </Box>
-          
-          <DynamicForm
-            actionId={actionId}
-            onSubmit={handleDynamicFormSubmit}
-            onCancel={() => setShowDynamicForm(false)}
-            initialIntegrationId={formData.integration_id}
-            initialRunInBackground={formData.run_in_background}
-          />
-        </Box>
-      )}
+        )}
+      </Card>
 
       {error && (
         <Alert severity="error" sx={{ mb: 2 }}>
