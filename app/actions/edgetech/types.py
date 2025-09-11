@@ -11,8 +11,8 @@ logger = logging.getLogger(__name__)
 
 SOURCE_TYPE = "ropeless_buoy"
 SUBJECT_SUBTYPE = "ropeless_buoy_gearset"
-GEAR_DEPLOYED_EVENT = "gear_deployed"
-GEAR_RETRIEVED_EVENT = "gear_retrieved"
+TRAP_DEPLOYMENT_EVENT = "trap_deployed"
+TRAP_RETRIEVED_EVENT = "trap_retrieved"
 
 
 class GeoLocation(pydantic.BaseModel):

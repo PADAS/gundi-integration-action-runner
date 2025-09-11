@@ -5,7 +5,7 @@ from uuid import UUID
 import pytest
 
 from app.actions.edgetech.types import (
-    GEAR_DEPLOYED_EVENT,
+    TRAP_DEPLOYMENT_EVENT,
     Buoy,
     CurrentState,
 )
@@ -114,7 +114,7 @@ def test_create_observations_only_start_point(base_state):
     assert o["recorded_at"] == iso
 
     # event type for deployed
-    assert o["additional"]["event_type"] == GEAR_DEPLOYED_EVENT
+    assert o["additional"]["event_type"] == TRAP_DEPLOYMENT_EVENT
 
 
 def test_create_observations_with_two_unit_line_new_structure(base_state):

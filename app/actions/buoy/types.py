@@ -145,7 +145,7 @@ class ObservationSubject(BaseModel):
         Create observations based on the subject's last position and status.
         Returns a list of observation records.
         """
-        from app.actions.edgetech.types import GEAR_DEPLOYED_EVENT, GEAR_RETRIEVED_EVENT
+        from app.actions.edgetech.types import TRAP_DEPLOYMENT_EVENT, TRAP_RETRIEVED_EVENT
 
         if not self.last_position or not self.last_position.geometry:
             raise ValueError("Last position is not available.")
@@ -172,7 +172,7 @@ class ObservationSubject(BaseModel):
                 "display_id": display_id,
                 "subject_is_active": is_active,
                 "event_type": (
-                    GEAR_DEPLOYED_EVENT if is_active else GEAR_RETRIEVED_EVENT
+                    TRAP_DEPLOYMENT_EVENT if is_active else TRAP_RETRIEVED_EVENT
                 ),
                 "devices": self.additional.get("devices", []),
             },
