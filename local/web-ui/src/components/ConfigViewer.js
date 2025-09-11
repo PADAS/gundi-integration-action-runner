@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Card,
@@ -24,7 +24,6 @@ import {
 import {
   Refresh as RefreshIcon,
   Search as SearchIcon,
-  Settings as SettingsIcon,
   Visibility as VisibilityIcon,
   ContentCopy as CopyIcon,
   CheckCircle as CheckCircleIcon,
@@ -48,7 +47,7 @@ const ConfigViewer = () => {
   const [loadingTypes, setLoadingTypes] = useState(false);
   const [copiedId, setCopiedId] = useState(null);
 
-  const fetchConfigurations = async (providerType = null) => {
+  const fetchConfigurations = useCallback(async (providerType = null, searchTerm = null) => {
     if (!isAuthenticated) {
       setError('Not authenticated');
       return;
@@ -60,11 +59,23 @@ const ConfigViewer = () => {
       
       const headers = await getApiHeaders();
       let url = `${authConfig.apiBaseUrl}/connections`;
+      const queryParams = [];
       
       // Add provider_type query parameter if specified
       if (providerType) {
-        url += `?provider_type=${encodeURIComponent(providerType)}`;
+        queryParams.push(`provider_type=${encodeURIComponent(providerType)}`);
         console.log(`Fetching connections with provider_type: ${providerType}`);
+      }
+      
+      // Add search query parameter if specified
+      if (searchTerm && searchTerm.trim()) {
+        queryParams.push(`search=${encodeURIComponent(searchTerm.trim())}`);
+        console.log(`Fetching connections with search: ${searchTerm}`);
+      }
+      
+      // Build final URL with query parameters
+      if (queryParams.length > 0) {
+        url += `?${queryParams.join('&')}`;
       }
       
       const response = await axios.get(url, {
@@ -83,9 +94,9 @@ const ConfigViewer = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [isAuthenticated, getApiHeaders]);
 
-  const fetchIntegrationTypes = async () => {
+  const fetchIntegrationTypes = useCallback(async () => {
     if (!isAuthenticated) {
       return;
     }
@@ -123,23 +134,34 @@ const ConfigViewer = () => {
     } finally {
       setLoadingTypes(false);
     }
-  };
+  }, [isAuthenticated, getApiHeaders]);
 
   useEffect(() => {
     if (isAuthenticated) {
-      fetchConfigurations();
+      fetchConfigurations(null, null);
       fetchIntegrationTypes();
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, fetchConfigurations, fetchIntegrationTypes]);
 
-  // Apply only client-side search filtering since type filtering is now server-side
-  const filteredConfigurations = configurations.filter(config => {
-    const matchesSearch = config.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      config.id?.toString().includes(searchTerm) ||
-      config.integration_type?.toLowerCase().includes(searchTerm.toLowerCase());
-    
-    return matchesSearch;
-  });
+  // Debounced search effect
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const timeoutId = setTimeout(() => {
+      // Find the current selected type to get its provider_type value
+      const selectedType = availableTypes.find(type => 
+        (type.id || type.name || type) === filterType
+      );
+      const providerType = selectedType?.value || null;
+      
+      fetchConfigurations(providerType, searchTerm);
+    }, 500); // 500ms debounce
+
+    return () => clearTimeout(timeoutId);
+  }, [searchTerm, filterType, availableTypes, isAuthenticated]);
+
+  // Server-side filtering is now handled by API search parameter
+  // No need for client-side filtering
 
   const handleViewConfig = (config) => {
     setSelectedConfig(config);
@@ -161,15 +183,15 @@ const ConfigViewer = () => {
     // Get the provider_type value from the selected integration type
     const providerType = selectedType?.value || null;
     
-    // Fetch connections with the provider_type filter
-    fetchConfigurations(providerType);
+    // Fetch connections with the provider_type filter and current search term
+    fetchConfigurations(providerType, searchTerm);
   };
 
   const clearFilters = () => {
     setSearchTerm('');
     setFilterType('');
     // Refetch all connections without any filter
-    fetchConfigurations();
+    fetchConfigurations(null, null);
   };
 
   const copyToClipboard = async (id) => {
@@ -200,7 +222,7 @@ const ConfigViewer = () => {
     const providerType = selectedType?.value || null;
     
     await Promise.all([
-      fetchConfigurations(providerType),
+      fetchConfigurations(providerType, searchTerm),
       fetchIntegrationTypes()
     ]);
   };
@@ -320,7 +342,7 @@ const ConfigViewer = () => {
         <Card>
           <CardContent>
             <Typography variant="h6" gutterBottom>
-              Connections ({filteredConfigurations.length})
+              Connections ({configurations.length})
               {filterType && (
                 <Chip
                   label={`Type: ${availableTypes.find(type => (type.id || type.name || type) === filterType)?.name || filterType}`}
@@ -328,13 +350,13 @@ const ConfigViewer = () => {
                   sx={{ ml: 2 }}
                   onDelete={() => {
                     setFilterType('');
-                    fetchConfigurations(); // Refetch all connections
+                    fetchConfigurations(null, null); // Refetch all connections
                   }}
                 />
               )}
             </Typography>
             
-            {filteredConfigurations.length === 0 ? (
+            {configurations.length === 0 ? (
               <Typography color="text.secondary">
                 {searchTerm || filterType 
                   ? 'No connections match your current filters.' 
@@ -342,7 +364,7 @@ const ConfigViewer = () => {
               </Typography>
             ) : (
               <List>
-                {filteredConfigurations.map((config, index) => {
+                {configurations.map((config, index) => {
 
                   // Debug logging
                   console.log('Config:', config);
@@ -407,7 +429,7 @@ const ConfigViewer = () => {
                           </Box>
                         </ListItemSecondaryAction>
                       </ListItem>
-                      {index < filteredConfigurations.length - 1 && <Divider />}
+                      {index < configurations.length - 1 && <Divider />}
                     </React.Fragment>
                   );
                 })}

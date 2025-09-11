@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   TextField,
   Button,
@@ -45,7 +45,7 @@ const DynamicForm = ({ actionId, onSubmit, onCancel, initialIntegrationId = '', 
     }
   }, [selectedConnection]);
 
-  const fetchSchema = async () => {
+  const fetchSchema = useCallback(async () => {
     try {
       setLoading(true);
       const response = await axios.get(`http://localhost:8080/v1/actions/${actionId}/schema`);
@@ -78,7 +78,7 @@ const DynamicForm = ({ actionId, onSubmit, onCancel, initialIntegrationId = '', 
     } finally {
       setLoading(false);
     }
-  };
+  }, [actionId]);
 
   const handleInputChange = (field, value) => {
     setFormData(prev => ({
