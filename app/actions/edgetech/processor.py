@@ -355,7 +355,7 @@ class EdgeTechProcessor:
                     to_haul_observation = er_gear.create_haul_observation(
                         recorded_at=datetime.now(timezone.utc),
                     )
-                    observations.append(to_haul_observation)
+                    observations.extend(to_haul_observation)
                 except pydantic.ValidationError as ve:
                     logger.exception(
                         "Failed to create haul observation for %s. Error: %s",
