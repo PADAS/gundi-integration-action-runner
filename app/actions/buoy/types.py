@@ -39,7 +39,7 @@ class BuoyGear(BaseModel):
             {
                 "source_name": self.display_id,
                 "source": device.device_id,
-                "is_active": False,
+                "subject_is_active": False,
                 "source_type": SOURCE_TYPE,
                 "subject_subtype": SUBJECT_SUBTYPE,
                 "location": {
