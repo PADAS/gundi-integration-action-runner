@@ -181,6 +181,7 @@ class EdgeTechProcessor:
                     to_update.add(serial_number_user_id)
 
         for device_id_user_id in er_gears_devices_id_to_gear.keys():
+            print(device_id_user_id)
             device_id, user_id = device_id_user_id.split("_", 1)
 
             device_id = device_id.replace(self._prefix, "")
