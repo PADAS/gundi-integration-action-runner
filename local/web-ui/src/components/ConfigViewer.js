@@ -19,7 +19,10 @@ import {
   FormControl,
   InputLabel,
   Select,
-  MenuItem
+  MenuItem,
+  Drawer,
+  Slide,
+  Backdrop
 } from '@mui/material';
 import {
   Refresh as RefreshIcon,
@@ -27,7 +30,8 @@ import {
   Visibility as VisibilityIcon,
   ContentCopy as CopyIcon,
   CheckCircle as CheckCircleIcon,
-  RadioButtonUnchecked as RadioButtonUncheckedIcon
+  RadioButtonUnchecked as RadioButtonUncheckedIcon,
+  Close as CloseIcon
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { useConnection } from '../contexts/ConnectionContext';
@@ -439,32 +443,109 @@ const ConfigViewer = () => {
         </Card>
       )}
 
-      {/* Configuration Details Modal/Dialog */}
-      {selectedConfig && (
-        <Card sx={{ mt: 3 }}>
-          <CardContent>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-              <Typography variant="h6">
+      {/* Configuration Details Slide-in Panel */}
+      <Drawer
+        anchor="right"
+        open={!!selectedConfig}
+        onClose={handleCloseDetails}
+        sx={{
+          '& .MuiDrawer-paper': {
+            width: 500,
+            maxWidth: '90vw',
+          },
+        }}
+      >
+        {selectedConfig && (
+          <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+            {/* Header */}
+            <Box sx={{ 
+              p: 2, 
+              borderBottom: 1, 
+              borderColor: 'divider',
+              display: 'flex', 
+              justifyContent: 'space-between', 
+              alignItems: 'center',
+              backgroundColor: 'primary.main',
+              color: 'primary.contrastText'
+            }}>
+              <Typography variant="h6" component="div">
                 Connection Details
               </Typography>
-              <Button onClick={handleCloseDetails}>
-                Close
-              </Button>
+              <IconButton 
+                onClick={handleCloseDetails}
+                sx={{ color: 'inherit' }}
+                size="small"
+              >
+                <CloseIcon />
+              </IconButton>
             </Box>
-            <Box sx={{ maxHeight: 400, overflow: 'auto' }}>
-              <pre style={{ 
-                backgroundColor: '#f5f5f5', 
-                padding: '16px', 
-                borderRadius: '4px',
-                fontSize: '12px',
-                overflow: 'auto'
-              }}>
-                {JSON.stringify(selectedConfig, null, 2)}
-              </pre>
+
+            {/* Content */}
+            <Box sx={{ 
+              flex: 1, 
+              overflow: 'auto', 
+              p: 2,
+              backgroundColor: '#f8f9fa'
+            }}>
+              {/* Connection Info Summary */}
+              <Card sx={{ mb: 2 }}>
+                <CardContent>
+                  <Typography variant="h6" gutterBottom>
+                    {selectedConfig.provider?.name || selectedConfig.name || `Connection ${selectedConfig.id}`}
+                  </Typography>
+                  <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
+                    <Chip
+                      label={selectedConfig.provider?.type?.name || 'Unknown Type'}
+                      size="small"
+                      color="primary"
+                      variant="outlined"
+                    />
+                    <Chip
+                      label={`ID: ${selectedConfig.id}`}
+                      size="small"
+                      variant="outlined"
+                    />
+                  </Box>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    startIcon={<CopyIcon />}
+                    onClick={() => copyToClipboard(selectedConfig.id)}
+                  >
+                    Copy ID
+                  </Button>
+                </CardContent>
+              </Card>
+
+              {/* Raw JSON Data */}
+              <Card>
+                <CardContent>
+                  <Typography variant="h6" gutterBottom>
+                    Raw Configuration Data
+                  </Typography>
+                  <Box sx={{ 
+                    backgroundColor: '#f5f5f5', 
+                    borderRadius: 1,
+                    p: 2,
+                    maxHeight: '60vh',
+                    overflow: 'auto'
+                  }}>
+                    <pre style={{ 
+                      margin: 0,
+                      fontSize: '12px',
+                      lineHeight: '1.4',
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-word'
+                    }}>
+                      {JSON.stringify(selectedConfig, null, 2)}
+                    </pre>
+                  </Box>
+                </CardContent>
+              </Card>
             </Box>
-          </CardContent>
-        </Card>
-      )}
+          </Box>
+        )}
+      </Drawer>
     </Box>
   );
 };
