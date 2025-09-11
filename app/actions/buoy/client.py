@@ -56,4 +56,11 @@ class BuoyClient:
         if len(items) == 0:
             logger.error("No gears found")
 
-        return [BuoyGear.parse_obj(item) for item in items]
+        gears = []
+        try:
+            for item in items:
+                gears.append(BuoyGear.parse_obj(item))
+        except Exception as e:
+            logger.error(f"Error parsing gear items: {e} (item: {json.dumps(item)})")
+
+        return gears

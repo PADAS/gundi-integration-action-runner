@@ -46,6 +46,9 @@ class BuoyGear(BaseModel):
                     "lat": device.location.latitude,
                     "lon": device.location.longitude,
                 },
+                "additional": {
+                    "event_type": "trap_retrieved",
+                },
                 "recorded_at": recorded_at,
             }
             for device in self.devices

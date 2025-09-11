@@ -454,3 +454,41 @@ class TestBuoyClient:
 
         expected_headers = {"Authorization": f"Bearer {token}"}
         assert client.headers == expected_headers
+
+    @pytest.mark.asyncio
+    async def test_get_er_gears_parse_error(self, mocker, caplog):
+        """Test gear retrieval with BuoyGear parsing error."""
+        # Arrange
+        client = BuoyClient(er_token="test-token", er_site="https://example.com/")
+
+        # Mock response with invalid gear data that will cause parsing to fail
+        invalid_gear_data = {
+            "id": "invalid-uuid",  # This will cause parsing error
+            "display_id": "TEST-GEAR-001", 
+            "status": "deployed",
+            "last_updated": "invalid-date",  # This will also cause parsing error
+            "devices": "not-a-list",  # This should be a list
+            "type": "ropeless",
+            "manufacturer": "EdgeTech",
+        }
+        
+        response_data = {"data": {"results": [invalid_gear_data], "next": None}}
+
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_response.json = AsyncMock(return_value=response_data)
+
+        # Create mock session and ClientSession
+        mock_session = MockSession(MockGetContext(mock_response))
+        mock_client_session = mocker.patch("aiohttp.ClientSession")
+        mock_client_session.return_value = MockSessionContext(mock_session)
+
+        # Act
+        with caplog.at_level(logging.ERROR):
+            result = await client.get_er_gears()
+
+        # Assert
+        assert result == []  # Should return empty list when parsing fails
+        assert "Error parsing gear items:" in caplog.text
+        # Verify that the invalid item data is included in the log message
+        assert "invalid-uuid" in caplog.text
