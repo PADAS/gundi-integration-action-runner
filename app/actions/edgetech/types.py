@@ -139,7 +139,7 @@ class Buoy(pydantic.BaseModel):
             "is_active": is_active,
             "location": {"lat": lat, "lon": lon},
             "additional": {
-                "event_type": "gear_deployed" if is_active else "gear_retrieved",
+                "event_type": TRAP_DEPLOYMENT_EVENT if is_active else TRAP_RETRIEVED_EVENT,
             },
             "source_additional": {"raw": raw},
         }
