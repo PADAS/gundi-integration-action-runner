@@ -110,7 +110,7 @@ def test_create_observations_only_start_point(base_state):
     iso = state.lastUpdated.replace(microsecond=0).isoformat()
     # device record embedded
     assert o["location"] == {"lat": start[0], "lon": start[1]}
-    assert o["manufacturer_id"].startswith("S123_")
+    assert o["source"].startswith("S123_")
     assert o["recorded_at"] == iso
 
     # event type for deployed
@@ -164,9 +164,9 @@ def test_create_observations_with_two_unit_line_new_structure(base_state):
     # Check that second observation has end unit location
     assert obs[1]["location"] == {"lat": end[0], "lon": end[1]}
 
-    # Check that the manufacturer_id correspond to the expected ones (serial_hashed_user_id)
-    assert obs[0]["manufacturer_id"].startswith("S123_")
-    assert obs[1]["manufacturer_id"].startswith("S456_")
+    # Check that the source correspond to the expected ones (serial_hashed_user_id)
+    assert obs[0]["source"].startswith("S123_")
+    assert obs[1]["source"].startswith("S456_")
 
 def test_create_observations_with_two_unit_line_missing_end_unit(caplog, base_state):
     """Test creating observations when end unit is missing."""

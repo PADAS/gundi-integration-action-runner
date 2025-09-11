@@ -118,8 +118,8 @@ class TestBuoyGear:
         assert len(observations) == 1
         observation = observations[0]
         
-        assert observation["subject_name"] == "GEAR001"
-        assert observation["manufacturer_id"] == "device123"
+        assert observation["source_name"] == "GEAR001"
+        assert observation["source"] == "device123"
         assert observation["subject_is_active"] is False
         assert observation["source_type"] == "test_source"
         assert observation["subject_subtype"] == "test_subtype"
