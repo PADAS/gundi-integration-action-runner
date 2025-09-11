@@ -15,7 +15,12 @@ import {
   Divider,
   Tabs,
   Tab,
-  Chip
+  Chip,
+  FormControl,
+  FormHelperText,
+  Select,
+  MenuItem,
+  InputLabel
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
@@ -37,6 +42,8 @@ const ActionExecute = () => {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
+  const [schema, setSchema] = useState(null);
+  const [schemaLoading, setSchemaLoading] = useState(false);
 
   // Update integration_id when selected connection changes
   useEffect(() => {
@@ -47,6 +54,24 @@ const ActionExecute = () => {
       }));
     }
   }, [selectedConnection]);
+
+  // Fetch schema when component mounts
+  useEffect(() => {
+    fetchSchema();
+  }, [actionId]);
+
+  const fetchSchema = async () => {
+    try {
+      setSchemaLoading(true);
+      const response = await axios.get(`http://localhost:8080/v1/actions/${actionId}/schema`);
+      setSchema(response.data);
+    } catch (err) {
+      console.error('Error fetching schema:', err);
+      // Don't set error state here, just log it
+    } finally {
+      setSchemaLoading(false);
+    }
+  };
 
   const handleInputChange = (field) => (event) => {
     setFormData({
@@ -117,26 +142,100 @@ const ActionExecute = () => {
     }
   };
 
-  const addConfigOverride = () => {
-    const key = prompt('Enter config key:');
-    if (key) {
-      setFormData({
-        ...formData,
-        config_overrides: {
-          ...formData.config_overrides,
-          [key]: ''
-        }
-      });
-    }
-  };
 
-  const removeConfigOverride = (key) => {
-    const newConfigOverrides = { ...formData.config_overrides };
-    delete newConfigOverrides[key];
-    setFormData({
-      ...formData,
-      config_overrides: newConfigOverrides
-    });
+
+  const renderSchemaField = (fieldName, fieldSchema) => {
+    const value = formData.config_overrides[fieldName] || '';
+    const isRequired = schema?.config_schema?.required?.includes(fieldName);
+
+    // Handle password fields
+    if (fieldSchema.format === 'password') {
+      return (
+        <TextField
+          key={fieldName}
+          fullWidth
+          type="password"
+          label={fieldSchema.title || fieldName}
+          value={value}
+          onChange={(e) => handleConfigOverrideChange(fieldName)(e)}
+          required={isRequired}
+          helperText={fieldSchema.description}
+          sx={{ mb: 2 }}
+        />
+      );
+    }
+
+    // Handle boolean fields
+    if (fieldSchema.type === 'boolean') {
+      return (
+        <FormControlLabel
+          key={fieldName}
+          control={
+            <Switch
+              checked={!!value}
+              onChange={(e) => handleConfigOverrideChange(fieldName)({ target: { value: e.target.checked } })}
+            />
+          }
+          label={fieldSchema.title || fieldName}
+          sx={{ mb: 2 }}
+        />
+      );
+    }
+
+    // Handle enum fields
+    if (fieldSchema.enum) {
+      return (
+        <FormControl key={fieldName} fullWidth sx={{ mb: 2 }}>
+          <InputLabel>{fieldSchema.title || fieldName}</InputLabel>
+          <Select
+            value={value}
+            label={fieldSchema.title || fieldName}
+            onChange={(e) => handleConfigOverrideChange(fieldName)(e)}
+            required={isRequired}
+          >
+            {fieldSchema.enum.map((option) => (
+              <MenuItem key={option} value={option}>
+                {option}
+              </MenuItem>
+            ))}
+          </Select>
+          {fieldSchema.description && (
+            <FormHelperText>{fieldSchema.description}</FormHelperText>
+          )}
+        </FormControl>
+      );
+    }
+
+    // Handle number fields
+    if (fieldSchema.type === 'number' || fieldSchema.type === 'integer') {
+      return (
+        <TextField
+          key={fieldName}
+          fullWidth
+          type="number"
+          label={fieldSchema.title || fieldName}
+          value={value}
+          onChange={(e) => handleConfigOverrideChange(fieldName)(e)}
+          required={isRequired}
+          helperText={fieldSchema.description}
+          sx={{ mb: 2 }}
+        />
+      );
+    }
+
+    // Default to text field
+    return (
+      <TextField
+        key={fieldName}
+        fullWidth
+        label={fieldSchema.title || fieldName}
+        value={value}
+        onChange={(e) => handleConfigOverrideChange(fieldName)(e)}
+        required={isRequired}
+        helperText={fieldSchema.description}
+        sx={{ mb: 2 }}
+      />
+    );
   };
 
   return (
@@ -237,44 +336,27 @@ const ActionExecute = () => {
             <Divider sx={{ my: 2 }} />
 
             <Typography variant="h6" gutterBottom>
-              Manual Configuration Overrides
+              Configuration Overrides
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              Add custom configuration parameters for this action
+              Override specific configuration parameters for this action
             </Typography>
 
-            {Object.entries(formData.config_overrides).map(([key, value]) => (
-              <Box key={key} sx={{ display: 'flex', gap: 1, mb: 1 }}>
-                <TextField
-                  label="Key"
-                  value={key}
-                  disabled
-                  sx={{ flex: 1 }}
-                />
-                <TextField
-                  label="Value"
-                  value={value}
-                  onChange={handleConfigOverrideChange(key)}
-                  sx={{ flex: 2 }}
-                />
-                <Button
-                  variant="outlined"
-                  color="error"
-                  onClick={() => removeConfigOverride(key)}
-                  sx={{ minWidth: 'auto' }}
-                >
-                  Remove
-                </Button>
+            {schemaLoading ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+                <CircularProgress />
               </Box>
-            ))}
-
-            <Button
-              variant="outlined"
-              onClick={addConfigOverride}
-              sx={{ mb: 3 }}
-            >
-              Add Config Override
-            </Button>
+            ) : schema && schema.config_schema && schema.config_schema.properties ? (
+              <Box>
+                {Object.entries(schema.config_schema.properties).map(([fieldName, fieldSchema]) => 
+                  renderSchemaField(fieldName, fieldSchema)
+                )}
+              </Box>
+            ) : (
+              <Alert severity="info">
+                No configuration schema available for this action.
+              </Alert>
+            )}
 
             <Box sx={{ display: 'flex', gap: 2 }}>
               <Button

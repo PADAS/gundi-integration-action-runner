@@ -14,22 +14,32 @@ import {
   Alert,
   CircularProgress,
   Paper,
-  Divider
+  Divider,
+  IconButton,
+  Tooltip
 } from '@mui/material';
 import axios from 'axios';
 import { useConnection } from '../contexts/ConnectionContext';
+import { useAuth } from '../contexts/AuthContext';
+import { authConfig } from '../config/auth';
+import CloudDownloadIcon from '@mui/icons-material/CloudDownload';
+import VisibilityIcon from '@mui/icons-material/Visibility';
+import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 
 const DynamicForm = ({ actionId, onSubmit, onCancel, initialIntegrationId = '', initialRunInBackground = false }) => {
   const { selectedConnection } = useConnection();
+  const { getApiHeaders } = useAuth();
   const [schema, setSchema] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [loadingConfig, setLoadingConfig] = useState(false);
   const [formData, setFormData] = useState({
     integration_id: initialIntegrationId,
     run_in_background: initialRunInBackground,
     config_overrides: {}
   });
   const [validationErrors, setValidationErrors] = useState({});
+  const [passwordVisibility, setPasswordVisibility] = useState({});
 
   useEffect(() => {
     fetchSchema();
@@ -80,6 +90,86 @@ const DynamicForm = ({ actionId, onSubmit, onCancel, initialIntegrationId = '', 
     }
   }, [actionId]);
 
+  const loadStoredConfiguration = async () => {
+    if (!selectedConnection?.id) {
+      setError('No connection selected');
+      return;
+    }
+
+    try {
+      setLoadingConfig(true);
+      setError(null);
+      
+      const headers = await getApiHeaders();
+      const response = await axios.get(
+        `${authConfig.apiBaseUrl}/integrations/${selectedConnection.id}/`,
+        { headers }
+      );
+      
+      console.log('Integration data:', response.data);
+      console.log('Looking for actionId:', actionId);
+      
+      // Parse the configuration data from the integration response
+      const integration = response.data;
+      let configData = {};
+      
+      // Look for configuration data in the configurations array
+      if (integration.configurations && Array.isArray(integration.configurations)) {
+        console.log('Found configurations array with', integration.configurations.length, 'items');
+        
+        // Find the configuration that matches the current action ID
+        const matchingConfig = integration.configurations.find(config => 
+          config.action && config.action.value === actionId
+        );
+        
+        if (matchingConfig) {
+          console.log('Found matching configuration:', matchingConfig);
+          if (matchingConfig.action && matchingConfig.data) {
+            configData = matchingConfig.data;
+            console.log('Extracted config data:', configData);
+          }
+        } else {
+          console.log('No matching configuration found for actionId:', actionId);
+          console.log('Available configurations:', integration.configurations.map(c => ({
+            actionValue: c.action?.value,
+            hasData: !!c.action?.data
+          })));
+        }
+      } else {
+        console.log('No configurations array found in integration data');
+      }
+      
+      // Fallback: Look for configuration data in other possible locations
+      if (Object.keys(configData).length === 0) {
+        if (integration.config) {
+          configData = integration.config;
+        } else if (integration.configuration) {
+          configData = integration.configuration;
+        } else if (integration.actions && Array.isArray(integration.actions)) {
+          // Look for the specific action configuration
+          const actionConfig = integration.actions.find(action => action.action_id === actionId);
+          if (actionConfig && actionConfig.config) {
+            configData = actionConfig.config;
+          }
+        }
+      }
+      
+      console.log('Parsed config data:', configData);
+      
+      // Update form data with the loaded configuration
+      setFormData(prev => ({
+        ...prev,
+        config_overrides: configData
+      }));
+      
+    } catch (err) {
+      console.error('Error loading stored configuration:', err);
+      setError(err.response?.data?.detail || 'Failed to load stored configuration');
+    } finally {
+      setLoadingConfig(false);
+    }
+  };
+
   const handleInputChange = (field, value) => {
     setFormData(prev => ({
       ...prev,
@@ -111,6 +201,13 @@ const DynamicForm = ({ actionId, onSubmit, onCancel, initialIntegrationId = '', 
         [field]: null
       }));
     }
+  };
+
+  const togglePasswordVisibility = (fieldName) => {
+    setPasswordVisibility(prev => ({
+      ...prev,
+      [fieldName]: !prev[fieldName]
+    }));
   };
 
   const validateForm = () => {
@@ -151,17 +248,30 @@ const DynamicForm = ({ actionId, onSubmit, onCancel, initialIntegrationId = '', 
 
     // Handle password fields
     if (fieldSchema.format === 'password') {
+      const isPasswordVisible = passwordVisibility[fieldName] || false;
       return (
         <TextField
           key={fieldName}
           fullWidth
-          type="password"
+          type={isPasswordVisible ? 'text' : 'password'}
           label={fieldSchema.title || fieldName}
           value={value}
           onChange={(e) => handleConfigOverrideChange(fieldName, e.target.value)}
           required={isRequired}
           error={!!error}
           helperText={error || fieldSchema.description}
+          InputProps={{
+            endAdornment: (
+              <IconButton
+                aria-label="toggle password visibility"
+                onClick={() => togglePasswordVisibility(fieldName)}
+                edge="end"
+                size="small"
+              >
+                {isPasswordVisible ? <VisibilityOffIcon /> : <VisibilityIcon />}
+              </IconButton>
+            ),
+          }}
           sx={{ mb: 2 }}
         />
       );
@@ -270,9 +380,23 @@ const DynamicForm = ({ actionId, onSubmit, onCancel, initialIntegrationId = '', 
 
   return (
     <Paper sx={{ p: 3 }}>
-      <Typography variant="h6" gutterBottom>
-        {schema.description || `Configure ${actionId} Action`}
-      </Typography>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+        <Typography variant="h6">
+          {schema.description || `Configure ${actionId} Action`}
+        </Typography>
+        {selectedConnection && (
+          <Tooltip title="Load stored configuration from selected connection">
+            <IconButton
+              onClick={loadStoredConfiguration}
+              disabled={loadingConfig}
+              color="primary"
+              size="small"
+            >
+              {loadingConfig ? <CircularProgress size={20} /> : <CloudDownloadIcon />}
+            </IconButton>
+          </Tooltip>
+        )}
+      </Box>
       
       <form onSubmit={handleSubmit}>
         {/* Integration ID field */}
