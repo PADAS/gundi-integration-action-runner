@@ -127,8 +127,6 @@ class TestBuoyGear:
         assert observation["additional"]["event_type"] == "trap_retrieved"
         assert observation["recorded_at"] == recorded_at
 
-    @patch('app.actions.edgetech.types.SOURCE_TYPE', 'test_source')
-    @patch('app.actions.edgetech.types.SUBJECT_SUBTYPE', 'test_subtype')
     def test_create_haul_observation_multiple_devices(self):
         """Test creating haul observation with multiple devices."""
         device_location1 = DeviceLocation(latitude=40.7128, longitude=-74.0060)
@@ -622,25 +620,6 @@ class TestObservationSubject:
         
         with pytest.raises(ValueError, match="No devices available in additional information"):
             sample_observation_subject.create_observation(datetime(2025, 1, 1, 14, 0, 0))
-
-    # def test_create_observation_multiple_devices(self, sample_observation_subject):
-    #     """Test create_observation with multiple devices creates correct display_id."""
-    #     sample_observation_subject.additional = {
-    #         "devices": [
-    #             {"device_id": "device123"},
-    #             {"device_id": "device456"},
-    #             {"device_id": "device789"}
-    #         ],
-    #         "edgetech_serial_number": "ET123456"
-    #     }
-        
-    #     recorded_at = datetime(2025, 1, 1, 14, 0, 0)
-    #     observation = sample_observation_subject.create_observation(recorded_at)
-        
-    #     # Test display_id generation with multiple devices
-    #     concatenated = "device123device456device789"
-    #     expected_hash = hashlib.sha256(concatenated.encode("utf-8")).hexdigest()[:12]
-    #     assert observation["additional"]["display_id"] == expected_hash
 
     def test_create_observation_missing_edgetech_serial(self, sample_observation_subject):
         """Test create_observation works with missing edgetech_serial_number."""
