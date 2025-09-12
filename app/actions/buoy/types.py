@@ -6,6 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, HttpUrl
 
+from app.actions.edgetech.types import TRAP_RETRIEVED_EVENT
+
 
 class DeviceLocation(BaseModel):
     latitude: float
@@ -39,15 +41,14 @@ class BuoyGear(BaseModel):
             {
                 "source_name": self.display_id,
                 "source": device.device_id,
-                "subject_is_active": False,
-                "source_type": SOURCE_TYPE,
-                "subject_subtype": SUBJECT_SUBTYPE,
+                "type": SOURCE_TYPE,
+                "subject_type": SUBJECT_SUBTYPE,
                 "location": {
                     "lat": device.location.latitude,
                     "lon": device.location.longitude,
                 },
                 "additional": {
-                    "event_type": "trap_retrieved",
+                    "event_type": TRAP_RETRIEVED_EVENT,
                 },
                 "recorded_at": recorded_at,
             }

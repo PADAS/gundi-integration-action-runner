@@ -132,10 +132,10 @@ class Buoy(pydantic.BaseModel):
         raw.pop("changeRecords", None)
         return {
             "source_name": subject_name,
+            "source": source_name,
             "subject_type": SUBJECT_SUBTYPE,
             "recorded_at": recorded_at,
             "source_type": SOURCE_TYPE,
-            "source": source_name,
             "subject_is_active": is_active,
             "location": {"lat": lat, "lon": lon},
             "additional": {
