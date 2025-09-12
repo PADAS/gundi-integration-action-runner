@@ -895,6 +895,7 @@ class TestEdgeTechProcessor:
         mock_gear.devices = [mock_device]
         mock_gear.manufacturer = "edgetech"  # This is important for the filtering
         mock_gear.last_updated = datetime(2025, 5, 20, 10, 0, 0, tzinfo=timezone.utc)  # Older than the buoy's lastUpdated
+        mock_gear.create_haul_observation = Mock(return_value=[])  # Return empty list to avoid the TypeError
 
         # Mock the ER client to return the gear
         mock_er_client = mocker.MagicMock()

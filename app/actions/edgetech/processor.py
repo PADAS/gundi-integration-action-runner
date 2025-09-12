@@ -186,8 +186,8 @@ class EdgeTechProcessor:
 
             device_id = device_id.replace(self._prefix, "")
             device_serial_number = device_id.split("_")[0]
-            # If the device_serial_number is not one of the currently deployed buoys in the Edgetech data, it means it has been hauled.
-            if device_serial_number not in serial_number_to_edgetech_buoy:
+            expected_key = f"{device_serial_number}/{user_id}"
+            if expected_key not in serial_number_to_edgetech_buoy:
                 to_haul.add(device_id_user_id)
 
         logger.info(f"Buoys to deploy: {to_deploy}")

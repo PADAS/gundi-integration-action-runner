@@ -158,8 +158,8 @@ def test_create_observations_with_two_unit_line_new_structure(base_state):
     obs = start_buoy.create_observations(is_deployed=True, end_unit_buoy=end_buoy)
     assert len(obs) == 2
 
-    # Check both observations use same subject_name
-    assert obs[0]["subject_name"] == obs[1]["subject_name"]
+    # Check both observations use same source_name/subject_name
+    assert obs[0]["source_name"] == obs[1]["source_name"]
 
     # Check that second observation has end unit location
     assert obs[1]["location"] == {"lat": end[0], "lon": end[1]}
@@ -192,7 +192,7 @@ def test_create_observations_with_two_unit_line_missing_end_unit(caplog, base_st
     # Should still create observation for start unit
     assert len(obs) == 1
     assert obs[0]["location"] == {"lat": start[0], "lon": start[1]}
-    assert UUID(obs[0]["subject_name"]).version == 4
+    assert UUID(obs[0]["source_name"]).version == 4
 
 
 def test_create_observations_with_two_unit_line_old_structure(base_state):
@@ -218,8 +218,8 @@ def test_create_observations_with_two_unit_line_old_structure(base_state):
     obs = buoy.create_observations(is_deployed=True)
     assert len(obs) == 2
 
-    # Check both observations use same subject_name
-    assert len({o["subject_name"] for o in obs}) == 1
+    # Check both observations use same source_name/subject_name
+    assert len({o["source_name"] for o in obs}) == 1
 
     # Check that second observation has end unit location
     assert obs[1]["location"] == {"lat": end[0], "lon": end[1]}
