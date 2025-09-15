@@ -519,7 +519,7 @@ class TestObservationSubject:
         assert observation["location"]["lon"] == -74.0060
         
         additional = observation["additional"]
-        assert additional["subject_name"] == "Test Subject"
+        assert additional["source_name"] == "Test Subject"
         assert additional["edgetech_serial_number"] == "ET123456"
         assert additional["subject_is_active"] is True
         assert additional["event_type"] == TRAP_DEPLOYMENT_EVENT
