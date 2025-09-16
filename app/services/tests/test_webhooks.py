@@ -76,13 +76,11 @@ async def test_get_integration_calls_config_manager_with_ttl(
     mock_config_manager.get_integration_details = AsyncMock(return_value=integration_v2_with_webhook)
     
     from app.services.webhooks import get_integration
-    from fastapi import Request
-    
     # Create a mock request with integration ID in headers
     headers = {"x-gundi-integration-id": str(integration_v2_with_webhook.id)}
-    request = Request({"type": "http", "method": "POST", "url": "http://test/webhooks"})
-    request._headers = headers
-    request._query_params = {}
+    request = mocker.Mock()
+    request.headers = headers
+    request.query_params = {}
     
     integration = await get_integration(request)
     
