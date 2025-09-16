@@ -138,6 +138,8 @@ async def action_pull_edgetech_observations(
     downloads data from EdgeTech, and for each destination, processes the data
     and sends observations in batches.
     """
+    # Overwrite minutes_to_sync to ensure we will pull 3 months of data each time.
+    action_config.minutes_to_sync = 3 * 30 * 24 * 60  # 3 months in minutes
     gundi_client = GundiClient()
     connection_details = await gundi_client.get_connection_details(integration.id)
     # Get the primary auth config from the integration.
