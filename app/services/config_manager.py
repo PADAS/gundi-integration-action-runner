@@ -43,7 +43,7 @@ class IntegrationConfigurationManager:
                 await self.db_client.set(webhook_key, webhook_configuration.json(), ttl)
             return integration_details
 
-    async def get_action_configuration(self, integration_id: str, action_id: str) -> IntegrationActionConfiguration:
+    async def get_action_configuration(self, integration_id: str, action_id: str, ttl=None) -> IntegrationActionConfiguration:
         key = self._get_action_config_key(integration_id, action_id)
         for attempt in stamina.retry_context(on=redis.RedisError, attempts=5, wait_initial=1.0, wait_max=30, wait_jitter=3.0):
             with attempt:
@@ -51,10 +51,10 @@ class IntegrationConfigurationManager:
         if data:
             return IntegrationActionConfiguration.parse_raw(data)
         # If not found in the redis db, try reloading data from Gundi API
-        integration_details = await self._reload_integration_from_gundi(integration_id)
+        integration_details = await self._reload_integration_from_gundi(integration_id, ttl)
         return integration_details.get_action_config(action_id)
 
-    async def get_webhook_configuration(self, integration_id: str) -> WebhookConfiguration:
+    async def get_webhook_configuration(self, integration_id: str, ttl=None) -> WebhookConfiguration:
         key = self._get_webhook_config_key(integration_id)
         for attempt in stamina.retry_context(on=redis.RedisError, attempts=5, wait_initial=1.0, wait_max=30, wait_jitter=3.0):
             with attempt:
@@ -62,7 +62,7 @@ class IntegrationConfigurationManager:
         if data:
             return WebhookConfiguration.parse_raw(data)
         # If not found in the redis db, try reloading data from Gundi API
-        integration_details = await self._reload_integration_from_gundi(integration_id)
+        integration_details = await self._reload_integration_from_gundi(integration_id, ttl)
         return integration_details.webhook_configuration
 
 
