@@ -811,6 +811,30 @@ def mock_gundi_client_v2_class(mocker, mock_gundi_client_v2):
 
 
 @pytest.fixture
+def mock_gundi_client_v2_class_for_webhooks(mocker, integration_v2_with_webhook):
+    """Mock GundiClient class for webhook tests that need cache miss simulation"""
+    mock_gundi_client_v2_class = mocker.MagicMock()
+    mock_gundi_instance = mocker.AsyncMock()
+    mock_gundi_instance.get_integration_details = mocker.AsyncMock(return_value=integration_v2_with_webhook)
+    mock_gundi_client_v2_class.return_value.__aenter__.return_value = mock_gundi_instance
+    mock_gundi_client_v2_class.return_value.__aexit__.return_value = None
+    return mock_gundi_client_v2_class
+
+
+@pytest.fixture
+def mock_gundi_client_v2_class_with_error(mocker):
+    """Mock GundiClient class that raises an exception for error testing"""
+    mock_gundi_client_v2_class = mocker.MagicMock()
+    mock_gundi_instance = mocker.AsyncMock()
+    mock_gundi_instance.get_integration_details = mocker.AsyncMock(
+        side_effect=Exception("Gundi API unavailable")
+    )
+    mock_gundi_client_v2_class.return_value.__aenter__.return_value = mock_gundi_instance
+    mock_gundi_client_v2_class.return_value.__aexit__.return_value = None
+    return mock_gundi_client_v2_class
+
+
+@pytest.fixture
 def mock_gundi_sensors_client_class(
     mocker,
     events_created_response,
