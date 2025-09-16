@@ -50,7 +50,8 @@ async def test_set_integration(mocker, mock_redis_empty, mock_gundi_client_v2_cl
 
     mock_redis_empty.Redis.return_value.set.assert_called_once_with(
         f"integration.{integration_v2.id}",
-        integration_v2.json()
+        integration_v2.json(),
+        None  # Never expire
     )
 
 

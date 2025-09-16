@@ -22,18 +22,18 @@ class IntegrationConfigurationManager:
     def _get_integration_config_key(self, integration_id: str, action_id: str) -> str:
         return f"integrationconfig.{integration_id}.{action_id}"
 
-    async def _reload_integration_from_gundi(self, integration_id: str) -> Integration:
+    async def _reload_integration_from_gundi(self, integration_id: str, ttl=None) -> Integration:
         key = self._get_integration_key(integration_id)
         async with GundiClient() as gundi:
             async for attempt in stamina.retry_context(on=httpx.HTTPError, wait_initial=1.0, wait_jitter=5.0,  wait_max=32.0):
                 with attempt:
                     integration_details = await gundi.get_integration_details(integration_id)
             integration = IntegrationSummary.from_integration(integration_details)
-            await self.db_client.set(key, integration.json())
+            await self.db_client.set(key, integration.json(), ttl)
             # Save configurations for individual actions
             for config in integration_details.configurations:
                 config_key = self._get_integration_config_key(integration_id, config.action.value)
-                await self.db_client.set(config_key, config.json())
+                await self.db_client.set(config_key, config.json(), ttl)
             return integration_details
 
     async def get_action_configuration(self, integration_id: str, action_id: str) -> IntegrationActionConfiguration:
@@ -47,11 +47,11 @@ class IntegrationConfigurationManager:
         integration_details = await self._reload_integration_from_gundi(integration_id)
         return integration_details.get_action_config(action_id)
 
-    async def set_action_configuration(self, integration_id: str, action_id: str, config: IntegrationActionConfiguration):
+    async def set_action_configuration(self, integration_id: str, action_id: str, config: IntegrationActionConfiguration, ttl=None):
         key = self._get_integration_config_key(integration_id, action_id)
         for attempt in stamina.retry_context(on=redis.RedisError, attempts=5, wait_initial=1.0, wait_max=30, wait_jitter=3.0):
             with attempt:
-                await self.db_client.set(key, config.json())
+                await self.db_client.set(key, config.json(), ttl)
 
     async def delete_action_configuration(self, integration_id: str, action_id: str):
         key = self._get_integration_config_key(integration_id, action_id)
@@ -71,11 +71,11 @@ class IntegrationConfigurationManager:
         integration_details = await self._reload_integration_from_gundi(integration_id)
         return IntegrationSummary.from_integration(integration_details)
 
-    async def set_integration(self, integration: IntegrationSummary):
+    async def set_integration(self, integration: IntegrationSummary, ttl=None):
         key = self._get_integration_key(integration.id)
         for attempt in stamina.retry_context(on=redis.RedisError, attempts=5, wait_initial=1.0, wait_max=30, wait_jitter=3.0):
             with attempt:
-                await self.db_client.set(key, integration.json())
+                await self.db_client.set(key, integration.json(), ttl)
 
     async def delete_integration(self, integration_id: str):
         key = self._get_integration_key(integration_id)
