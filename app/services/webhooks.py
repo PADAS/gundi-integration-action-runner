@@ -1,5 +1,6 @@
 import importlib
 import logging
+import traceback
 import httpx
 import stamina
 from fastapi import Request
@@ -26,8 +27,19 @@ async def get_integration_from_gundi(request):
                 with attempt:
                     integration = await _portal.get_integration_details(integration_id=integration_id)
         except Exception as e:
-            logger.exception(f"Error retrieving integration '{integration_id}' from the portal (retries exahusted): {type(e).__name__}: {e}")
-            raise e
+            error_message = f"Error retrieving integration '{integration_id}' from the portal (retries exahusted): {type(e).__name__}: {e}"
+            logger.exception(error_message)
+            await publish_event(
+                event=IntegrationWebhookFailed(
+                    payload=WebhookExecutionFailed(
+                        integration_id=str(integration.id),
+                        webhook_id=str(integration.type.webhook.value),
+                        config_data={},
+                        error=error_message
+                    )
+                ),
+                topic_name=settings.INTEGRATION_EVENTS_TOPIC,
+            )
     return integration
 
 
@@ -35,7 +47,9 @@ async def process_webhook(request: Request):
     try:
         # Try to relate the request to an integration
         integration = await get_integration_from_gundi(request=request)
-
+        if not integration:
+            logger.warning(f"No integration found for webhook request: headers: {request.headers}, query_params: {request.query_params}")
+            return {}
         # Look for the handler function in webhooks/handlers.py
         webhook_handler, payload_model, config_model = get_webhook_handler()
         json_content = await request.json()
@@ -102,7 +116,7 @@ async def process_webhook(request: Request):
                     integration_id=str(integration.id) if integration else None,
                     webhook_id=str(integration.type.webhook.value) if integration and integration.type.webhook else None,
                     config_data=webhook_config_data,
-                    error=message
+                    error=message  # ToDo: Support storing the error traceback and other details as in action errors
                 )
             ),
             topic_name=settings.INTEGRATION_EVENTS_TOPIC,
