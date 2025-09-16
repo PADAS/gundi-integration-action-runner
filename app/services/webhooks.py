@@ -10,12 +10,13 @@ from gundi_client_v2 import GundiClient
 from gundi_core.events import IntegrationWebhookFailed, WebhookExecutionFailed
 from app.services.utils import DyntamicFactory
 from app.webhooks.core import get_webhook_handler, DynamicSchemaConfig, HexStringConfig, GenericJsonPayload
+from app.services.config_manager import IntegrationConfigurationManager
 
-_portal = GundiClient()
+config_manager = IntegrationConfigurationManager()
 logger = logging.getLogger(__name__)
 
 
-async def get_integration_from_gundi(request):
+async def get_integration(request):
     integration = None
     consumer_username = request.headers.get("x-consumer-username")
     consumer_integration = consumer_username.split(":")[-1] if consumer_username and consumer_username != "anonymous" else None
@@ -25,9 +26,11 @@ async def get_integration_from_gundi(request):
             # Retry on httpx.HTTPError (StatusError, Timeout, ConnectError, etc.)
             for attempt in stamina.retry_context(on=httpx.HTTPError, wait_initial=10.0, wait_jitter=10.0, wait_max=300.0):
                 with attempt:
-                    integration = await _portal.get_integration_details(integration_id=integration_id)
+                    # Cache the integration details and webhook config for 60 seconds. 
+                    # ToDo: Refactor to event-driven webhook config updates (as in actions)
+                    integration = await config_manager.get_integration_details(integration_id, ttl=60)
         except Exception as e:
-            error_message = f"Error retrieving integration '{integration_id}' from the portal (retries exahusted): {type(e).__name__}: {e}"
+            error_message = f"Error retrieving integration '{integration_id}': {type(e).__name__}: {e}"
             logger.exception(error_message)
             await publish_event(
                 event=IntegrationWebhookFailed(
@@ -46,7 +49,7 @@ async def get_integration_from_gundi(request):
 async def process_webhook(request: Request):
     try:
         # Try to relate the request to an integration
-        integration = await get_integration_from_gundi(request=request)
+        integration = await get_integration(request=request)
         if not integration:
             logger.warning(f"No integration found for webhook request: headers: {request.headers}, query_params: {request.query_params}")
             return {}
