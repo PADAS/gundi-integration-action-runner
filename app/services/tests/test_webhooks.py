@@ -217,7 +217,7 @@ async def test_process_webhook_handles_no_integration_gracefully(
     request = Request({"type": "http", "method": "POST", "url": "http://test/webhooks"})
     request._headers = {}
     request._query_params = {}
-    request._json = lambda: mock_webhook_request_payload_for_fixed_schema
+    mocker.patch.object(request, "json", AsyncMock(return_value=mock_webhook_request_payload_for_fixed_schema))
     
     result = await process_webhook(request)
     
