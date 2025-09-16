@@ -35,8 +35,8 @@ async def get_integration(request):
             await publish_event(
                 event=IntegrationWebhookFailed(
                     payload=WebhookExecutionFailed(
-                        integration_id=str(integration.id),
-                        webhook_id=str(integration.type.webhook.value),
+                        integration_id=str(integration_id),
+                        webhook_id=None,
                         config_data={},
                         error=error_message
                     )
