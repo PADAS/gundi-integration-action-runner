@@ -78,7 +78,7 @@ class IntegrationConfigurationManager:
             with attempt:
                 return await self.db_client.delete(key)
 
-    async def get_integration(self, integration_id: str) -> IntegrationSummary:
+    async def get_integration(self, integration_id: str, ttl=None) -> IntegrationSummary:
         key = self._get_integration_key(integration_id)
         for attempt in stamina.retry_context(on=redis.RedisError, attempts=5, wait_initial=1.0, wait_max=30, wait_jitter=3.0):
             with attempt:
@@ -87,7 +87,7 @@ class IntegrationConfigurationManager:
             # Looks for configurations
             return IntegrationSummary.parse_raw(integration_data)
         # If not found in cache, reload from Gundi
-        integration_details = await self._reload_integration_from_gundi(integration_id)
+        integration_details = await self._reload_integration_from_gundi(integration_id, ttl)
         return IntegrationSummary.from_integration(integration_details)
 
     async def set_integration(self, integration: IntegrationSummary, ttl=None):
@@ -102,14 +102,14 @@ class IntegrationConfigurationManager:
             with attempt:
                 await self.db_client.delete(key)
 
-    async def get_integration_details(self, integration_id: str) -> Integration:
-        integration_summary = await self.get_integration(integration_id)
+    async def get_integration_details(self, integration_id: str, ttl=None) -> Integration:
+        integration_summary = await self.get_integration(integration_id, ttl)
         configurations = []
         for action in integration_summary.type.actions:
-            config = await self.get_action_configuration(integration_id, action.value)
+            config = await self.get_action_configuration(integration_id, action.value, ttl)
             if config:
                 configurations.append(config)
-        webhook_configuration = await self.get_webhook_configuration(integration_id)
+        webhook_configuration = await self.get_webhook_configuration(integration_id, ttl)
         return Integration(
             id=integration_summary.id,
             name=integration_summary.name,
