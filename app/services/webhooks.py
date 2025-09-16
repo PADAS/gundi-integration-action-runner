@@ -1,5 +1,7 @@
 import importlib
 import logging
+import httpx
+import stamina
 from fastapi import Request
 from app import settings
 from app.services.activity_logger import log_activity, publish_event
@@ -12,23 +14,28 @@ _portal = GundiClient()
 logger = logging.getLogger(__name__)
 
 
-async def get_integration(request):
+async def get_integration_from_gundi(request):
     integration = None
     consumer_username = request.headers.get("x-consumer-username")
     consumer_integration = consumer_username.split(":")[-1] if consumer_username and consumer_username != "anonymous" else None
     integration_id = consumer_integration or request.headers.get("x-gundi-integration-id") or request.query_params.get("integration_id")
     if integration_id:
         try:
-            integration = await _portal.get_integration_details(integration_id=integration_id)
+            # Retry on httpx.HTTPError (StatusError, Timeout, ConnectError, etc.)
+            for attempt in stamina.retry_context(on=httpx.HTTPError, wait_initial=10.0, wait_jitter=10.0, wait_max=300.0):
+                with attempt:
+                    integration = await _portal.get_integration_details(integration_id=integration_id)
         except Exception as e:
-            logger.warning(f"Error retrieving integration '{integration_id}' from the portal: {e}")
+            logger.exception(f"Error retrieving integration '{integration_id}' from the portal (retries exahusted): {type(e).__name__}: {e}")
+            raise e
     return integration
 
 
 async def process_webhook(request: Request):
     try:
         # Try to relate the request to an integration
-        integration = await get_integration(request=request)
+        integration = await get_integration_from_gundi(request=request)
+
         # Look for the handler function in webhooks/handlers.py
         webhook_handler, payload_model, config_model = get_webhook_handler()
         json_content = await request.json()
