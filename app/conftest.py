@@ -139,6 +139,27 @@ def mock_redis_with_action_config(mocker, pull_observations_config_as_json):
 
 
 @pytest.fixture
+def mock_redis_with_webhook_config(mocker, integration_v2_with_webhook):
+    redis = MagicMock()
+    redis_client = mocker.MagicMock()
+    redis_client.set.return_value = async_return(MagicMock())
+    # Return webhook config JSON when asked for webhook key
+    webhook_config_json = integration_v2_with_webhook.webhook_configuration.json()
+    redis_client.get.return_value = async_return(webhook_config_json)
+    redis_client.delete.return_value = async_return(MagicMock())
+    redis_client.setex.return_value = async_return(None)
+    redis_client.incr.return_value = redis_client
+    redis_client.decr.return_value = async_return(None)
+    redis_client.expire.return_value = redis_client
+    redis_client.execute.return_value = async_return((1, True))
+    redis_client.__aenter__.return_value = redis_client
+    redis_client.__aexit__.return_value = None
+    redis_client.pipeline.return_value = redis_client
+    redis.Redis.return_value = redis_client
+    return redis
+
+
+@pytest.fixture
 def pull_observations_config_as_json():
     return json.dumps(
         {
