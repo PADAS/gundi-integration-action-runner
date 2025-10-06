@@ -168,7 +168,7 @@ class ObservationSubject(BaseModel):
             or datetime.now(timezone.utc).isoformat(),
             "location": {"lat": self.latitude, "lon": self.longitude},
             "additional": {
-                "subject_name": self.name,
+                "source_name": self.name,
                 "edgetech_serial_number": self.additional.get("edgetech_serial_number"),
                 "display_id": display_id,
                 "subject_is_active": is_active,
