@@ -1,16 +1,18 @@
-import hashlib
 import logging
-from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Tuple
+import uuid
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 import pydantic
+
+from app.actions.utils import get_hashed_user_id
 
 logger = logging.getLogger(__name__)
 
 SOURCE_TYPE = "ropeless_buoy"
-SUBJECT_SUBTYPE = "ropeless_buoy_device"
-GEAR_DEPLOYED_EVENT = "gear_deployed"
-GEAR_RETRIEVED_EVENT = "gear_retrieved"
+SUBJECT_SUBTYPE = "ropeless_buoy_gearset"
+TRAP_DEPLOYMENT_EVENT = "trap_deployed"
+TRAP_RETRIEVED_EVENT = "trap_retrieved"
 
 
 class GeoLocation(pydantic.BaseModel):
@@ -59,6 +61,7 @@ class CurrentState(pydantic.BaseModel):
     isTwoUnitLine: Optional[bool]
     endUnit: Optional[str]
     startUnit: Optional[str]
+
     class Config:
         json_encoders = {datetime: lambda val: val.isoformat()}
 
@@ -72,6 +75,7 @@ class Buoy(pydantic.BaseModel):
 
     currentState: CurrentState
     serialNumber: str
+    userId: str
     changeRecords: List[ChangeRecord]
 
     @property
@@ -117,46 +121,32 @@ class Buoy(pydantic.BaseModel):
     def _create_observation_record(
         self,
         subject_name: str,
+        source_name: str,
         lat: float,
         lon: float,
-        devices: List[Dict[str, Any]],
         is_active: bool,
         recorded_at: str,
     ) -> Dict[str, Any]:
         """Return an observation record with the given parameters."""
-        devices_names = [device["device_id"] for device in devices]
-        concatenated = "".join(devices_names)
-        display_id = hashlib.sha256(concatenated.encode("utf-8")).hexdigest()[:12]
-
         raw = self.dict()
         raw.pop("changeRecords", None)
-
         return {
-            "name": subject_name,
-            "source": subject_name,
-            "type": SOURCE_TYPE,
+            "source_name": subject_name,
+            "source": source_name,
             "subject_type": SUBJECT_SUBTYPE,
-            "is_active": is_active,
             "recorded_at": recorded_at,
+            "source_type": SOURCE_TYPE,
             "location": {"lat": lat, "lon": lon},
             "additional": {
-                "subject_name": subject_name,
-                "edgetech_serial_number": self.serialNumber,
-                "display_id": display_id,
-                "subject_is_active": is_active,
-                "event_type": GEAR_DEPLOYED_EVENT
-                if is_active
-                else GEAR_RETRIEVED_EVENT,
-                "devices": devices,
+                "event_type": TRAP_DEPLOYMENT_EVENT if is_active else TRAP_RETRIEVED_EVENT,
                 "raw": raw,
-            },
+            }
         }
 
     def _build_observations(
         self,
         is_deployed: bool,
         recorded_at: datetime,
-        prefix: str,
         start_lat: float,
         start_lon: float,
         end_lat: Optional[float],
@@ -170,42 +160,32 @@ class Buoy(pydantic.BaseModel):
         observations = []
         recorded_at = recorded_at.isoformat()
 
-        devices = []
+        hashed_user_id = get_hashed_user_id(self.userId)
+
         if end_unit_serial:
-            subject_name_a = f"{prefix}{self.serialNumber}"
-            subject_name_b = f"{prefix}{end_unit_serial}"
+            source_name_a = f"{self.serialNumber}_{hashed_user_id}"
+            source_name_b = f"{end_unit_serial}_{hashed_user_id}"
         else:
-            subject_name_a = f"{prefix}{self.serialNumber}_A"
-            subject_name_b = f"{prefix}{self.serialNumber}_B"
+            source_name_a = f"{self.serialNumber}_{hashed_user_id}_A"
+            source_name_b = f"{self.serialNumber}_{hashed_user_id}_B"
 
-        device_a = self._create_device_record(
-            "a", start_lat, start_lon, subject_name_a, recorded_at
-        )
-        devices.append(device_a)
-
-        # Handle both old and new structure for end unit location
-        if end_lat is not None and end_lon is not None:
-            device_b = self._create_device_record(
-                "b", end_lat, end_lon, subject_name_b, recorded_at
-            )
-            devices.append(device_b)
+        subject_name = str(uuid.uuid4())
 
         observation_a = self._create_observation_record(
-            subject_name=subject_name_a,
+            subject_name=subject_name,
+            source_name=source_name_a,
             lat=start_lat,
             lon=start_lon,
-            devices=devices,
             is_active=is_deployed,
             recorded_at=recorded_at,
         )
         observations.append(observation_a)
-
-        if end_lat is not None and end_lon is not None:
+        if (end_lat, end_lon) != (None, None):
             observation_b = self._create_observation_record(
-                subject_name=subject_name_b,
+                subject_name=subject_name,
+                source_name=source_name_b,
                 lat=end_lat,
                 lon=end_lon,
-                devices=devices,
                 is_active=is_deployed,
                 recorded_at=recorded_at,
             )
@@ -215,7 +195,6 @@ class Buoy(pydantic.BaseModel):
 
     def create_observations(
         self,
-        prefix: str,
         is_deployed: bool,
         end_unit_buoy: Optional["Buoy"] = None,
     ) -> List[Dict[str, Any]]:
@@ -248,7 +227,6 @@ class Buoy(pydantic.BaseModel):
             self._build_observations(
                 is_deployed=is_deployed,
                 recorded_at=recorded_at,
-                prefix=prefix,
                 start_lat=start_lat,
                 start_lon=start_lon,
                 end_lat=end_lat,

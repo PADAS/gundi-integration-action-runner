@@ -1,11 +1,59 @@
 import hashlib
+from curses.ascii import SO
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
 from pydantic import BaseModel, Field, HttpUrl
 
-from app.actions.edgetech.types import GEAR_DEPLOYED_EVENT, GEAR_RETRIEVED_EVENT
+from app.actions.edgetech.types import TRAP_RETRIEVED_EVENT
+
+
+class DeviceLocation(BaseModel):
+    latitude: float
+    longitude: float
+
+
+class BuoyDevice(BaseModel):
+    device_id: str
+    label: str
+    location: DeviceLocation
+    last_updated: datetime
+    last_deployed: Optional[datetime]
+
+
+class BuoyGear(BaseModel):
+    id: UUID
+    display_id: str
+    status: str
+    last_updated: datetime
+    devices: List[BuoyDevice]
+    type: str
+    manufacturer: str
+
+    def create_haul_observation(self, recorded_at: datetime) -> Dict[str, Any]:
+        """
+        Create an observation record for the buoy gear.
+        """
+        from app.actions.edgetech.types import SOURCE_TYPE, SUBJECT_SUBTYPE
+
+        return [
+            {
+                "source_name": self.display_id,
+                "source": device.device_id,
+                "type": SOURCE_TYPE,
+                "subject_type": SUBJECT_SUBTYPE,
+                "location": {
+                    "lat": device.location.latitude,
+                    "lon": device.location.longitude,
+                },
+                "additional": {
+                    "event_type": TRAP_RETRIEVED_EVENT,
+                },
+                "recorded_at": recorded_at,
+            }
+            for device in self.devices
+        ]
 
 
 class LastPositionStatus(BaseModel):
@@ -98,6 +146,8 @@ class ObservationSubject(BaseModel):
         Create observations based on the subject's last position and status.
         Returns a list of observation records.
         """
+        from app.actions.edgetech.types import TRAP_DEPLOYMENT_EVENT, TRAP_RETRIEVED_EVENT
+
         if not self.last_position or not self.last_position.geometry:
             raise ValueError("Last position is not available.")
 
@@ -118,12 +168,12 @@ class ObservationSubject(BaseModel):
             or datetime.now(timezone.utc).isoformat(),
             "location": {"lat": self.latitude, "lon": self.longitude},
             "additional": {
-                "subject_name": self.name,
+                "source_name": self.name,
                 "edgetech_serial_number": self.additional.get("edgetech_serial_number"),
                 "display_id": display_id,
                 "subject_is_active": is_active,
                 "event_type": (
-                    GEAR_DEPLOYED_EVENT if is_active else GEAR_RETRIEVED_EVENT
+                    TRAP_DEPLOYMENT_EVENT if is_active else TRAP_RETRIEVED_EVENT
                 ),
                 "devices": self.additional.get("devices", []),
             },
