@@ -370,9 +370,6 @@ const ConfigViewer = () => {
               <List>
                 {configurations.map((config, index) => {
 
-                  // Debug logging
-                  console.log('Config:', config);
-                  
                   return (
                     <React.Fragment key={config.id || index}>
                       <ListItem>
