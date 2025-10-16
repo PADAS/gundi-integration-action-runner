@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import authService from '../services/authService';
 
 const AuthContext = createContext();
@@ -60,7 +60,7 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const handleSigninCallback = async () => {
+  const handleSigninCallback = useCallback(async () => {
     try {
       setError(null);
       const user = await authService.signinRedirectCallback();
@@ -72,9 +72,9 @@ export const AuthProvider = ({ children }) => {
       setError(err.message);
       throw err;
     }
-  };
+  }, []);
 
-  const handleSilentCallback = async () => {
+  const handleSilentCallback = useCallback(async () => {
     try {
       setError(null);
       await authService.signinSilentCallback();
@@ -83,7 +83,7 @@ export const AuthProvider = ({ children }) => {
       setError(err.message);
       throw err;
     }
-  };
+  }, []);
 
   const getAccessToken = async () => {
     return await authService.getAccessToken();

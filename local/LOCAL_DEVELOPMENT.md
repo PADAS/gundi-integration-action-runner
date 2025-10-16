@@ -57,7 +57,7 @@ For detailed setup instructions, see `local/web-ui/AUTHENTICATION.md`.
 
 The local deployment now includes a React-based web UI that provides a user-friendly interface for:
 - Viewing all available actions
- this - Executing actions with custom parameters
+- Executing actions with custom parameters
 - Viewing execution results in real-time
 
 The web UI is automatically built and served when you run `docker compose up --build`.

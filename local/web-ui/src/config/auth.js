@@ -33,13 +33,3 @@ export const authConfig = {
   debug: true
 };
 
-// Helper function to get the full OIDC configuration
-export const getOidcConfig = () => {
-  return {
-    ...authConfig,
-    // Convert string to actual WebStorageStateStore instance
-    userStore: new (require('oidc-client').WebStorageStateStore)({ 
-      store: window.localStorage 
-    })
-  };
-};

@@ -380,7 +380,7 @@ const ConfigViewer = () => {
                                 {config.provider?.name || config.name || `Connection ${config.id}`}
                               </Typography>
                               <Chip
-                                label={config.provider.type.name}
+                                label={config.provider?.type?.name || 'Unknown Type'}
                                 size="small"
                                 color="primary"
                                 variant="outlined"

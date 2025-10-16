@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Card,
@@ -55,12 +55,7 @@ const ActionExecute = () => {
     }
   }, [selectedConnection]);
 
-  // Fetch schema when component mounts
-  useEffect(() => {
-    fetchSchema();
-  }, [actionId]);
-
-  const fetchSchema = async () => {
+  const fetchSchema = useCallback(async () => {
     try {
       setSchemaLoading(true);
       const response = await axios.get(`http://localhost:8080/v1/actions/${actionId}/schema`);
@@ -71,7 +66,12 @@ const ActionExecute = () => {
     } finally {
       setSchemaLoading(false);
     }
-  };
+  }, [actionId]);
+
+  // Fetch schema when component mounts
+  useEffect(() => {
+    fetchSchema();
+  }, [fetchSchema]);
 
   const handleInputChange = (field) => (event) => {
     setFormData({

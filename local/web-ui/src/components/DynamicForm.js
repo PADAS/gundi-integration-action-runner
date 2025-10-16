@@ -61,27 +61,29 @@ const DynamicForm = ({ actionId, onSubmit, onCancel, initialIntegrationId = '', 
       const response = await axios.get(`http://localhost:8080/v1/actions/${actionId}/schema`);
       setSchema(response.data);
       
-      // Initialize form data with default values
-      const initialData = {
-        integration_id: formData.integration_id,
-        run_in_background: formData.run_in_background,
-        config_overrides: {}
-      };
-      if (response.data.config_schema.properties) {
-        Object.keys(response.data.config_schema.properties).forEach(field => {
-          const fieldSchema = response.data.config_schema.properties[field];
-          if (fieldSchema.default !== undefined) {
-            initialData.config_overrides[field] = fieldSchema.default;
-          } else if (fieldSchema.type === 'boolean') {
-            initialData.config_overrides[field] = false;
-          } else if (fieldSchema.type === 'array') {
-            initialData.config_overrides[field] = [];
-          } else {
-            initialData.config_overrides[field] = '';
-          }
-        });
-      }
-      setFormData(initialData);
+      // Initialize form data with default values, preserving current integration_id and run_in_background
+      setFormData(prevFormData => {
+        const initialData = {
+          integration_id: prevFormData.integration_id,
+          run_in_background: prevFormData.run_in_background,
+          config_overrides: {}
+        };
+        if (response.data.config_schema.properties) {
+          Object.keys(response.data.config_schema.properties).forEach(field => {
+            const fieldSchema = response.data.config_schema.properties[field];
+            if (fieldSchema.default !== undefined) {
+              initialData.config_overrides[field] = fieldSchema.default;
+            } else if (fieldSchema.type === 'boolean') {
+              initialData.config_overrides[field] = false;
+            } else if (fieldSchema.type === 'array') {
+              initialData.config_overrides[field] = [];
+            } else {
+              initialData.config_overrides[field] = '';
+            }
+          });
+        }
+        return initialData;
+      });
     } catch (err) {
       setError('Failed to load form schema');
       console.error('Error fetching schema:', err);
@@ -105,9 +107,6 @@ const DynamicForm = ({ actionId, onSubmit, onCancel, initialIntegrationId = '', 
         `${authConfig.apiBaseUrl}/integrations/${selectedConnection.id}/`,
         { headers }
       );
-      
-      console.log('Integration data:', response.data);
-      console.log('Looking for actionId:', actionId);
       
       // Parse the configuration data from the integration response
       const integration = response.data;
