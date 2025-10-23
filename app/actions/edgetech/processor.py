@@ -179,7 +179,14 @@ class EdgeTechProcessor:
                 er_gear_current_location = [
                     (device.location.latitude, device.location.longitude) for device in er_gear.devices
                 ]
-                if edgetech_buoy_current_location not in er_gear_current_location:
+                location_changed = edgetech_buoy_current_location not in er_gear_current_location
+                
+                # Check if EdgeTech data is newer than ER data
+                edgetech_last_updated = edgetech_buoy.currentState.lastUpdated
+                er_last_updated = er_gear.last_updated
+                has_newer_data = edgetech_last_updated > er_last_updated
+                
+                if location_changed or has_newer_data:
                     to_update.add(serial_number_user_id)
 
         for device_id_user_id in er_gears_devices_id_to_gear.keys():
@@ -289,7 +296,8 @@ class EdgeTechProcessor:
                     er_device.device_id == primary_device_name
                     or er_device.device_id == single_device_name
                 ):
-                    er_device_lat, er_device_long = er_device.location
+                    er_device_lat = er_device.location.latitude
+                    er_device_long = er_device.location.longitude
                     break
             if (
                 er_device_lat == edgetech_buoy_lat

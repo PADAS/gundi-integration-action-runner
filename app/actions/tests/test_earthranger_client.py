@@ -77,7 +77,7 @@ def sample_buoy_gear_data():
             },
         ],
         "type": "ropeless",
-        "manufacturer": "EdgeTech",
+        "manufacturer": "edgetech",
     }
 
 
@@ -102,7 +102,7 @@ def sample_paginated_response():
                         }
                     ],
                     "type": "ropeless",
-                    "manufacturer": "EdgeTech",
+                    "manufacturer": "edgetech",
                 }
             ],
             "next": "https://example.com/api/v1.0/gear/?page=2",
@@ -123,7 +123,7 @@ def sample_paginated_response_last_page():
                     "last_updated": "2025-08-31T11:00:00Z",
                     "devices": [],
                     "type": "ropeless",
-                    "manufacturer": "EdgeTech",
+                    "manufacturer": "edgetech",
                 }
             ],
             "next": None,

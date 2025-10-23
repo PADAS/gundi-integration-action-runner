@@ -889,7 +889,9 @@ class TestEdgeTechProcessor:
         # Create a mock device with location as a tuple (to work around the processor bug)
         mock_device = Mock()
         mock_device.device_id = expected_device_id_primary
-        mock_device.location = (44.358265, -68.16757)  # Tuple that can be unpacked - exact same coordinates
+        mock_device.location = Mock()
+        mock_device.location.latitude = 44.358265
+        mock_device.location.longitude = -68.16757  # exact same coordinates
 
         mock_gear = Mock()
         mock_gear.devices = [mock_device]
