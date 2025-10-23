@@ -172,12 +172,14 @@ class EdgeTechProcessor:
 
                 edgetech_buoy = serial_number_to_edgetech_buoy[serial_number_user_id]
 
-                # Check if the buoy's last updated time is more recent than the ER subject's last updated time.
-                edgetech_buoy_last_updated = (
-                    edgetech_buoy.currentState.lastUpdated.replace(microsecond=0)
+                # Check if the buoy's location has changed.
+                edgetech_buoy_current_location = (
+                    edgetech_buoy.currentState.latDeg, edgetech_buoy.currentState.lonDeg
                 )
-                er_gear_last_updated = er_gear.last_updated.replace(microsecond=0)
-                if edgetech_buoy_last_updated > er_gear_last_updated:
+                er_gear_current_location = [
+                    (device.location.latitude, device.location.longitude) for device in er_gear.devices
+                ]
+                if edgetech_buoy_current_location not in er_gear_current_location:
                     to_update.add(serial_number_user_id)
 
         for device_id_user_id in er_gears_devices_id_to_gear.keys():
@@ -216,8 +218,8 @@ class EdgeTechProcessor:
         Returns:
             List[dict]: A list of dictionaries representing the observation events generated during processing.
         """
-        edgetech_deployed_buoys = self._filter_edgetech_buoys_data(self._data)
-        edgetech_deployed_buoys = self._get_latest_buoy_states(edgetech_deployed_buoys)
+        edgetech_deployed_buoys = self._get_latest_buoy_states(self._data)
+        edgetech_deployed_buoys = self._filter_edgetech_buoys_data(edgetech_deployed_buoys)
 
         serial_number_to_edgetech_buoy = {
             f"{buoy.serialNumber}/{get_hashed_user_id(buoy.userId)}": buoy
@@ -229,7 +231,6 @@ class EdgeTechProcessor:
         er_gears_devices_id_to_gear = {
             device.device_id: gear
             for gear in er_gears
-            if gear.manufacturer == "edgetech"
             for device in gear.devices
         }
 
@@ -323,6 +324,7 @@ class EdgeTechProcessor:
                 to_update_observations = edgetech_buoy.create_observations(
                     is_deployed=True,
                     end_unit_buoy=end_unit_buoy,
+                    subject_name=er_gear.display_id,
                 )
                 observations.extend(to_update_observations)
             except pydantic.ValidationError as ve:

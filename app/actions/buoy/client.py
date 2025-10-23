@@ -1,5 +1,6 @@
 import json
 import logging
+from datetime import timezone
 from typing import List, Optional
 
 import aiohttp
@@ -59,7 +60,11 @@ class BuoyClient:
         gears = []
         try:
             for item in items:
-                gears.append(BuoyGear.parse_obj(item))
+                buoy = BuoyGear.parse_obj(item)
+                if buoy.manufacturer != "edgetech":
+                    continue
+                buoy.last_updated = buoy.last_updated.astimezone(timezone.utc)
+                gears.append(buoy)
         except Exception as e:
             logger.error(f"Error parsing gear items: {e} (item: {json.dumps(item)})")
 

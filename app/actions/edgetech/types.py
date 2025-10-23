@@ -152,6 +152,7 @@ class Buoy(pydantic.BaseModel):
         end_lat: Optional[float],
         end_lon: Optional[float],
         end_unit_serial: Optional[str] = None,
+        subject_name: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Return one or two observations for deployment or retrieval events,
@@ -169,7 +170,7 @@ class Buoy(pydantic.BaseModel):
             source_name_a = f"{self.serialNumber}_{hashed_user_id}_A"
             source_name_b = f"{self.serialNumber}_{hashed_user_id}_B"
 
-        subject_name = str(uuid.uuid4())
+        subject_name = subject_name or str(uuid.uuid4())
 
         observation_a = self._create_observation_record(
             subject_name=subject_name,
@@ -197,6 +198,7 @@ class Buoy(pydantic.BaseModel):
         self,
         is_deployed: bool,
         end_unit_buoy: Optional["Buoy"] = None,
+        subject_name: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Return observations from the current state or from changeRecords if available.
@@ -232,6 +234,7 @@ class Buoy(pydantic.BaseModel):
                 end_lat=end_lat,
                 end_lon=end_lon,
                 end_unit_serial=state.endUnit,
+                subject_name=subject_name,
             )
         )
 
