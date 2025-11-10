@@ -153,7 +153,6 @@ async def action_pull_edgetech_observations(
         minutes=action_config.minutes_to_sync
     )
     data = await edgetech_client.download_data(start_datetime=start_datetime)
-    data = [item for item in data if item.serialNumber == "88CE99D39E"]
     destination_result = {}
     for destination in connection_details.destinations:
         gear_payloads_count = await process_destination(
