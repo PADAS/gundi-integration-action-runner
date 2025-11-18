@@ -63,6 +63,7 @@ def sample_buoy_gear_data():
         "devices": [
             {
                 "device_id": "device-001",
+                "mfr_device_id": "mfr-device-001",
                 "label": "Test Device 1",
                 "location": {"latitude": 44.358265, "longitude": -68.16757},
                 "last_updated": "2025-08-31T10:00:00Z",
@@ -70,6 +71,7 @@ def sample_buoy_gear_data():
             },
             {
                 "device_id": "device-002",
+                "mfr_device_id": "mfr-device-002",
                 "label": "Test Device 2",
                 "location": {"latitude": 44.3591792, "longitude": -68.167191},
                 "last_updated": "2025-08-31T10:00:00Z",
@@ -95,6 +97,7 @@ def sample_paginated_response():
                     "devices": [
                         {
                             "device_id": "device-001",
+                            "mfr_device_id": "mfr-device-001",
                             "label": "Test Device 1",
                             "location": {"latitude": 44.358265, "longitude": -68.16757},
                             "last_updated": "2025-08-31T10:00:00Z",

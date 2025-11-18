@@ -487,7 +487,7 @@ class EdgeTechProcessor:
                         # This record is for the end unit, skip it
                         continue
 
-                payload = self._create_gear_payload(
+                payload = await self._create_gear_payload(
                     buoy=edgetech_buoy,
                     device_status="deployed",
                     end_unit_buoy=end_unit_buoy,

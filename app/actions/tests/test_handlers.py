@@ -226,13 +226,12 @@ class TestProcessDestination:
         """Test successful processing of destination."""
         mock_gundi_client = AsyncMock()
 
-        # Mock observations
-        mock_observations = [{"observation": "test1"}, {"observation": "test2"}]
+        # Mock gear payloads
+        mock_gear_payloads = [{"gear": "test1"}, {"gear": "test2"}]
 
         with (
             patch("app.actions.handlers.get_destination_credentials") as mock_get_creds,
             patch("app.actions.handlers.EdgeTechProcessor") as mock_processor_class,
-            patch("app.actions.handlers.send_observations_to_gundi") as mock_send_obs,
             patch("app.actions.handlers.log_action_activity") as mock_log_activity,
         ):
             # Mock get_destination_credentials
@@ -240,11 +239,11 @@ class TestProcessDestination:
 
             # Mock EdgeTechProcessor
             mock_processor = AsyncMock()
-            mock_processor.process.return_value = mock_observations
+            mock_processor.process.return_value = mock_gear_payloads
+            mock_processor._er_client.send_gear_to_buoy_api = AsyncMock(
+                return_value={"status": "success"}
+            )
             mock_processor_class.return_value = mock_processor
-
-            # Mock send_observations_to_gundi
-            mock_send_obs.return_value = {"success": True}
 
             # Mock log_action_activity
             mock_log_activity.return_value = None
@@ -258,9 +257,10 @@ class TestProcessDestination:
                 start_datetime,
             )
 
-            assert result == 2  # Length of observations
+            assert result["total"] == 2  # Length of gear payloads
+            assert result["success"] == 2
+            assert result["failures"] == 0
             mock_processor_class.assert_called_once()
-            mock_send_obs.assert_called_once()
             mock_log_activity.assert_called_once()
 
     @pytest.mark.asyncio
@@ -270,21 +270,22 @@ class TestProcessDestination:
         """Test processing destination without start_datetime filter."""
         mock_gundi_client = AsyncMock()
 
-        mock_observations = [{"observation": "test"}]
+        mock_gear_payloads = [{"gear": "test"}]
 
         with (
             patch("app.actions.handlers.get_destination_credentials") as mock_get_creds,
             patch("app.actions.handlers.EdgeTechProcessor") as mock_processor_class,
-            patch("app.actions.handlers.send_observations_to_gundi") as mock_send_obs,
             patch("app.actions.handlers.log_action_activity") as mock_log_activity,
         ):
             mock_get_creds.return_value = ("test_token", "https://er.test.com")
 
             mock_processor = AsyncMock()
-            mock_processor.process.return_value = mock_observations
+            mock_processor.process.return_value = mock_gear_payloads
+            mock_processor._er_client.send_gear_to_buoy_api = AsyncMock(
+                return_value={"status": "success"}
+            )
             mock_processor_class.return_value = mock_processor
 
-            mock_send_obs.return_value = {"success": True}
             mock_log_activity.return_value = None
 
             result = await process_destination(
@@ -295,7 +296,9 @@ class TestProcessDestination:
             mock_processor_class.assert_called_once_with(
                 sample_data, "test_token", "https://er.test.com", filters=None
             )
-            assert result == 1
+            assert result["total"] == 1
+            assert result["success"] == 1
+            assert result["failures"] == 0
 
 
 class TestActionAuth:
@@ -395,11 +398,11 @@ class TestActionPullEdgetechObservations:
             mock_edgetech_client.download_data.return_value = sample_data
             mock_edgetech_client_class.return_value = mock_edgetech_client
 
-            # Mock process_destination
+            # Mock process_destination to return dict with results
             mock_process_dest.side_effect = [
-                5,
-                3,
-            ]  # Return different observation counts
+                {"total": 5, "success": 5, "failures": 0, "failed_payloads": None},
+                {"total": 3, "success": 3, "failures": 0, "failed_payloads": None},
+            ]
 
             result = await action_pull_edgetech_observations(
                 sample_integration, pull_config
@@ -464,8 +467,13 @@ class TestActionPullEdgetechObservations:
             mock_edgetech_client.download_data.return_value = sample_data
             mock_edgetech_client_class.return_value = mock_edgetech_client
 
-            # Mock process_destination
-            mock_process_dest.return_value = 1
+            # Mock process_destination to return dict
+            mock_process_dest.return_value = {
+                "total": 1,
+                "success": 1,
+                "failures": 0,
+                "failed_payloads": None,
+            }
 
             await action_pull_edgetech_observations(sample_integration, pull_config)
 

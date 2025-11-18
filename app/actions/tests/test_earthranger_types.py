@@ -50,6 +50,7 @@ class TestBuoyDevice:
         """Fixture for sample buoy device."""
         return BuoyDevice(
             device_id="device123",
+            mfr_device_id="mfr-device123",
             label="Test Device",
             location=device_location,
             last_updated=datetime(2025, 1, 1, 12, 0, 0),
@@ -69,6 +70,7 @@ class TestBuoyDevice:
         """Test BuoyDevice with None last_deployed."""
         device = BuoyDevice(
             device_id="device123",
+            mfr_device_id="mfr-device123",
             label="Test Device",
             location=device_location,
             last_updated=datetime(2025, 1, 1, 12, 0, 0),
@@ -90,6 +92,7 @@ class TestBuoyGear:
         """Fixture for sample buoy device."""
         return BuoyDevice(
             device_id="device123",
+            mfr_device_id="mfr-device123",
             label="Test Device",
             location=device_location,
             last_updated=datetime(2025, 1, 1, 12, 0, 0),
@@ -134,6 +137,7 @@ class TestBuoyGear:
         
         device1 = BuoyDevice(
             device_id="device123",
+            mfr_device_id="mfr-device123",
             label="Device 1",
             location=device_location1,
             last_updated=datetime(2025, 1, 1, 12, 0, 0),
@@ -142,6 +146,7 @@ class TestBuoyGear:
         
         device2 = BuoyDevice(
             device_id="device456",
+            mfr_device_id="mfr-device456",
             label="Device 2",
             location=device_location2,
             last_updated=datetime(2025, 1, 1, 12, 0, 0),
