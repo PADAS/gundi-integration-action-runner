@@ -114,8 +114,7 @@ async def process_destination(
         action_id="pull_edgetech",
         level=log_level,
         title=title,
-        data={"total": len(gear_payloads), "success": success_count, "failures": failure_count}
-        if failure_count > 0 else None,
+        data={"total": len(gear_payloads), "success": success_count, "failures": failure_count},
     )
     
     return {

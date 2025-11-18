@@ -184,7 +184,7 @@ class EdgeTechProcessor:
                 "device_id": device.device_id,
                 "mfr_device_id": device.mfr_device_id,
                 "last_deployed": device.last_deployed.isoformat() if device.last_deployed else device.last_updated.isoformat(),
-                "last_updated": datetime.now(timezone.utc).isoformat(),
+                "last_updated": self._remove_milliseconds(datetime.now(timezone.utc)).isoformat(),
                 "device_status": "hauled",
                 "location": {
                     "latitude": device.location.latitude,
@@ -415,7 +415,7 @@ class EdgeTechProcessor:
             try:
                 # Get end unit buoy if this is a two-unit line
                 end_unit_buoy = None
-                if edgetech_buoy.currentState.isTwoUnitLine:
+                if edgetech_buoy.currentState.isTwoUnitLine and edgetech_buoy.currentState.endUnit:
                     end_unit_buoy_key = f"{edgetech_buoy.currentState.endUnit}/{get_hashed_user_id(edgetech_buoy.userId)}"
                     end_unit_buoy = serial_number_to_edgetech_buoy.get(end_unit_buoy_key)
                     
@@ -466,7 +466,7 @@ class EdgeTechProcessor:
             er_device_lat = None
             er_device_long = None
             for er_device in er_gear.devices:
-                if er_device.device_id == primary_device_name or er_device.device_id == single_device_name:
+                if er_device.mfr_device_id == primary_device_name or er_device.mfr_device_id == single_device_name:
                     er_device_lat = er_device.location.latitude
                     er_device_long = er_device.location.longitude
                     break

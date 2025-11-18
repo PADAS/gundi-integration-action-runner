@@ -712,7 +712,7 @@ class TestEdgeTechProcessor:
         def raise_validation_error(*args, **kwargs):
             raise pydantic.ValidationError([], BuoyGear)
         
-        mocker.patch.object(processor, '_create_haul_payload', side_effect=raise_validation_error)
+        mocker.patch.object(processor, '_create_haul_payload', new=Mock(side_effect=raise_validation_error))
 
         with caplog.at_level(logging.ERROR):
             payloads = await processor.process()

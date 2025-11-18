@@ -99,7 +99,7 @@ class BuoyClient:
                         )
                         return {"status": "error", "status_code": response.status, "response": response_text}
             except Exception as e:
-                logger.exception(f"Exception while sending gear to Buoy API: {e}")
+                logger.exception(f"Exception while sending gear to Buoy API")
                 return {"status": "error", "error": str(e)}
 
     async def get_existing_source_id_by_manufacturer_id(self, manufacturer_id: str) -> Optional[str]:
