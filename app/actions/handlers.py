@@ -55,6 +55,7 @@ async def process_destination(
     integration: Integration,
     data: List[dict],
     destination: ConnectionIntegration,
+    auth_config: EdgeTechAuthConfiguration,
     start_datetime: Optional[datetime] = None,
 ) -> Dict:
     """
@@ -65,13 +66,15 @@ async def process_destination(
     :param integration: Integration object.
     :param data: Raw data from EdgeTechClient.
     :param destination: Destination object.
+    :param auth_config: EdgeTech auth configuration containing er_token.
     :param start_datetime: Optional datetime to filter observations from.
     :return: Dictionary with processing results including total, success count, failure count, and failed payloads.
     """
     logger.info(
         f"Executing pull action for integration {integration} and destination {destination}..."
     )
-    er_destination_token, er_destination_url = await get_destination_credentials(
+    # Get only the destination URL, use er_token from auth_config
+    _, er_destination_url = await get_destination_credentials(
         gundi_client, destination
     )
     
@@ -79,7 +82,7 @@ async def process_destination(
     if start_datetime:
         filters = {"start_datetime": start_datetime}
         
-    processor = EdgeTechProcessor(data, er_destination_token, er_destination_url, filters=filters)
+    processor = EdgeTechProcessor(data, auth_config.er_token.get_secret_value(), er_destination_url, filters=filters)
     gear_payloads = await processor.process()
 
     # Send gear payloads directly to Buoy API and track results
@@ -182,7 +185,7 @@ async def action_pull_edgetech_observations(
     destination_result = {}
     for destination in connection_details.destinations:
         result = await process_destination(
-            gundi_client, integration, data, destination, start_datetime
+            gundi_client, integration, data, destination, auth_config, start_datetime
         )
         destination_key = f"{destination.id}_{destination.name}"
         destination_result[destination_key] = {

@@ -48,6 +48,7 @@ def sample_integration():
                 "data": {
                     "token_json": '{"access_token": "test_token", "refresh_token": "refresh_token", "expires_in": 3600, "expires_at": 9999999999}',
                     "client_id": "test_client_id",
+                    "er_token": "test_er_token",
                 },
             }
         ],
@@ -70,6 +71,7 @@ def auth_config():
             '{"access_token": "test_token", "refresh_token": "refresh_token", "expires_in": 3600, "expires_at": 9999999999}'
         ),
         client_id="test_client_id",
+        er_token=SecretStr("test_er_token"),
     )
 
 
@@ -221,7 +223,7 @@ class TestProcessDestination:
 
     @pytest.mark.asyncio
     async def test_process_destination_success(
-        self, sample_integration, sample_destination, sample_data
+        self, sample_integration, sample_destination, sample_data, auth_config
     ):
         """Test successful processing of destination."""
         mock_gundi_client = AsyncMock()
@@ -254,6 +256,7 @@ class TestProcessDestination:
                 sample_integration,
                 sample_data,
                 sample_destination,
+                auth_config,
                 start_datetime,
             )
 
@@ -265,7 +268,7 @@ class TestProcessDestination:
 
     @pytest.mark.asyncio
     async def test_process_destination_without_start_datetime(
-        self, sample_integration, sample_destination, sample_data
+        self, sample_integration, sample_destination, sample_data, auth_config
     ):
         """Test processing destination without start_datetime filter."""
         mock_gundi_client = AsyncMock()
@@ -289,12 +292,12 @@ class TestProcessDestination:
             mock_log_activity.return_value = None
 
             result = await process_destination(
-                mock_gundi_client, sample_integration, sample_data, sample_destination
+                mock_gundi_client, sample_integration, sample_data, sample_destination, auth_config
             )
 
             # Check that processor was called with filters=None
             mock_processor_class.assert_called_once_with(
-                sample_data, "test_token", "https://er.test.com", filters=None
+                sample_data, auth_config.er_token.get_secret_value(), "https://er.test.com", filters=None
             )
             assert result["total"] == 1
             assert result["success"] == 1
@@ -390,6 +393,7 @@ class TestActionPullEdgetechObservations:
             mock_config.data = {
                 "token_json": '{"access_token": "test_token", "refresh_token": "refresh_token", "expires_in": 3600, "expires_at": 9999999999}',
                 "client_id": "test_client_id",
+                "er_token": "test_er_token",
             }
             mock_find_config.return_value = mock_config
 
@@ -459,6 +463,7 @@ class TestActionPullEdgetechObservations:
             mock_config.data = {
                 "token_json": '{"access_token": "test", "refresh_token": "refresh", "expires_in": 3600, "expires_at": 9999999999}',
                 "client_id": "test_id",
+                "er_token": "test_er_token",
             }
             mock_find_config.return_value = mock_config
 
@@ -485,8 +490,8 @@ class TestActionPullEdgetechObservations:
             # Verify that process_destination was called with start_datetime
             mock_process_dest.assert_called_once()
             call_args = mock_process_dest.call_args
-            # start_datetime is passed as 5th positional argument
+            # start_datetime is passed as 6th positional argument
             assert (
-                len(call_args[0]) == 5
-            )  # gundi_client, integration, data, destination, start_datetime
-            assert call_args[0][4] is not None  # start_datetime should not be None
+                len(call_args[0]) == 6
+            )  # gundi_client, integration, data, destination, auth_config, start_datetime
+            assert call_args[0][5] is not None  # start_datetime should not be None
