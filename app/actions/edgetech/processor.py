@@ -65,6 +65,7 @@ class EdgeTechProcessor:
         self,
         buoy: Buoy,
         device_status: str,
+        manufacturer_id_to_source_id: Dict[str, str],
         end_unit_buoy: Optional[Buoy] = None,
         set_id: Optional[str] = None,
         include_initial_deployment: bool = True,
@@ -74,8 +75,8 @@ class EdgeTechProcessor:
 
         Args:
             buoy: The main Buoy object
-            owner_id: Owner/user ID for the gear set
             device_status: Status of the device (deployed/hauled)
+            manufacturer_id_to_source_id: Mapping of manufacturer_id to source_id for existing sources
             end_unit_buoy: Optional second buoy for two-unit lines
             set_id: Optional gear set ID (auto-generated if not provided)
             include_initial_deployment: Whether to include initial_deployment_date
@@ -112,7 +113,7 @@ class EdgeTechProcessor:
             secondary_device_additional_data.pop("changeRecords", None)
         
         main_device = {
-            "device_id": await self._er_client.get_existing_source_id_by_manufacturer_id(main_device_id) or str(uuid4()),
+            "device_id": manufacturer_id_to_source_id.get(main_device_id) or str(uuid4()),
             "mfr_device_id": main_device_id,
             "last_deployed": self._remove_milliseconds(last_deployed).isoformat(),
             "last_updated": self._remove_milliseconds(last_updated).isoformat(),
@@ -132,7 +133,7 @@ class EdgeTechProcessor:
 
         if secondary_device_id:
             secondary_device = {
-                "device_id": await self._er_client.get_existing_source_id_by_manufacturer_id(secondary_device_id) or str(uuid4()),
+                "device_id": manufacturer_id_to_source_id.get(secondary_device_id) or str(uuid4()),
                 "mfr_device_id": secondary_device_id,
                 "last_deployed": self._remove_milliseconds(secondary_last_deployed).isoformat(),
                 "last_updated": self._remove_milliseconds(last_updated).isoformat(),
@@ -364,11 +365,12 @@ class EdgeTechProcessor:
         This asynchronous method performs the following steps:
             1. Retrieves and filters the latest buoy states grouped by serial number.
             2. Fetches existing ER gears from the ER client.
-            3. Maps ER gears by device ID and categorizes buoy states into:
+            3. Fetches all sources once and creates a mapping for efficient lookups.
+            4. Maps ER gears by device ID and categorizes buoy states into:
                 - Deploy: Buoys not yet present in ER.
                 - Update: Buoys present in ER that need to be updated.
                 - Haul: Buoys that need to be retrieved.
-            4. Creates gear payloads directly for each operation.
+            5. Creates gear payloads directly for each operation.
 
         Returns:
             List[dict]: A list of gear payloads ready to be sent to the Buoy API.
@@ -380,6 +382,16 @@ class EdgeTechProcessor:
             f"{buoy.serialNumber}/{get_hashed_user_id(buoy.userId)}": buoy
             for buoy in edgetech_deployed_buoys
         }
+
+        # Fetch all sources once and create a mapping for efficient lookups
+        logger.info("Fetching all sources from Buoy API...")
+        sources = await self._er_client.get_sources(params={"page_size": 10000})
+        manufacturer_id_to_source_id = {
+            source.get("manufacturer_id"): source.get("id")
+            for source in sources
+            if source.get("manufacturer_id")
+        }
+        logger.info(f"Loaded {len(manufacturer_id_to_source_id)} source mappings")
 
         er_gears = await self._er_client.get_er_gears(params={"page_size": 10000})
 
@@ -422,6 +434,7 @@ class EdgeTechProcessor:
                 payload = await self._create_gear_payload(
                     buoy=edgetech_buoy,
                     device_status="deployed",
+                    manufacturer_id_to_source_id=manufacturer_id_to_source_id,
                     end_unit_buoy=end_unit_buoy,
                     include_initial_deployment=True,
                 )
@@ -490,6 +503,7 @@ class EdgeTechProcessor:
                 payload = await self._create_gear_payload(
                     buoy=edgetech_buoy,
                     device_status="deployed",
+                    manufacturer_id_to_source_id=manufacturer_id_to_source_id,
                     end_unit_buoy=end_unit_buoy,
                     set_id=er_gear.display_id,
                     include_initial_deployment=False,

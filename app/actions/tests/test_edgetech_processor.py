@@ -28,6 +28,7 @@ async def test_process_new_edgetech_trawl(mocker, a_new_edgetech_trawl_record):
     # Mock the ER client to return no existing gears (new deployment)
     mock_er_client = mocker.MagicMock()
     mock_er_client.get_er_gears = AsyncMock(return_value=[])
+    mock_er_client.get_sources = AsyncMock(return_value=[])
     mock_er_client.get_existing_source_id_by_manufacturer_id = AsyncMock(return_value=None)
     processor._er_client = mock_er_client
 
@@ -55,6 +56,7 @@ async def test_process_deployed_in_er_missing_in_edgetech(
         ]
     )
     mock_er_client.get_er_gears = AsyncMock(return_value=[])
+    mock_er_client.get_sources = AsyncMock(return_value=[])
     mock_er_client.get_existing_source_id_by_manufacturer_id = AsyncMock(return_value=None)
     processor._er_client = mock_er_client
 
@@ -385,6 +387,7 @@ class TestEdgeTechProcessor:
 
         mock_er_client = mocker.MagicMock()
         mock_er_client.get_er_gears = AsyncMock(return_value=[])
+        mock_er_client.get_sources = AsyncMock(return_value=[])
         mock_er_client.get_existing_source_id_by_manufacturer_id = AsyncMock(return_value=None)
         processor._er_client = mock_er_client
 
@@ -421,6 +424,7 @@ class TestEdgeTechProcessor:
 
         mock_er_client = mocker.MagicMock()
         mock_er_client.get_er_gears = AsyncMock(return_value=[])
+        mock_er_client.get_sources = AsyncMock(return_value=[])
         mock_er_client.get_existing_source_id_by_manufacturer_id = AsyncMock(return_value=None)
         processor._er_client = mock_er_client
 
@@ -471,6 +475,7 @@ class TestEdgeTechProcessor:
 
         mock_er_client = mocker.MagicMock()
         mock_er_client.get_er_gears = AsyncMock(return_value=[mock_gear])
+        mock_er_client.get_sources = AsyncMock(return_value=[])
         mock_er_client.get_existing_source_id_by_manufacturer_id = AsyncMock(return_value=None)
         processor._er_client = mock_er_client
 
@@ -508,6 +513,7 @@ class TestEdgeTechProcessor:
 
         mock_er_client = mocker.MagicMock()
         mock_er_client.get_er_gears = AsyncMock(return_value=[mock_gear])
+        mock_er_client.get_sources = AsyncMock(return_value=[])
         mock_er_client.get_existing_source_id_by_manufacturer_id = AsyncMock(return_value=None)
         processor._er_client = mock_er_client
 
@@ -527,17 +533,14 @@ class TestEdgeTechProcessor:
 
         mock_er_client = mocker.MagicMock()
         mock_er_client.get_er_gears = AsyncMock(return_value=[])
-        mock_er_client.get_existing_source_id_by_manufacturer_id = AsyncMock(
-            side_effect=Exception("Test error")
+        mock_er_client.get_sources = AsyncMock(
+            side_effect=Exception("Test error accessing sources")
         )
         processor._er_client = mock_er_client
 
         with caplog.at_level(logging.ERROR):
-            gear_payloads = await processor.process()
-
-        # Should log the error
-        assert "Failed to create gear payload for deployment" in caplog.text
-        assert len(gear_payloads) == 0
+            with pytest.raises(Exception, match="Test error accessing sources"):
+                gear_payloads = await processor.process()
 
     @pytest.mark.asyncio
     async def test_process_update_missing_end_unit(
@@ -575,6 +578,7 @@ class TestEdgeTechProcessor:
 
         mock_er_client = mocker.MagicMock()
         mock_er_client.get_er_gears = AsyncMock(return_value=[mock_gear])
+        mock_er_client.get_sources = AsyncMock(return_value=[])
         mock_er_client.get_existing_source_id_by_manufacturer_id = AsyncMock(return_value=None)
         processor._er_client = mock_er_client
 
@@ -624,6 +628,7 @@ class TestEdgeTechProcessor:
 
         mock_er_client = mocker.MagicMock()
         mock_er_client.get_er_gears = AsyncMock(return_value=[mock_gear])
+        mock_er_client.get_sources = AsyncMock(return_value=[])
         mock_er_client.get_existing_source_id_by_manufacturer_id = AsyncMock(return_value=None)
         processor._er_client = mock_er_client
 
@@ -669,6 +674,7 @@ class TestEdgeTechProcessor:
 
         mock_er_client = mocker.MagicMock()
         mock_er_client.get_er_gears = AsyncMock(return_value=[mock_gear])
+        mock_er_client.get_sources = AsyncMock(return_value=[])
         mock_er_client.get_existing_source_id_by_manufacturer_id = AsyncMock(return_value=None)
         processor._er_client = mock_er_client
 
@@ -713,6 +719,7 @@ class TestEdgeTechProcessor:
 
         mock_er_client = mocker.MagicMock()
         mock_er_client.get_er_gears = AsyncMock(return_value=[mock_gear])
+        mock_er_client.get_sources = AsyncMock(return_value=[])
         mock_er_client.get_existing_source_id_by_manufacturer_id = AsyncMock(return_value=None)
         processor._er_client = mock_er_client
 
@@ -738,6 +745,7 @@ class TestEdgeTechProcessor:
         # This simulates a device that should be hauled but isn't found
         mock_er_client = mocker.MagicMock()
         mock_er_client.get_er_gears = AsyncMock(return_value=[])
+        mock_er_client.get_sources = AsyncMock(return_value=[])
         mock_er_client.get_existing_source_id_by_manufacturer_id = AsyncMock(return_value=None)
         processor._er_client = mock_er_client
 
@@ -782,6 +790,7 @@ class TestEdgeTechProcessor:
 
         mock_er_client = mocker.MagicMock()
         mock_er_client.get_er_gears = AsyncMock(return_value=[mock_gear])
+        mock_er_client.get_sources = AsyncMock(return_value=[])
         mock_er_client.get_existing_source_id_by_manufacturer_id = AsyncMock(return_value=None)
         processor._er_client = mock_er_client
 
@@ -829,6 +838,7 @@ class TestEdgeTechProcessor:
         # No existing ER gear (new deployment scenario)
         mock_er_client = mocker.MagicMock()
         mock_er_client.get_er_gears = AsyncMock(return_value=[])
+        mock_er_client.get_sources = AsyncMock(return_value=[])
         mock_er_client.get_existing_source_id_by_manufacturer_id = AsyncMock(return_value=None)
         processor._er_client = mock_er_client
 
@@ -918,6 +928,7 @@ class TestEdgeTechProcessor:
         # Mock the ER client to return the gear
         mock_er_client = mocker.MagicMock()
         mock_er_client.get_er_gears = AsyncMock(return_value=[mock_gear])
+        mock_er_client.get_sources = AsyncMock(return_value=[])
         mock_er_client.get_existing_source_id_by_manufacturer_id = AsyncMock(return_value=None)
         processor._er_client = mock_er_client
 
@@ -1011,6 +1022,7 @@ class TestEdgeTechProcessor:
         # Mock ER client to return no existing gears (deploy scenario)
         mock_er_client = mocker.MagicMock()
         mock_er_client.get_er_gears = AsyncMock(return_value=[])
+        mock_er_client.get_sources = AsyncMock(return_value=[])
         mock_er_client.get_existing_source_id_by_manufacturer_id = AsyncMock(return_value=None)
         processor._er_client = mock_er_client
 
