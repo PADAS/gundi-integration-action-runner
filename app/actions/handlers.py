@@ -13,7 +13,6 @@ from app.actions.edgetech.exceptions import InvalidCredentials
 from app.actions.edgetech.processor import EdgeTechProcessor
 from app.services.action_scheduler import crontab_schedule
 from app.services.activity_logger import activity_logger, log_action_activity
-from app.services.gundi import send_observations_to_gundi
 from app.services.utils import find_config_for_action
 
 logger = logging.getLogger(__name__)
@@ -56,23 +55,26 @@ async def process_destination(
     integration: Integration,
     data: List[dict],
     destination: ConnectionIntegration,
+    auth_config: EdgeTechAuthConfiguration,
     start_datetime: Optional[datetime] = None,
-) -> None:
+) -> Dict:
     """
     Process a single destination: retrieve credentials, run the EdgeTech processor,
-    send observations in batches, and log the activity.
+    convert observations to gear format, and send to Buoy API.
 
     :param gundi_client: Instance of GundiClient.
     :param integration: Integration object.
     :param data: Raw data from EdgeTechClient.
     :param destination: Destination object.
+    :param auth_config: EdgeTech auth configuration containing er_token.
     :param start_datetime: Optional datetime to filter observations from.
-    :return: Length of the observations list.
+    :return: Dictionary with processing results including total, success count, failure count, and failed payloads.
     """
     logger.info(
         f"Executing pull action for integration {integration} and destination {destination}..."
     )
-    er_destination_token, er_destination_url = await get_destination_credentials(
+    # Get only the destination URL, use er_token from auth_config
+    _, er_destination_url = await get_destination_credentials(
         gundi_client, destination
     )
     
@@ -80,21 +82,47 @@ async def process_destination(
     if start_datetime:
         filters = {"start_datetime": start_datetime}
         
-    processor = EdgeTechProcessor(data, er_destination_token, er_destination_url, filters=filters)
-    observations = await processor.process()
+    processor = EdgeTechProcessor(data, auth_config.er_token.get_secret_value(), er_destination_url, filters=filters)
+    gear_payloads = await processor.process()
 
-    for batch in generate_batches(observations):
-        result = await send_observations_to_gundi(
-            observations=batch, integration_id=str(integration.id)
-        )
-        logger.info(f"Sent {len(batch)} observations to Gundi: {result}")
+    # Send gear payloads directly to Buoy API and track results
+    success_count = 0
+    failure_count = 0
+    failed_payloads = []
+    
+    for idx, payload in enumerate(gear_payloads):
+        result = await processor._er_client.send_gear_to_buoy_api(payload)
+        if result.get("status") == "success":
+            success_count += 1
+            logger.info(f"Successfully sent gear set {idx + 1}/{len(gear_payloads)} to Buoy API")
+        else:
+            failure_count += 1
+            error_info = result.get("error") or result.get("response", "Unknown error")
+            logger.error(
+                f"Failed to send gear set {idx + 1}/{len(gear_payloads)} to Buoy API: {error_info}"
+            )
+            failed_payloads.append({"index": idx, "error": error_info})
+    
+    # Log activity with success/failure counts
+    log_level = LogLevel.INFO if failure_count == 0 else LogLevel.WARNING
+    title = (
+        f"Processed {len(gear_payloads)} gear sets: "
+        f"{success_count} successful, {failure_count} failed"
+    )
     await log_action_activity(
         integration_id=integration.id,
         action_id="pull_edgetech",
-        level=LogLevel.INFO,
-        title="Pulled data from EdgeTech API",
+        level=log_level,
+        title=title,
+        data={"total": len(gear_payloads), "success": success_count, "failures": failure_count},
     )
-    return len(observations)
+    
+    return {
+        "total": len(gear_payloads),
+        "success": success_count,
+        "failures": failure_count,
+        "failed_payloads": failed_payloads if failed_payloads else None,
+    }
 
 
 # --- Main Handler Functions ---
@@ -153,16 +181,17 @@ async def action_pull_edgetech_observations(
         minutes=action_config.minutes_to_sync
     )
     data = await edgetech_client.download_data(start_datetime=start_datetime)
-
     destination_result = {}
     for destination in connection_details.destinations:
-        observations = await process_destination(
-            gundi_client, integration, data, destination, start_datetime
+        result = await process_destination(
+            gundi_client, integration, data, destination, auth_config, start_datetime
         )
         destination_key = f"{destination.id}_{destination.name}"
         destination_result[destination_key] = {
             "records_extracted": len(data),
-            "observations_sent": observations,
+            "gear_payloads_total": result["total"],
+            "gear_payloads_successful": result["success"],
+            "gear_payloads_failed": result["failures"],
         }
 
     return destination_result

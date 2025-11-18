@@ -62,14 +62,16 @@ def sample_buoy_gear_data():
         "last_updated": "2025-08-31T10:00:00Z",
         "devices": [
             {
-                "device_id": "device-001",
+                "device_id": "579db58c-fb84-4bf2-9d59-33e010275f60",
+                "mfr_device_id": "mfr-device-001",
                 "label": "Test Device 1",
                 "location": {"latitude": 44.358265, "longitude": -68.16757},
                 "last_updated": "2025-08-31T10:00:00Z",
                 "last_deployed": "2025-08-31T09:00:00Z",
             },
             {
-                "device_id": "device-002",
+                "device_id": "227e7250-454b-4628-aae1-24de3bcbb914",
+                "mfr_device_id": "mfr-device-002",
                 "label": "Test Device 2",
                 "location": {"latitude": 44.3591792, "longitude": -68.167191},
                 "last_updated": "2025-08-31T10:00:00Z",
@@ -94,7 +96,8 @@ def sample_paginated_response():
                     "last_updated": "2025-08-31T10:00:00Z",
                     "devices": [
                         {
-                            "device_id": "device-001",
+                            "device_id": "7147061f-3073-496c-a80c-0b62569d8cc8",
+                            "mfr_device_id": "mfr-device-001",
                             "label": "Test Device 1",
                             "location": {"latitude": 44.358265, "longitude": -68.16757},
                             "last_updated": "2025-08-31T10:00:00Z",

@@ -1,14 +1,12 @@
 import logging
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import pydantic
 import pytest
 from freezegun import freeze_time
 
-from app.actions.buoy import ObservationSubject
-from app.actions.buoy.client import BuoyClient
 from app.actions.buoy.types import BuoyDevice, BuoyGear, DeviceLocation
 from app.actions.edgetech.processor import EdgeTechProcessor
 from app.actions.edgetech.types import Buoy
@@ -28,6 +26,8 @@ async def test_process_new_edgetech_trawl(mocker, a_new_edgetech_trawl_record):
     # Mock the ER client to return no existing gears (new deployment)
     mock_er_client = mocker.MagicMock()
     mock_er_client.get_er_gears = AsyncMock(return_value=[])
+    mock_er_client.get_sources = AsyncMock(return_value=[])
+    mock_er_client.get_existing_source_id_by_manufacturer_id = AsyncMock(return_value=None)
     processor._er_client = mock_er_client
 
     # Act & Assert - The process should complete without errors
@@ -35,33 +35,6 @@ async def test_process_new_edgetech_trawl(mocker, a_new_edgetech_trawl_record):
 
     # Verify that the ER client was called
     mock_er_client.get_er_gears.assert_called_once()
-
-
-@pytest.mark.asyncio
-@pytest.mark.usefixtures()
-@freeze_time("2025-05-25T17:53:19+00:00")
-async def test_process_deployed_in_er_missing_in_edgetech(
-    mocker, a_deployed_earthranger_subject
-):
-    """Test that the processor handles an empty data list."""
-    # Arrange
-    data = []
-    processor = EdgeTechProcessor(data=data, er_token="token", er_url="url")
-    mock_er_client = mocker.MagicMock()
-    mock_er_client.get_er_subjects = AsyncMock(
-        return_value=[
-            ObservationSubject.parse_obj(a_deployed_earthranger_subject),
-        ]
-    )
-    mock_er_client.get_er_gears = AsyncMock(return_value=[])
-    processor._er_client = mock_er_client
-
-    # Act
-    observations = await processor.process()
-
-    # Assert
-    expected_observations = []
-    assert observations == expected_observations
 
 
 @pytest.fixture
@@ -289,6 +262,7 @@ class TestEdgeTechProcessor:
 
         mock_device = BuoyDevice(
             device_id="8899CEDAAA_n9JpP3kk8vFVyNlzMnYZig9DnO475ztWV5JQ4z3RHwO19GPjN9sL8qDw8YgW_A",
+            mfr_device_id="8899CEDAAA_n9JpP3kk8vFVyNlzMnYZig9DnO475ztWV5JQ4z3RHwO19GPjN9sL8qDw8YgW_A",
             label="Test Device",
             location=DeviceLocation(latitude=44.358265, longitude=-68.16757),
             last_updated=older_time,
@@ -336,6 +310,7 @@ class TestEdgeTechProcessor:
         # Mock existing ER gear but no corresponding EdgeTech buoy
         mock_device = BuoyDevice(
             device_id="edgetech_MISSING123_userABC_A",
+            mfr_device_id="edgetech_MISSING123_userABC_A",
             label="Missing Device",
             location=DeviceLocation(latitude=44.0, longitude=-68.0),
             last_updated=datetime.now(timezone.utc),
@@ -381,6 +356,8 @@ class TestEdgeTechProcessor:
 
         mock_er_client = mocker.MagicMock()
         mock_er_client.get_er_gears = AsyncMock(return_value=[])
+        mock_er_client.get_sources = AsyncMock(return_value=[])
+        mock_er_client.get_existing_source_id_by_manufacturer_id = AsyncMock(return_value=None)
         processor._er_client = mock_er_client
 
         with caplog.at_level(logging.WARNING):
@@ -416,6 +393,8 @@ class TestEdgeTechProcessor:
 
         mock_er_client = mocker.MagicMock()
         mock_er_client.get_er_gears = AsyncMock(return_value=[])
+        mock_er_client.get_sources = AsyncMock(return_value=[])
+        mock_er_client.get_existing_source_id_by_manufacturer_id = AsyncMock(return_value=None)
         processor._er_client = mock_er_client
 
         # Act & Assert - The process should complete without errors
@@ -446,6 +425,7 @@ class TestEdgeTechProcessor:
 
         mock_device = BuoyDevice(
             device_id="8899CEDAAA_n9JpP3kk8vFVyNlzMnYZig9DnO475ztWV5JQ4z3RHwO19GPjN9sL8qDw8YgW_A",
+            mfr_device_id="8899CEDAAA_n9JpP3kk8vFVyNlzMnYZig9DnO475ztWV5JQ4z3RHwO19GPjN9sL8qDw8YgW_A",
             label="Test Device",
             location=DeviceLocation(latitude=44.0, longitude=-68.0),
             last_updated=older_time,
@@ -464,6 +444,8 @@ class TestEdgeTechProcessor:
 
         mock_er_client = mocker.MagicMock()
         mock_er_client.get_er_gears = AsyncMock(return_value=[mock_gear])
+        mock_er_client.get_sources = AsyncMock(return_value=[])
+        mock_er_client.get_existing_source_id_by_manufacturer_id = AsyncMock(return_value=None)
         processor._er_client = mock_er_client
 
         # Act
@@ -481,6 +463,7 @@ class TestEdgeTechProcessor:
 
         mock_device = BuoyDevice(
             device_id="edgetech_MISSING123_userABC_A",
+            mfr_device_id="edgetech_MISSING123_userABC_A",
             label="Missing Device",
             location=DeviceLocation(latitude=44.0, longitude=-68.0),
             last_updated=datetime.now(timezone.utc),
@@ -499,6 +482,8 @@ class TestEdgeTechProcessor:
 
         mock_er_client = mocker.MagicMock()
         mock_er_client.get_er_gears = AsyncMock(return_value=[mock_gear])
+        mock_er_client.get_sources = AsyncMock(return_value=[])
+        mock_er_client.get_existing_source_id_by_manufacturer_id = AsyncMock(return_value=None)
         processor._er_client = mock_er_client
 
         # Act
@@ -511,27 +496,20 @@ class TestEdgeTechProcessor:
     async def test_process_deploy_validation_error(
         self, mocker, caplog, a_new_edgetech_trawl_record
     ):
-        """Test handling of ValidationError during deployment observation creation."""
+        """Test handling of errors during deployment gear payload creation."""
         data = [a_new_edgetech_trawl_record]
         processor = EdgeTechProcessor(data=data, er_token="token", er_url="url")
 
         mock_er_client = mocker.MagicMock()
         mock_er_client.get_er_gears = AsyncMock(return_value=[])
+        mock_er_client.get_sources = AsyncMock(
+            side_effect=Exception("Test error accessing sources")
+        )
         processor._er_client = mock_er_client
 
-        # Mock create_observations on the Buoy class to raise ValidationError
-        mock_create_observations = mocker.patch(
-            "app.actions.edgetech.types.Buoy.create_observations"
-        )
-        validation_error = pydantic.ValidationError([], Buoy)
-        mock_create_observations.side_effect = validation_error
-
         with caplog.at_level(logging.ERROR):
-            observations = await processor.process()
-
-        # Should log the validation error
-        assert "Failed to create BuoyEvent" in caplog.text
-        assert len(observations) == 0
+            with pytest.raises(Exception, match="Test error accessing sources"):
+                gear_payloads = await processor.process()
 
     @pytest.mark.asyncio
     async def test_process_update_missing_end_unit(
@@ -550,6 +528,7 @@ class TestEdgeTechProcessor:
         # Create existing ER gear for update scenario with different location to trigger update path
         mock_device = BuoyDevice(
             device_id="8899CEDAAA_n9JpP3kk8vFVyNlzMnYZig9DnO475ztWV5JQ4z3RHwO19GPjN9sL8qDw8YgW_A",
+            mfr_device_id="8899CEDAAA_n9JpP3kk8vFVyNlzMnYZig9DnO475ztWV5JQ4z3RHwO19GPjN9sL8qDw8YgW_A",
             label="Test Device",
             location=DeviceLocation(latitude=44.0, longitude=-68.0),  # Different location
             last_updated=datetime(2025, 5, 20, 10, 0, 0, tzinfo=timezone.utc),
@@ -568,6 +547,8 @@ class TestEdgeTechProcessor:
 
         mock_er_client = mocker.MagicMock()
         mock_er_client.get_er_gears = AsyncMock(return_value=[mock_gear])
+        mock_er_client.get_sources = AsyncMock(return_value=[])
+        mock_er_client.get_existing_source_id_by_manufacturer_id = AsyncMock(return_value=None)
         processor._er_client = mock_er_client
 
         with caplog.at_level(logging.WARNING):
@@ -578,68 +559,17 @@ class TestEdgeTechProcessor:
         # Note: may still generate haul observations
 
     @pytest.mark.asyncio
-    async def test_process_update_skip_end_unit_record(
-        self, mocker, a_new_edgetech_trawl_record
-    ):
-        """Test skipping end unit record during update (should be handled by start unit)."""
-        # Create end unit record that should be skipped
-        end_unit_record = a_new_edgetech_trawl_record.copy()
-        end_unit_record["serialNumber"] = "END123"
-        end_unit_record["currentState"] = end_unit_record["currentState"].copy()
-        end_unit_record["currentState"]["serialNumber"] = "END123"
-        end_unit_record["currentState"]["isTwoUnitLine"] = True
-        end_unit_record["currentState"]["startUnit"] = "8899CEDAAA"  # This makes it an end unit
-        end_unit_record["currentState"]["endUnit"] = None
-
-        data = [end_unit_record]
-        processor = EdgeTechProcessor(data=data, er_token="token", er_url="url")
-
-        # Create existing ER gear for update scenario with different location to trigger update path
-        mock_device = BuoyDevice(
-            device_id="END123_n9JpP3kk8vFVyNlzMnYZig9DnO475ztWV5JQ4z3RHwO19GPjN9sL8qDw8YgW_A",
-            label="Test Device",
-            location=DeviceLocation(latitude=44.0, longitude=-68.0),  # Different location
-            last_updated=datetime(2025, 5, 20, 10, 0, 0, tzinfo=timezone.utc),
-            last_deployed=datetime(2025, 5, 20, 10, 0, 0, tzinfo=timezone.utc),
-        )
-
-        mock_gear = BuoyGear(
-            id=uuid4(),
-            display_id="GEAR123",
-            status="deployed",
-            last_updated=datetime(2025, 5, 20, 10, 0, 0, tzinfo=timezone.utc),
-            devices=[mock_device],
-            type="ropeless",
-            manufacturer="edgetech",
-        )
-
-        mock_er_client = mocker.MagicMock()
-        mock_er_client.get_er_gears = AsyncMock(return_value=[mock_gear])
-        processor._er_client = mock_er_client
-
-        # Mock create_observations to track if it's called
-        mock_create_observations = mocker.patch(
-            "app.actions.edgetech.types.Buoy.create_observations"
-        )
-
-        observations = await processor.process()
-
-        # Should skip processing this end unit record in update loop, 
-        # so create_observations should not be called for update
-        # (but it might be called once for haul observations)
-        assert mock_create_observations.call_count <= 1
-
-    @pytest.mark.asyncio
     async def test_process_update_validation_error(
         self, mocker, caplog, a_new_edgetech_trawl_record
     ):
-        """Test handling ValidationError during update observation creation."""
+        """Test handling ValidationError during update gear payload creation."""
         data = [a_new_edgetech_trawl_record]
         processor = EdgeTechProcessor(data=data, er_token="token", er_url="url")
 
         # Create existing ER gear for update scenario with different location
         mock_device = BuoyDevice(
             device_id="8899CEDAAA_n9JpP3kk8vFVyNlzMnYZig9DnO475ztWV5JQ4z3RHwO19GPjN9sL8qDw8YgW_A",
+            mfr_device_id="8899CEDAAA_n9JpP3kk8vFVyNlzMnYZig9DnO475ztWV5JQ4z3RHwO19GPjN9sL8qDw8YgW_A",
             label="Test Device",
             location=DeviceLocation(latitude=44.0, longitude=-68.0),  # Different location
             last_updated=datetime(2025, 5, 20, 10, 0, 0, tzinfo=timezone.utc),
@@ -658,32 +588,33 @@ class TestEdgeTechProcessor:
 
         mock_er_client = mocker.MagicMock()
         mock_er_client.get_er_gears = AsyncMock(return_value=[mock_gear])
+        mock_er_client.get_sources = AsyncMock(return_value=[])
+        mock_er_client.get_existing_source_id_by_manufacturer_id = AsyncMock(return_value=None)
         processor._er_client = mock_er_client
 
-        # Mock create_observations to raise ValidationError
-        mock_create_observations = mocker.patch(
-            "app.actions.edgetech.types.Buoy.create_observations"
-        )
-        validation_error = pydantic.ValidationError([], Buoy)
-        mock_create_observations.side_effect = validation_error
+        # Mock _create_gear_payload to raise ValidationError (async mock)
+        mock_create = AsyncMock(side_effect=pydantic.ValidationError([], Buoy))
+        mocker.patch.object(processor, '_create_gear_payload', mock_create)
 
         with caplog.at_level(logging.ERROR):
-            observations = await processor.process()
+            payloads = await processor.process()
 
-        # Should log the validation error
-        assert "Failed to create BuoyEvent" in caplog.text
+        # Should log the validation error for update
+        assert "Failed to create gear payload for update" in caplog.text
+        assert len(payloads) == 0
 
     @pytest.mark.asyncio
     async def test_process_update_general_exception(
         self, mocker, caplog, a_new_edgetech_trawl_record
     ):
-        """Test handling general Exception during update observation creation."""
+        """Test handling general Exception during update gear payload creation."""
         data = [a_new_edgetech_trawl_record]
         processor = EdgeTechProcessor(data=data, er_token="token", er_url="url")
 
         # Create existing ER gear for update scenario with different location
         mock_device = BuoyDevice(
             device_id="8899CEDAAA_n9JpP3kk8vFVyNlzMnYZig9DnO475ztWV5JQ4z3RHwO19GPjN9sL8qDw8YgW_A",
+            mfr_device_id="8899CEDAAA_n9JpP3kk8vFVyNlzMnYZig9DnO475ztWV5JQ4z3RHwO19GPjN9sL8qDw8YgW_A",
             label="Test Device",
             location=DeviceLocation(latitude=44.0, longitude=-68.0),  # Different location
             last_updated=datetime(2025, 5, 20, 10, 0, 0, tzinfo=timezone.utc),
@@ -702,20 +633,21 @@ class TestEdgeTechProcessor:
 
         mock_er_client = mocker.MagicMock()
         mock_er_client.get_er_gears = AsyncMock(return_value=[mock_gear])
+        mock_er_client.get_sources = AsyncMock(return_value=[])
+        mock_er_client.get_existing_source_id_by_manufacturer_id = AsyncMock(return_value=None)
         processor._er_client = mock_er_client
 
-        # Mock create_observations to raise general Exception
-        mock_create_observations = mocker.patch(
-            "app.actions.edgetech.types.Buoy.create_observations"
-        )
-        mock_create_observations.side_effect = Exception("General error")
+        # Mock _create_gear_payload to raise general Exception (async mock)
+        mock_create = AsyncMock(side_effect=Exception("General error"))
+        mocker.patch.object(processor, '_create_gear_payload', mock_create)
 
         with caplog.at_level(logging.ERROR):
-            observations = await processor.process()
+            payloads = await processor.process()
 
         # Should log the general exception
-        assert "Failed to create BuoyEvent" in caplog.text
+        assert "Failed to create gear payload for update" in caplog.text
         assert "General error" in caplog.text
+        assert len(payloads) == 0
 
     @pytest.mark.asyncio
     async def test_process_haul_no_er_subject_found(self, mocker, caplog):
@@ -727,6 +659,8 @@ class TestEdgeTechProcessor:
         # This simulates a device that should be hauled but isn't found
         mock_er_client = mocker.MagicMock()
         mock_er_client.get_er_gears = AsyncMock(return_value=[])
+        mock_er_client.get_sources = AsyncMock(return_value=[])
+        mock_er_client.get_existing_source_id_by_manufacturer_id = AsyncMock(return_value=None)
         processor._er_client = mock_er_client
 
         # Manually trigger the scenario by modifying the to_haul set
@@ -740,17 +674,18 @@ class TestEdgeTechProcessor:
             observations = await processor.process()
 
         # Should log warning about no ER subject found
-        assert "No ER subject found for device NONEXISTENT_DEVICE" in caplog.text
+        assert "No ER gear found for device NONEXISTENT_DEVICE" in caplog.text
         assert len(observations) == 0
 
     @pytest.mark.asyncio
     async def test_process_haul_validation_error(self, mocker, caplog):
-        """Test handling ValidationError during haul observation creation."""
+        """Test handling ValidationError during haul payload creation."""
         data = []
         processor = EdgeTechProcessor(data=data, er_token="token", er_url="url")
 
         mock_device = BuoyDevice(
             device_id="edgetech_HAUL123_userABC_A",
+            mfr_device_id="edgetech_HAUL123_userABC_A",
             label="Haul Device",
             location=DeviceLocation(latitude=44.0, longitude=-68.0),
             last_updated=datetime.now(timezone.utc),
@@ -769,20 +704,22 @@ class TestEdgeTechProcessor:
 
         mock_er_client = mocker.MagicMock()
         mock_er_client.get_er_gears = AsyncMock(return_value=[mock_gear])
+        mock_er_client.get_sources = AsyncMock(return_value=[])
+        mock_er_client.get_existing_source_id_by_manufacturer_id = AsyncMock(return_value=None)
         processor._er_client = mock_er_client
 
-        # Mock create_haul_observation to raise ValidationError
-        mock_create_haul = mocker.patch(
-            "app.actions.buoy.types.BuoyGear.create_haul_observation"
-        )
-        validation_error = pydantic.ValidationError([], BuoyGear)
-        mock_create_haul.side_effect = validation_error
+        # Mock _create_haul_payload to raise ValidationError
+        def raise_validation_error(*args, **kwargs):
+            raise pydantic.ValidationError([], BuoyGear)
+        
+        mocker.patch.object(processor, '_create_haul_payload', new=Mock(side_effect=raise_validation_error))
 
         with caplog.at_level(logging.ERROR):
-            await processor.process()
+            payloads = await processor.process()
 
         # Should log the validation error
-        assert "Failed to create haul observation" in caplog.text
+        assert "Failed to create haul payload for gear set" in caplog.text
+        assert len(payloads) == 0
 
     @pytest.mark.asyncio
     async def test_process_deploy_skip_end_unit_with_start_unit(
@@ -815,6 +752,8 @@ class TestEdgeTechProcessor:
         # No existing ER gear (new deployment scenario)
         mock_er_client = mocker.MagicMock()
         mock_er_client.get_er_gears = AsyncMock(return_value=[])
+        mock_er_client.get_sources = AsyncMock(return_value=[])
+        mock_er_client.get_existing_source_id_by_manufacturer_id = AsyncMock(return_value=None)
         processor._er_client = mock_er_client
 
         # The end unit should be skipped (line 258), so only start unit observations should be created
@@ -889,6 +828,7 @@ class TestEdgeTechProcessor:
         # Create a mock device with location as a tuple (to work around the processor bug)
         mock_device = Mock()
         mock_device.device_id = expected_device_id_primary
+        mock_device.mfr_device_id = expected_device_id_primary  # Add this field
         mock_device.location = Mock()
         mock_device.location.latitude = 44.358265
         mock_device.location.longitude = -68.16757  # exact same coordinates
@@ -902,6 +842,8 @@ class TestEdgeTechProcessor:
         # Mock the ER client to return the gear
         mock_er_client = mocker.MagicMock()
         mock_er_client.get_er_gears = AsyncMock(return_value=[mock_gear])
+        mock_er_client.get_sources = AsyncMock(return_value=[])
+        mock_er_client.get_existing_source_id_by_manufacturer_id = AsyncMock(return_value=None)
         processor._er_client = mock_er_client
 
         with caplog.at_level(logging.INFO):
@@ -994,10 +936,14 @@ class TestEdgeTechProcessor:
         # Mock ER client to return no existing gears (deploy scenario)
         mock_er_client = mocker.MagicMock()
         mock_er_client.get_er_gears = AsyncMock(return_value=[])
+        mock_er_client.get_sources = AsyncMock(return_value=[])
+        mock_er_client.get_existing_source_id_by_manufacturer_id = AsyncMock(return_value=None)
         processor._er_client = mock_er_client
 
-        observations = await processor.process()
+        payloads = await processor.process()
 
         # END456 record should be skipped due to line 258 (has startUnit set)
-        # Only COMPANION789 should generate observations (2 for single buoy)
-        assert len(observations) == 2
+        # Only COMPANION789 should generate a gear payload (1 payload with 2 devices for trawl)
+        assert len(payloads) == 1
+        assert payloads[0]["deployment_type"] == "trawl"
+        assert len(payloads[0]["devices"]) == 2

@@ -18,6 +18,12 @@ class EdgeTechAuthConfiguration(AuthActionConfiguration, ExecutableActionMixin):
         title="Client ID",
         description="Client ID for the Edge Tech API.",
     )
+    er_token: pydantic.SecretStr = pydantic.Field(
+        ...,
+        title="EarthRanger API Token",
+        description="API token used to authenticate with EarthRanger Gear API.",
+        format="password",
+    )
 
 
 class EdgeTechConfiguration(PullActionConfiguration):

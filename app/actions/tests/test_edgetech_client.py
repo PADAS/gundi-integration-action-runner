@@ -103,7 +103,9 @@ def auth_config():
         "token_type": "Bearer",
     }
     return EdgeTechAuthConfiguration(
-        token_json=SecretStr(json.dumps(token_data)), client_id="test_client_id"
+        token_json=SecretStr(json.dumps(token_data)), 
+        client_id="test_client_id",
+        er_token=SecretStr("test_er_token"),
     )
 
 

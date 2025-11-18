@@ -14,6 +14,7 @@ class TestEdgeTechAuthConfiguration:
                 '{"access_token": "test_token", "refresh_token": "refresh"}'
             ),
             client_id="test_client_id",
+            er_token=SecretStr("test_er_token"),
         )
 
         assert config.client_id == "test_client_id"
@@ -21,6 +22,7 @@ class TestEdgeTechAuthConfiguration:
             config.token_json.get_secret_value()
             == '{"access_token": "test_token", "refresh_token": "refresh"}'
         )
+        assert config.er_token.get_secret_value() == "test_er_token"
 
     def test_missing_token_json_raises_validation_error(self):
         """Test that missing token_json raises ValidationError."""
@@ -42,7 +44,9 @@ class TestEdgeTechAuthConfiguration:
         """Test that empty client_id is allowed."""
         # Empty client_id is actually allowed in the current implementation
         config = EdgeTechAuthConfiguration(
-            token_json=SecretStr('{"access_token": "test_token"}'), client_id=""
+            token_json=SecretStr('{"access_token": "test_token"}'), 
+            client_id="",
+            er_token=SecretStr("test_er_token"),
         )
         assert config.client_id == ""
 
