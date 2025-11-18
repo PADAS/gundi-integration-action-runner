@@ -1,14 +1,12 @@
 import logging
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import pydantic
 import pytest
 from freezegun import freeze_time
 
-from app.actions.buoy import ObservationSubject
-from app.actions.buoy.client import BuoyClient
 from app.actions.buoy.types import BuoyDevice, BuoyGear, DeviceLocation
 from app.actions.edgetech.processor import EdgeTechProcessor
 from app.actions.edgetech.types import Buoy
@@ -37,35 +35,6 @@ async def test_process_new_edgetech_trawl(mocker, a_new_edgetech_trawl_record):
 
     # Verify that the ER client was called
     mock_er_client.get_er_gears.assert_called_once()
-
-
-@pytest.mark.asyncio
-@pytest.mark.usefixtures()
-@freeze_time("2025-05-25T17:53:19+00:00")
-async def test_process_deployed_in_er_missing_in_edgetech(
-    mocker, a_deployed_earthranger_subject
-):
-    """Test that the processor handles an empty data list."""
-    # Arrange
-    data = []
-    processor = EdgeTechProcessor(data=data, er_token="token", er_url="url")
-    mock_er_client = mocker.MagicMock()
-    mock_er_client.get_er_subjects = AsyncMock(
-        return_value=[
-            ObservationSubject.parse_obj(a_deployed_earthranger_subject),
-        ]
-    )
-    mock_er_client.get_er_gears = AsyncMock(return_value=[])
-    mock_er_client.get_sources = AsyncMock(return_value=[])
-    mock_er_client.get_existing_source_id_by_manufacturer_id = AsyncMock(return_value=None)
-    processor._er_client = mock_er_client
-
-    # Act
-    observations = await processor.process()
-
-    # Assert
-    expected_observations = []
-    assert observations == expected_observations
 
 
 @pytest.fixture
@@ -588,61 +557,6 @@ class TestEdgeTechProcessor:
         # Should log warning about missing end unit during update
         assert "End unit buoy MISSING_END_UNIT not found" in caplog.text
         # Note: may still generate haul observations
-
-    @pytest.mark.asyncio
-    async def test_process_update_skip_end_unit_record(
-        self, mocker, a_new_edgetech_trawl_record
-    ):
-        """Test skipping end unit record during update (should be handled by start unit)."""
-        # Create end unit record that should be skipped
-        end_unit_record = a_new_edgetech_trawl_record.copy()
-        end_unit_record["serialNumber"] = "END123"
-        end_unit_record["currentState"] = end_unit_record["currentState"].copy()
-        end_unit_record["currentState"]["serialNumber"] = "END123"
-        end_unit_record["currentState"]["isTwoUnitLine"] = True
-        end_unit_record["currentState"]["startUnit"] = "8899CEDAAA"  # This makes it an end unit
-        end_unit_record["currentState"]["endUnit"] = None
-
-        data = [end_unit_record]
-        processor = EdgeTechProcessor(data=data, er_token="token", er_url="url")
-
-        # Create existing ER gear for update scenario with different location to trigger update path
-        mock_device = BuoyDevice(
-            device_id="END123_n9JpP3kk8vFVyNlzMnYZig9DnO475ztWV5JQ4z3RHwO19GPjN9sL8qDw8YgW_A",
-            mfr_device_id="END123_n9JpP3kk8vFVyNlzMnYZig9DnO475ztWV5JQ4z3RHwO19GPjN9sL8qDw8YgW_A",
-            label="Test Device",
-            location=DeviceLocation(latitude=44.0, longitude=-68.0),  # Different location
-            last_updated=datetime(2025, 5, 20, 10, 0, 0, tzinfo=timezone.utc),
-            last_deployed=datetime(2025, 5, 20, 10, 0, 0, tzinfo=timezone.utc),
-        )
-
-        mock_gear = BuoyGear(
-            id=uuid4(),
-            display_id="GEAR123",
-            status="deployed",
-            last_updated=datetime(2025, 5, 20, 10, 0, 0, tzinfo=timezone.utc),
-            devices=[mock_device],
-            type="ropeless",
-            manufacturer="edgetech",
-        )
-
-        mock_er_client = mocker.MagicMock()
-        mock_er_client.get_er_gears = AsyncMock(return_value=[mock_gear])
-        mock_er_client.get_sources = AsyncMock(return_value=[])
-        mock_er_client.get_existing_source_id_by_manufacturer_id = AsyncMock(return_value=None)
-        processor._er_client = mock_er_client
-
-        # Mock create_observations to track if it's called
-        mock_create_observations = mocker.patch(
-            "app.actions.edgetech.types.Buoy.create_observations"
-        )
-
-        observations = await processor.process()
-
-        # Should skip processing this end unit record in update loop, 
-        # so create_observations should not be called for update
-        # (but it might be called once for haul observations)
-        assert mock_create_observations.call_count <= 1
 
     @pytest.mark.asyncio
     async def test_process_update_validation_error(

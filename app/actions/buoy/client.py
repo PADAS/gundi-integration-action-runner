@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 
 import aiohttp
 
-from .types import BuoyGear, ObservationSubject
+from .types import BuoyGear
 
 logger = logging.getLogger(__name__)
 
