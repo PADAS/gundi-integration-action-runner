@@ -82,7 +82,7 @@ class EdgeTechProcessor:
             include_initial_deployment: Whether to include initial_deployment_date
 
         Returns:
-            Dict in the format expected by /api/v1/gears/ POST endpoint
+            Dict in the format expected by /api/v1/gear/ POST endpoint
         """
         hashed_user_id = get_hashed_user_id(buoy.userId)
 
@@ -175,7 +175,7 @@ class EdgeTechProcessor:
             owner_id: Owner/user ID
 
         Returns:
-            Dict in the format expected by /api/v1/gears/ POST endpoint
+            Dict in the format expected by /api/v1/gear/ POST endpoint
         """
         devices = []
         
