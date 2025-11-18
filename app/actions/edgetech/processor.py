@@ -2,8 +2,8 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
+from uuid import uuid4
 
-import aiohttp
 import pydantic
 
 from app.actions.buoy import BuoyClient
@@ -52,42 +52,18 @@ class EdgeTechProcessor:
         start_datetime = datetime.now(timezone.utc) - timedelta(minutes=30)
         return {"start_datetime": start_datetime}
 
-    async def send_gear_to_buoy_api(self, gear_payload: Dict[str, Any]) -> Dict[str, Any]:
+    def _remove_milliseconds(self, dt: datetime) -> datetime:
         """
-        Send gear payload to the Buoy API POST endpoint.
+        Remove milliseconds from a datetime object.
 
         Args:
-            gear_payload: The gear payload in the format expected by /api/v2/gears/
-
-        Returns:
-            Dict containing the API response
+            dt: The datetime object to process.
         """
-        url = f"{self._er_client.er_site}api/v1/gears/"
-        headers = {
-            "Authorization": f"Bearer {self._er_client.er_token}",
-            "Content-Type": "application/json",
-        }
+        return dt.replace(microsecond=0)
 
-        async with aiohttp.ClientSession() as session:
-            try:
-                async with session.post(url, json=gear_payload, headers=headers) as response:
-                    response_text = await response.text()
-                    if response.status in [200, 201]:
-                        logger.info(f"Successfully sent gear set to Buoy API: {response.status}")
-                        return {"status": "success", "status_code": response.status, "response": response_text}
-                    else:
-                        logger.error(
-                            f"Failed to send gear set to Buoy API. Status: {response.status}, Response: {response_text}"
-                        )
-                        return {"status": "error", "status_code": response.status, "response": response_text}
-            except Exception as e:
-                logger.exception(f"Exception while sending gear to Buoy API: {e}")
-                return {"status": "error", "error": str(e)}
-
-    def _create_gear_payload(
+    async def _create_gear_payload(
         self,
         buoy: Buoy,
-        owner_id: str,
         device_status: str,
         end_unit_buoy: Optional[Buoy] = None,
         set_id: Optional[str] = None,
@@ -105,93 +81,90 @@ class EdgeTechProcessor:
             include_initial_deployment: Whether to include initial_deployment_date
 
         Returns:
-            Dict in the format expected by /api/v2/gears/ POST endpoint
+            Dict in the format expected by /api/v1/gears/ POST endpoint
         """
         hashed_user_id = get_hashed_user_id(buoy.userId)
-        
-        # Generate set_id if not provided
-        if not set_id:
-            set_id = f"{buoy.serialNumber}_{hashed_user_id}"
-        
-        # Determine deployment type
-        deployment_type = "trawl" if end_unit_buoy else "single"
+
+        last_updated = buoy.currentState.lastUpdated
+        last_deployed = buoy.currentState.dateDeployed or last_updated
         
         # Create devices list
         devices = []
         
         # Main device
         main_device_id = f"{buoy.serialNumber}_{hashed_user_id}"
-        if end_unit_buoy:
-            main_device_id = f"{main_device_id}_A"
-        
-        last_updated = buoy.currentState.lastUpdated.isoformat()
+
+        secondary_device_id = None
+        if buoy.currentState.endLatDeg and buoy.currentState.endLonDeg:
+            main_device_id += "_A"
+            secondary_device_id = f"{buoy.serialNumber}_{hashed_user_id}_B"
+            secondary_latitude = buoy.currentState.endLatDeg
+            secondary_longitude = buoy.currentState.endLonDeg
+            secondary_last_deployed = buoy.currentState.dateDeployed or last_updated
+            secondary_device_additional_data = json.loads(buoy.json())
+            secondary_device_additional_data.pop("changeRecords", None)
+        elif end_unit_buoy:
+            secondary_device_id = f"{end_unit_buoy.serialNumber}_{hashed_user_id}"
+            secondary_latitude = end_unit_buoy.currentState.latDeg
+            secondary_longitude = end_unit_buoy.currentState.lonDeg
+            secondary_last_deployed = end_unit_buoy.currentState.dateDeployed or last_updated
+            secondary_device_additional_data = json.loads(end_unit_buoy.json())
+            secondary_device_additional_data.pop("changeRecords", None)
         
         main_device = {
+            "device_id": await self._er_client.get_existing_source_id_by_manufacturer_id(main_device_id) or str(uuid4()),
             "mfr_device_id": main_device_id,
-            "mfr_id": "edgetech",
-            "last_deployed": last_updated,
-            "last_updated": last_updated,
+            "last_deployed": self._remove_milliseconds(last_deployed).isoformat(),
+            "last_updated": self._remove_milliseconds(last_updated).isoformat(),
             "device_status": device_status,
-            "positioning_type": "gps",
-            "release_type": "acoustic",
             "location": {
                 "latitude": buoy.currentState.latDeg,
                 "longitude": buoy.currentState.lonDeg,
             },
         }
         
-        # Add raw data
-        raw_data = buoy.dict()
+        # Add raw data - convert to JSON-serializable format
+        raw_data = json.loads(buoy.json())
         raw_data.pop("changeRecords", None)
         main_device["device_additional_data"] = raw_data
         
         devices.append(main_device)
-        
-        # End unit device (if two-unit line)
-        if end_unit_buoy:
-            end_device_id = f"{end_unit_buoy.serialNumber}_{hashed_user_id}_B"
-            end_last_updated = end_unit_buoy.currentState.lastUpdated.isoformat()
-            
-            end_device = {
-                "mfr_device_id": end_device_id,
-                "mfr_id": "edgetech",
-                "last_deployed": end_last_updated,
-                "last_updated": end_last_updated,
+
+        if secondary_device_id:
+            secondary_device = {
+                "device_id": await self._er_client.get_existing_source_id_by_manufacturer_id(secondary_device_id) or str(uuid4()),
+                "mfr_device_id": secondary_device_id,
+                "last_deployed": self._remove_milliseconds(secondary_last_deployed).isoformat(),
+                "last_updated": self._remove_milliseconds(last_updated).isoformat(),
                 "device_status": device_status,
-                "positioning_type": "gps",
-                "release_type": "acoustic",
                 "location": {
-                    "latitude": end_unit_buoy.currentState.latDeg,
-                    "longitude": end_unit_buoy.currentState.lonDeg,
+                    "latitude": secondary_latitude,
+                    "longitude": secondary_longitude,
                 },
+                "device_additional_data": secondary_device_additional_data
             }
-            
-            end_raw_data = end_unit_buoy.dict()
-            end_raw_data.pop("changeRecords", None)
-            end_device["device_additional_data"] = end_raw_data
-            
-            devices.append(end_device)
+            devices.append(secondary_device)
+        
+        # Determine deployment type
+        deployment_type = "trawl" if len(devices) > 1 else "single"
         
         # Build payload
         payload = {
-            "owner_id": owner_id,
+            "owner_id": buoy.userId,
             "deployment_type": deployment_type,
-            "set_id": set_id,
-            "set_display_id": set_id,
             "devices_in_set": len(devices),
             "devices": devices,
         }
-        
-        # Add initial_deployment_date only for new deployments
-        if include_initial_deployment and device_status == "deployed":
-            payload["initial_deployment_date"] = buoy.currentState.lastUpdated.isoformat()
-        
+        if set_id:
+            payload["set_id"] = set_id
+
+        if include_initial_deployment:
+            payload["initial_deployment_date"] = self._remove_milliseconds(last_deployed).isoformat()
         return payload
 
     def _create_haul_payload(
         self,
-        er_gear: BuoyGear,
-        owner_id: str,
+        er_gear: BuoyGear
     ) -> Dict[str, Any]:
         """
         Create a haul payload from an existing ER gear.
@@ -201,14 +174,14 @@ class EdgeTechProcessor:
             owner_id: Owner/user ID
 
         Returns:
-            Dict in the format expected by /api/v2/gears/ POST endpoint
+            Dict in the format expected by /api/v1/gears/ POST endpoint
         """
         devices = []
         
         for device in er_gear.devices:
             haul_device = {
-                "mfr_device_id": device.device_id,
-                "mfr_id": "edgetech",
+                "device_id": device.device_id,
+                "mfr_device_id": device.mfr_device_id,
                 "last_deployed": device.last_deployed.isoformat() if device.last_deployed else device.last_updated.isoformat(),
                 "last_updated": datetime.now(timezone.utc).isoformat(),
                 "device_status": "hauled",
@@ -220,7 +193,6 @@ class EdgeTechProcessor:
             devices.append(haul_device)
         
         payload = {
-            "owner_id": owner_id,
             "deployment_type": er_gear.type,
             "set_id": er_gear.display_id,
             "devices": devices,
@@ -412,7 +384,7 @@ class EdgeTechProcessor:
         er_gears = await self._er_client.get_er_gears(params={"page_size": 10000})
 
         er_gears_devices_id_to_gear = {
-            device.device_id: gear
+            device.mfr_device_id: gear
             for gear in er_gears
             for device in gear.devices
         }
@@ -427,9 +399,6 @@ class EdgeTechProcessor:
         # Process deployments (new gear sets)
         for serial_number_user_id in to_deploy:
             edgetech_buoy = serial_number_to_edgetech_buoy[serial_number_user_id]
-            
-            # Extract owner_id from buoy data
-            owner_id = edgetech_buoy.userId
             
             try:
                 # Get end unit buoy if this is a two-unit line
@@ -450,9 +419,8 @@ class EdgeTechProcessor:
                         # This record is for the end unit, skip it (will be handled by start unit)
                         continue
 
-                payload = self._create_gear_payload(
+                payload = await self._create_gear_payload(
                     buoy=edgetech_buoy,
-                    owner_id=owner_id,
                     device_status="deployed",
                     end_unit_buoy=end_unit_buoy,
                     include_initial_deployment=True,
@@ -498,8 +466,6 @@ class EdgeTechProcessor:
                 )
                 continue
 
-            # Extract owner_id
-            owner_id = edgetech_buoy.userId
 
             try:
                 # Get end unit buoy if this is a two-unit line
@@ -523,7 +489,6 @@ class EdgeTechProcessor:
 
                 payload = self._create_gear_payload(
                     buoy=edgetech_buoy,
-                    owner_id=owner_id,
                     device_status="deployed",
                     end_unit_buoy=end_unit_buoy,
                     set_id=er_gear.display_id,
@@ -540,6 +505,9 @@ class EdgeTechProcessor:
                 )
 
         # Process hauls (gear sets to be retrieved)
+        # Group devices by gear set to avoid duplicate haul payloads
+        haul_gears_processed = set()
+        
         for device_id_user_id in to_haul:
             # Check if the device exists in ER
             if device_id_user_id not in er_gears_devices_id_to_gear:
@@ -551,20 +519,23 @@ class EdgeTechProcessor:
 
             er_gear = er_gears_devices_id_to_gear[device_id_user_id]
             
-            # Extract owner_id from the gear or use a default
-            owner_id = "edgetech_integration"  # Default, can be extracted from gear if available
+            # Skip if we already processed this gear set
+            if er_gear.display_id in haul_gears_processed:
+                logger.debug(f"Gear set {er_gear.display_id} already processed for haul, skipping device {device_id_user_id}")
+                continue
 
             try:
                 payload = self._create_haul_payload(
-                    er_gear=er_gear,
-                    owner_id=owner_id,
+                    er_gear=er_gear
                 )
                 gear_payloads.append(payload)
-                logger.info(f"Created haul payload for {device_id_user_id}")
+                haul_gears_processed.add(er_gear.display_id)
+                logger.info(f"Created haul payload for gear set {er_gear.display_id}")
                 
             except Exception as e:
                 logger.exception(
-                    "Failed to create haul payload for %s. Error: %s",
+                    "Failed to create haul payload for gear set %s (device %s). Error: %s",
+                    er_gear.display_id,
                     device_id_user_id,
                     str(e),
                 )

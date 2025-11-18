@@ -16,6 +16,7 @@ class DeviceLocation(BaseModel):
 
 class BuoyDevice(BaseModel):
     device_id: str
+    mfr_device_id: str
     label: str
     location: DeviceLocation
     last_updated: datetime

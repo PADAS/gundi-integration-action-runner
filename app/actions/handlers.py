@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
@@ -57,7 +56,7 @@ async def process_destination(
     data: List[dict],
     destination: ConnectionIntegration,
     start_datetime: Optional[datetime] = None,
-) -> None:
+) -> Dict:
     """
     Process a single destination: retrieve credentials, run the EdgeTech processor,
     convert observations to gear format, and send to Buoy API.
@@ -67,7 +66,7 @@ async def process_destination(
     :param data: Raw data from EdgeTechClient.
     :param destination: Destination object.
     :param start_datetime: Optional datetime to filter observations from.
-    :return: Length of the observations list.
+    :return: Dictionary with processing results including total, success count, failure count, and failed payloads.
     """
     logger.info(
         f"Executing pull action for integration {integration} and destination {destination}..."
@@ -83,18 +82,45 @@ async def process_destination(
     processor = EdgeTechProcessor(data, er_destination_token, er_destination_url, filters=filters)
     gear_payloads = await processor.process()
 
-    # Send gear payloads directly to Buoy API
-    for payload in gear_payloads:
-        result = await processor.send_gear_to_buoy_api(payload)
-        logger.info(f"Sent gear set to Buoy API: {result}")
+    # Send gear payloads directly to Buoy API and track results
+    success_count = 0
+    failure_count = 0
+    failed_payloads = []
     
+    for idx, payload in enumerate(gear_payloads):
+        result = await processor._er_client.send_gear_to_buoy_api(payload)
+        if result.get("status") == "success":
+            success_count += 1
+            logger.info(f"Successfully sent gear set {idx + 1}/{len(gear_payloads)} to Buoy API")
+        else:
+            failure_count += 1
+            error_info = result.get("error") or result.get("response", "Unknown error")
+            logger.error(
+                f"Failed to send gear set {idx + 1}/{len(gear_payloads)} to Buoy API: {error_info}"
+            )
+            failed_payloads.append({"index": idx, "error": error_info})
+    
+    # Log activity with success/failure counts
+    log_level = LogLevel.INFO if failure_count == 0 else LogLevel.WARNING
+    title = (
+        f"Processed {len(gear_payloads)} gear sets: "
+        f"{success_count} successful, {failure_count} failed"
+    )
     await log_action_activity(
         integration_id=integration.id,
         action_id="pull_edgetech",
-        level=LogLevel.INFO,
-        title="Pulled data from EdgeTech API and sent to Buoy API",
+        level=log_level,
+        title=title,
+        data={"total": len(gear_payloads), "success": success_count, "failures": failure_count}
+        if failure_count > 0 else None,
     )
-    return len(gear_payloads)
+    
+    return {
+        "total": len(gear_payloads),
+        "success": success_count,
+        "failures": failure_count,
+        "failed_payloads": failed_payloads if failed_payloads else None,
+    }
 
 
 # --- Main Handler Functions ---
@@ -155,13 +181,15 @@ async def action_pull_edgetech_observations(
     data = await edgetech_client.download_data(start_datetime=start_datetime)
     destination_result = {}
     for destination in connection_details.destinations:
-        gear_payloads_count = await process_destination(
+        result = await process_destination(
             gundi_client, integration, data, destination, start_datetime
         )
         destination_key = f"{destination.id}_{destination.name}"
         destination_result[destination_key] = {
             "records_extracted": len(data),
-            "gear_payloads_sent": gear_payloads_count,
+            "gear_payloads_total": result["total"],
+            "gear_payloads_successful": result["success"],
+            "gear_payloads_failed": result["failures"],
         }
 
     return destination_result
