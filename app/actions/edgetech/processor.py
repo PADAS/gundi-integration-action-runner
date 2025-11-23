@@ -151,13 +151,12 @@ class EdgeTechProcessor:
         
         # Build payload
         payload = {
+            "set_id": set_id or str(uuid4()),
             "owner_id": buoy.userId,
             "deployment_type": deployment_type,
             "devices_in_set": len(devices),
             "devices": devices,
         }
-        if set_id:
-            payload["set_id"] = set_id
 
         if include_initial_deployment:
             payload["initial_deployment_date"] = self._remove_milliseconds(last_deployed).isoformat()
@@ -505,7 +504,7 @@ class EdgeTechProcessor:
                     device_status="deployed",
                     manufacturer_id_to_source_id=manufacturer_id_to_source_id,
                     end_unit_buoy=end_unit_buoy,
-                    set_id=er_gear.display_id,
+                    set_id=er_gear.id,
                     include_initial_deployment=False,
                 )
                 gear_payloads.append(payload)
