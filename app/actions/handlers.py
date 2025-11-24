@@ -1,5 +1,5 @@
-import logging
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
@@ -100,7 +100,7 @@ async def process_destination(
             failure_count += 1
             error_info = result.get("error") or result.get("response", "Unknown error")
             logger.error(
-                f"Failed to send gear set {idx + 1}/{len(gear_payloads)} with payload \"{json.dumps(payload)}\" to Buoy API: {error_info}"
+                f"Failed to send gear set {idx + 1}/{len(gear_payloads)} with payload \"{json.dumps(payload, default=str)}\" to Buoy API: {error_info}"
             )
             failed_payloads.append({"index": idx, "error": error_info})
     
