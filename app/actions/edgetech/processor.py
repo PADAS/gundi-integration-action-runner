@@ -153,6 +153,7 @@ class EdgeTechProcessor:
         payload = {
             "set_id": set_id or str(uuid4()),
             "owner_id": buoy.userId,
+            "manufacturer_name": "EdgeTech",
             "deployment_type": deployment_type,
             "devices_in_set": len(devices),
             "devices": devices,
