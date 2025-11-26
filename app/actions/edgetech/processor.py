@@ -161,6 +161,8 @@ class EdgeTechProcessor:
 
         if include_initial_deployment:
             payload["initial_deployment_date"] = self._remove_milliseconds(last_deployed).isoformat()
+        payload_json = json.dumps(payload, default=str)
+        payload = json.loads(payload_json)
         return payload
 
     def _create_haul_payload(
@@ -340,7 +342,6 @@ class EdgeTechProcessor:
                     to_update.add(serial_number_user_id)
 
         for device_id_user_id in er_gears_devices_id_to_gear.keys():
-            logger.info(f'device_id_user_id: {device_id_user_id}')
             device_id, user_id = device_id_user_id.split("_", 1)
 
             device_id = device_id.replace(self._prefix, "")
