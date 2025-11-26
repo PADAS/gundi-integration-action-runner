@@ -197,6 +197,7 @@ class EdgeTechProcessor:
         
         payload = {
             "deployment_type": er_gear.type,
+            "manufacturer_name": "EdgeTech",
             "set_id": er_gear.display_id,
             "devices": devices,
         }
