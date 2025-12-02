@@ -429,9 +429,9 @@ class EdgeTechProcessor:
                         )
                         continue
                     
-                    if edgetech_buoy.currentState.startUnit:
-                        # This record is for the end unit, skip it (will be handled by start unit)
-                        continue
+                if edgetech_buoy.currentState.startUnit:
+                    # This record is for the end unit, skip it (will be handled by start unit)
+                    continue
 
                 payload = await self._create_gear_payload(
                     buoy=edgetech_buoy,
