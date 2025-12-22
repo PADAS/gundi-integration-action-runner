@@ -167,21 +167,51 @@ class EdgeTechProcessor:
 
     def _create_haul_payload(
         self,
-        er_gear: BuoyGear
+        er_gear: BuoyGear,
+        edgetech_buoy: Optional[Buoy] = None
     ) -> Dict[str, Any]:
         """
         Create a haul payload from an existing ER gear.
+        
+        Attempts to use recovery location from EdgeTech data if available,
+        otherwise falls back to the last known deployed location from ER.
 
         Args:
             er_gear: The existing gear from ER
-            owner_id: Owner/user ID
+            edgetech_buoy: Optional EdgeTech buoy data with potential recovery location
 
         Returns:
             Dict in the format expected by /api/v1/gear/ POST endpoint
         """
         devices = []
         
+        # Check if EdgeTech provides recovery location
+        recovery_location_available = False
+        recovery_lat = None
+        recovery_lon = None
+        
+        if edgetech_buoy and edgetech_buoy.currentState.recoveredLatDeg and edgetech_buoy.currentState.recoveredLonDeg:
+            recovery_location_available = True
+            recovery_lat = edgetech_buoy.currentState.recoveredLatDeg
+            recovery_lon = edgetech_buoy.currentState.recoveredLonDeg
+            logger.info(
+                f"Using recovery location from EdgeTech for gear {er_gear.display_id}: "
+                f"({recovery_lat}, {recovery_lon})"
+            )
+        
         for device in er_gear.devices:
+            # Use recovery location if available, otherwise use deployed location from ER
+            if recovery_location_available:
+                location_lat = recovery_lat
+                location_lon = recovery_lon
+            else:
+                location_lat = device.location.latitude
+                location_lon = device.location.longitude
+                logger.info(
+                    f"No recovery location available for device {device.mfr_device_id}, "
+                    f"using last deployed location from ER: ({location_lat}, {location_lon})"
+                )
+            
             haul_device = {
                 "device_id": device.device_id,
                 "mfr_device_id": device.mfr_device_id,
@@ -189,8 +219,8 @@ class EdgeTechProcessor:
                 "last_updated": self._remove_milliseconds(datetime.now(timezone.utc)).isoformat(),
                 "device_status": "hauled",
                 "location": {
-                    "latitude": device.location.latitude,
-                    "longitude": device.location.longitude,
+                    "latitude": location_lat,
+                    "longitude": location_lon,
                 },
             }
             devices.append(haul_device)
@@ -204,12 +234,37 @@ class EdgeTechProcessor:
         
         return payload
 
+    def _is_hauled_or_recovered(self, record: Buoy) -> bool:
+        """
+        Determine if a buoy record indicates a hauled/recovered state.
+        
+        A buoy is considered hauled/recovered if:
+        - isDeleted is True, OR
+        - isDeployed is False, OR
+        - dateRecovered is present
+        
+        Args:
+            record (Buoy): The buoy record to check.
+            
+        Returns:
+            bool: True if the buoy should be treated as hauled/recovered.
+        """
+        return (
+            record.currentState.isDeleted or
+            not record.currentState.isDeployed or
+            record.currentState.dateRecovered is not None
+        )
+    
     def _should_skip_buoy(self, record: Buoy) -> Tuple[bool, Optional[str]]:
         """
         Determine if a buoy record should be skipped during processing.
 
-        We only skip buoys that lack location data, as they cannot be processed.
-        Deleted and non-deployed buoys are kept in the dataset to properly detect haul events.
+        Buoys are kept in the dataset for processing if:
+        1. They have location data (deployed or recovery location), OR
+        2. They indicate a hauled/recovered state (even without recovery location)
+        
+        This ensures that hauled gears without recovery coordinates can still be 
+        updated to hauled status in EarthRanger.
 
         Args:
             record (Buoy): The buoy record to check.
@@ -219,11 +274,24 @@ class EdgeTechProcessor:
                 - bool: True if the record should be skipped, False otherwise
                 - Optional[str]: The reason for skipping, or None if not skipped
         """
-        # Only skip buoys without location data - we need deleted/non-deployed buoys to detect hauls
+        # Don't skip if buoy should be hauled - we need to process it even without recovery location
+        if self._is_hauled_or_recovered(record):
+            if not record.has_location:
+                logger.info(
+                    f"Processing hauled/recovered buoy {record.serialNumber} without recovery location "
+                    f"(isDeleted={record.currentState.isDeleted}, "
+                    f"isDeployed={record.currentState.isDeployed}, "
+                    f"dateRecovered={record.currentState.dateRecovered}). "
+                    f"Will use fallback location from deployed state or ER."
+                )
+            return False, None
+        
+        # For deployed buoys, location data is required
         if not record.has_location:
             return (
                 True,
-                f"Skipping buoy record with serial number {record.serialNumber} that has no location data. "
+                f"Skipping buoy record with serial number {record.serialNumber} that has no location data "
+                f"and is not in hauled/recovered state. "
                 f"Last updated at {record.currentState.lastUpdated}. "
                 f"(isDeleted={record.currentState.isDeleted}, isDeployed={record.currentState.isDeployed})",
             )
@@ -234,11 +302,14 @@ class EdgeTechProcessor:
         """
         Filter buoy data records to include only processable records.
 
-        This method now keeps deleted and non-deployed buoys in the dataset, as they are needed
-        to properly detect haul events. Only buoys without location data are filtered out.
+        This method keeps:
+        - Deployed/active buoys with location data
+        - Deleted/non-deployed buoys (for haul detection), even without recovery location
+        
+        Only skips buoys that are deployed but lack location data.
 
         Returns:
-            List[Buoy]: A list of Buoy objects that can be processed (have location data).
+            List[Buoy]: A list of Buoy objects that can be processed.
         """
         filtered_data: List[Buoy] = []
         skipped_serial_numbers: Set[str] = set()
@@ -323,9 +394,9 @@ class EdgeTechProcessor:
                 # Gear doesn't exist in ER - check if it should be deployed
                 if edgetech_buoy.currentState.isDeployed and not edgetech_buoy.currentState.isDeleted:
                     to_deploy.add(serial_number_user_id)
-                    logger.debug(f"Buoy {serial_number_user_id} marked for deployment (not in ER, deployed in EdgeTech)")
+                    logger.info(f"Buoy {serial_number_user_id} marked for deployment (not in ER, deployed in EdgeTech)")
                 else:
-                    logger.debug(f"Buoy {serial_number_user_id} skipped (not in ER, not deployed or deleted in EdgeTech)")
+                    logger.info(f"Buoy {serial_number_user_id} skipped (not in ER, not deployed or deleted in EdgeTech)")
             else:
                 # Gear exists in ER - determine if it needs update or haul
                 
@@ -335,13 +406,13 @@ class EdgeTechProcessor:
                     # Only mark for haul if ER still shows it as deployed
                     if er_gear.status == "deployed":
                         to_haul.add(serial_number_user_id)
-                        logger.debug(
+                        logger.info(
                             f"Buoy {serial_number_user_id} marked for haul "
                             f"(isDeleted={edgetech_buoy.currentState.isDeleted}, "
                             f"isDeployed={edgetech_buoy.currentState.isDeployed})"
                         )
                     else:
-                        logger.debug(f"Buoy {serial_number_user_id} already hauled in ER, skipping")
+                        logger.info(f"Buoy {serial_number_user_id} already hauled in ER, skipping")
                 else:
                     # Buoy is still deployed - check if it needs updating
                     edgetech_buoy_current_location = (
@@ -359,7 +430,7 @@ class EdgeTechProcessor:
                     
                     if location_changed or has_newer_data:
                         to_update.add(serial_number_user_id)
-                        logger.debug(
+                        logger.info(
                             f"Buoy {serial_number_user_id} marked for update "
                             f"(location_changed={location_changed}, has_newer_data={has_newer_data})"
                         )
@@ -559,6 +630,9 @@ class EdgeTechProcessor:
             primary_device_name = f"{serial_number}_{hashed_user_id}_A"
             single_device_name = f"{serial_number}_{hashed_user_id}"
             
+            # Get the EdgeTech buoy data for potential recovery location
+            edgetech_buoy = serial_number_to_edgetech_buoy.get(serial_number_user_id)
+            
             # Find the corresponding ER gear
             er_gear = er_gears_devices_id_to_gear.get(primary_device_name) or er_gears_devices_id_to_gear.get(single_device_name)
             
@@ -573,7 +647,7 @@ class EdgeTechProcessor:
             
             # Skip if we already processed this gear set
             if er_gear.display_id in haul_gears_processed:
-                logger.debug(
+                logger.info(
                     f"Gear set {er_gear.display_id} already processed for haul, "
                     f"skipping buoy {serial_number_user_id}"
                 )
@@ -581,7 +655,8 @@ class EdgeTechProcessor:
 
             try:
                 payload = self._create_haul_payload(
-                    er_gear=er_gear
+                    er_gear=er_gear,
+                    edgetech_buoy=edgetech_buoy
                 )
                 gear_payloads.append(payload)
                 haul_gears_processed.add(er_gear.display_id)
