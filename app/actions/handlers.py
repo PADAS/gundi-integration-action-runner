@@ -1,19 +1,20 @@
-import httpx
+from datetime import date, datetime, timedelta, timezone
 import logging
-
-from datetime import datetime, timezone, timedelta
 from math import ceil
-from app.actions.configurations import AuthenticateConfig, PullEventsConfig
-from app.services.activity_logger import activity_logger, log_action_activity
-from app.services.gundi import send_events_to_gundi, update_event_in_gundi, send_event_attachments_to_gundi
-from app.services.state import IntegrationStateManager
-from gundi_core.schemas.v2 import Integration, LogLevel
-from pyinaturalist import get_observations_v2, Observation, Annotation
 from typing import Dict, List
-from urllib.parse import urlparse
-from urllib.request import urlretrieve
 
-import re
+from gundi_core.schemas.v2 import Integration, LogLevel
+import httpx
+from pyinaturalist import Annotation, Observation, get_observations_v2
+
+from app.actions.configurations import PullEventsConfig
+from app.services.activity_logger import activity_logger, log_action_activity
+from app.services.gundi import (
+    send_event_attachments_to_gundi,
+    send_events_to_gundi,
+    update_event_in_gundi,
+)
+from app.services.state import IntegrationStateManager
 
 GUNDI_SUBMISSION_CHUNK_SIZE = 100
 
@@ -69,8 +70,8 @@ def get_inaturalist_observations(integration: Integration, config: PullEventsCon
         get_observations_params["swlat"] = swlat
         get_observations_params["swlng"] = swlng
     inat_count_req = get_observations_v2(**get_observations_params)
-    inat_count = inat_count_req.get("total_results")
-    pages = ceil(inat_count/200)
+    inat_count = inat_count_req.get("total_results") or 0
+    pages = ceil(inat_count / 200) if inat_count else 0
 
     observation_map = {}
     for page in range(1,pages+1):
@@ -238,12 +239,12 @@ async def process_attachments(events, response, all_event_photos, integration):
 
                 attachments.append((filename, img))
 
-            response = await send_event_attachments_to_gundi(
+            attachments_response = await send_event_attachments_to_gundi(
                 event_id=gundi_id,
                 attachments=attachments,
                 integration_id=str(integration.id)
             )
-            if response:
+            if attachments_response:
                 attachments_processed += len(attachments)
         except Exception as e:
             request = {
@@ -297,7 +298,8 @@ async def save_events_state(response, events, integration):
                 source_id=event_id
             )
         except Exception as e:
-            message = f"Error while saving event ID '{event.get('event_id')}'. Exception: {e}."
+            inat_id = event.get("event_details", {}).get("inat_id", "unknown")
+            message = f"Error while saving event ID '{inat_id}'. Exception: {e}."
             logger.exception(message, extra={
                 "integration_id": str(integration.id),
                 "attention_needed": True
@@ -305,28 +307,42 @@ async def save_events_state(response, events, integration):
             raise e
 
 
-def _match_annotations_to_config(annotations: List[Annotation], config: Dict[int, List[int]]):
+def _match_annotations_to_config(annotations: List[Annotation], config: Dict) -> bool:
+    """Check that the observation has all annotation term/value pairs required by config."""
     annot_map = {}
     for annotation in annotations:
-        if(annotation.term not in annot_map):
-            annot_map[annotation.term] = []
-        annot_map[annotation.term].append(annotation.value)
+        key = str(annotation.term)
+        if key not in annot_map:
+            annot_map[key] = []
+        annot_map[key].append(str(annotation.value))
 
-    for term, values in config:
-        if(str(term) not in annot_map):
+    for term, values in config.items():
+        term_str = str(term)
+        if term_str not in annot_map:
             return False
+        allowed = annot_map[term_str]
         for value in values:
-            if(str(value) not in annot_map[str(term)]):
+            if str(value) not in allowed:
                 return False
-    
     return True
+
+
+def _normalize_recorded_at(observed_on, created_at):
+    """Return a timezone-aware datetime for Gundi recorded_at (date or datetime, naive or aware)."""
+    if not observed_on:
+        return created_at
+    if isinstance(observed_on, date) and not isinstance(observed_on, datetime):
+        return datetime.combine(observed_on, datetime.min.time(), tzinfo=timezone.utc)
+    if getattr(observed_on, "tzinfo", None) is None:
+        return observed_on.replace(tzinfo=timezone.utc)
+    return observed_on
 
 
 def _transform_inat_to_gundi_event(ob: Observation, config: PullEventsConfig):
     
     event = {
         "event_type": config.event_type,
-        "recorded_at": ob.observed_on.replace(tzinfo=timezone.utc) if ob.observed_on else ob.created_at,
+        "recorded_at": _normalize_recorded_at(ob.observed_on, ob.created_at),
         "event_details": {
             "inat_id": str(ob.id),
             "captive": ob.captive,
@@ -349,8 +365,8 @@ def _transform_inat_to_gundi_event(ob: Observation, config: PullEventsConfig):
             "lat": ob.location[0],
             "lon": ob.location[1] }
 
-    if(ob.place_ids):
-        event["event_details"]["place_ids"] = ",".join([str(int) for int in ob.place_ids])
+    if ob.place_ids:
+        event["event_details"]["place_ids"] = ",".join(str(pid) for pid in ob.place_ids)
 
     if(ob.taxon):
         event["event_details"].update({
@@ -364,8 +380,8 @@ def _transform_inat_to_gundi_event(ob: Observation, config: PullEventsConfig):
 
         if(ob.taxon.preferred_common_name):
             event["title"] = ob.taxon.preferred_common_name
-        if(ob.taxon.ancestor_ids):
-            event["event_details"]["taxon_ancestors"] = ",".join([str(int) for int in ob.taxon.ancestor_ids])
+        if ob.taxon.ancestor_ids:
+            event["event_details"]["taxon_ancestors"] = ",".join(str(aid) for aid in ob.taxon.ancestor_ids)
 
     if(not event.get("title")):
         event["title"] = "Unknown" if not ob.species_guess else ob.species_guess
