@@ -5,9 +5,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from app.conftest import async_return
 from app.actions.handlers import (
     STATE_DATETIME_FMT,
     STATE_LAST_RUN_KEY,
+    STATE_INAT_UPDATED_AT_KEY,
     _build_pull_events_state,
     _get_load_since,
     _normalize_recorded_at,
@@ -248,6 +250,60 @@ async def test_handle_transformed_data_success(mocker):
         action_id="pull_events",
     )
     assert result == ["id-1"]
+
+
+@pytest.mark.asyncio
+async def test_action_pull_events_skips_patch_when_observation_already_in_sync(mocker):
+    """When state has inat_updated_at equal to observation.updated_at, we should not patch (avoids updating every run)."""
+    from uuid import UUID
+    from pyinaturalist import Observation
+
+    fixed_updated = datetime(2024, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
+    ob = Observation.from_json({
+        "id": 999,
+        "observed_on": "2024-06-15",
+        "created_at": "2024-06-15T10:00:00+00:00",
+        "updated_at": fixed_updated,
+        "captive": False,
+        "obscured": False,
+        "quality_grade": "research",
+        "species_guess": "Bird",
+        "uri": "https://www.inaturalist.org/observations/999",
+        "photos": [],
+        "user": None,
+        "location": None,
+        "place_ids": [],
+        "taxon": None,
+        "annotations": [],
+    })
+    observations_map = {999: ob}
+
+    async def get_state_side_effect(integration_id, action_id, source_id="no-source"):
+        if source_id == "no-source":
+            return {STATE_LAST_RUN_KEY: "2024-06-01 00:00:00+0000"}
+        if source_id == "999":
+            return {
+                "object_id": "gundi-uuid-999",
+                STATE_INAT_UPDATED_AT_KEY: fixed_updated.strftime(STATE_DATETIME_FMT),
+            }
+        return {}
+
+    mock_state = AsyncMock()
+    mock_state.get_state.side_effect = get_state_side_effect
+    mocker.patch("app.actions.handlers.state_manager", mock_state)
+    mocker.patch("app.actions.handlers.get_observations", return_value=observations_map)
+    mocker.patch("app.services.activity_logger.publish_event", AsyncMock())
+    mock_patch_events = mocker.patch("app.actions.handlers.patch_events", new_callable=AsyncMock)
+
+    integration = MagicMock()
+    integration.id = UUID("f03ec73e-f3fe-41b6-8597-3eb89dde5ae1")
+    config = PullEventsConfig(days_to_load=3, event_prefix="iNat: ")
+
+    result = await action_pull_events(integration, config)
+
+    assert result["result"]["events_updated"] == 0
+    assert result["result"]["events_extracted"] == 0
+    mock_patch_events.assert_not_called()
 
 
 @pytest.mark.asyncio

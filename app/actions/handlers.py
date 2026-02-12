@@ -21,6 +21,8 @@ GUNDI_SUBMISSION_CHUNK_SIZE = 100
 # Pull-events state: single key for the cursor (legacy "updated_to" still read for backward compatibility)
 STATE_LAST_RUN_KEY = "last_run"
 STATE_DATETIME_FMT = "%Y-%m-%d %H:%M:%S%z"
+# Per-observation state: when we last synced this observation to Gundi (so we only patch when it changes)
+STATE_INAT_UPDATED_AT_KEY = "inat_updated_at"
 
 logger = logging.getLogger(__name__)
 state_manager = IntegrationStateManager()
@@ -102,16 +104,30 @@ async def action_pull_events(integration: Integration, action_config: PullEvents
     logger.info(f"Processing {len(observations)} observations from iNaturalist.")
 
     async def get_inaturalist_events_to_patch():
-        # Get through the events and check if state_manager has it recorded from a previous execution
+        # Split observations into: new (create in Gundi) vs existing (patch only if observation changed).
         patch_these_events = []
         process_these_events = []
         for event_id, observation in observations.items():
             saved_event = await state_manager.get_state(str(integration.id), "pull_events", str(event_id))
-            if saved_event:
-                # Event already exists, will patch it
-                patch_these_events.append((saved_event.get("object_id"), observation))
-            else:
+            if not saved_event:
                 process_these_events.append(observation)
+                continue
+            # Only patch when the observation has changed since we last synced it (avoids updating every run)
+            last_synced_at = saved_event.get(STATE_INAT_UPDATED_AT_KEY)
+            if last_synced_at:
+                try:
+                    if isinstance(last_synced_at, str):
+                        last_synced_at = datetime.strptime(last_synced_at, STATE_DATETIME_FMT)
+                    ob_updated = observation.updated_at
+                    if ob_updated.tzinfo is None:
+                        ob_updated = ob_updated.replace(tzinfo=timezone.utc)
+                    if last_synced_at.tzinfo is None:
+                        last_synced_at = last_synced_at.replace(tzinfo=timezone.utc)
+                    if ob_updated <= last_synced_at:
+                        continue  # Already in sync, skip patch
+                except (ValueError, TypeError):
+                    pass  # Bad or legacy value, patch to be safe
+            patch_these_events.append((saved_event.get("object_id"), observation))
         return process_these_events, patch_these_events
 
     filtered_observations, events_to_patch = await get_inaturalist_events_to_patch()
@@ -124,6 +140,7 @@ async def action_pull_events(integration: Integration, action_config: PullEvents
 
     if filtered_observations:
         all_event_photos = {}
+        inat_updated_at_map = {}  # inat_id -> updated_at for state we persist after create
         newest = None
         for ob in filtered_observations:
 
@@ -134,6 +151,7 @@ async def action_pull_events(integration: Integration, action_config: PullEvents
             events_to_process.append(e)
 
             inat_id = e['event_details']['inat_id']
+            inat_updated_at_map[inat_id] = ob.updated_at
             all_event_photos[inat_id] = []
             for photo in ob.photos:
                 all_event_photos[inat_id].append((photo.id, photo.large_url if photo.large_url else photo.url))
@@ -153,7 +171,7 @@ async def action_pull_events(integration: Integration, action_config: PullEvents
                     attachments_response = await process_attachments(to_add_chunk, response, all_event_photos, integration)
                     attachment_count += attachments_response
                 # Process events to patch
-                await save_events_state(response, to_add_chunk, integration)
+                await save_events_state(response, to_add_chunk, integration, inat_updated_at_map)
 
     else:
         logger.info(f"No new iNaturalist observations to process for integration ID: {str(integration.id)}.")
@@ -163,6 +181,7 @@ async def action_pull_events(integration: Integration, action_config: PullEvents
         logger.info(f"Updating {len(events_to_patch)} events from iNaturalist observations to Gundi for integration ID: {str(integration.id)}.")
         response = await patch_events(events_to_patch, action_config, integration)
         updated_count += len(response)
+        await save_patched_events_state(events_to_patch, integration)
 
     last_updated = max(ob.updated_at for ob in observations.values())
     logger.info("Updating state through %s", last_updated)
@@ -246,14 +265,23 @@ async def patch_events(events, updated_config_data, integration):
     return responses
 
 
-async def save_events_state(response, events, integration):
+async def save_events_state(response, events, integration, inat_updated_at_map=None):
+    """Persist Gundi event state per observation so we know what we created and when we last synced."""
+    inat_updated_at_map = inat_updated_at_map or {}
     for saved_event, event in zip(response, events):
         try:
             event_id = event["event_details"]["inat_id"]
+            state = dict(saved_event)
+            updated_at = inat_updated_at_map.get(event_id)
+            if updated_at is not None:
+                state[STATE_INAT_UPDATED_AT_KEY] = (
+                    updated_at.strftime(STATE_DATETIME_FMT)
+                    if hasattr(updated_at, "strftime") else str(updated_at)
+                )
             await state_manager.set_state(
                 integration_id=str(integration.id),
                 action_id="pull_events",
-                state=saved_event,
+                state=state,
                 source_id=event_id
             )
         except Exception as e:
@@ -263,6 +291,34 @@ async def save_events_state(response, events, integration):
                 "integration_id": str(integration.id),
                 "attention_needed": True
             })
+            raise e
+
+
+async def save_patched_events_state(events_to_patch, integration):
+    """After patching, update per-observation state so we don't patch again until the observation changes."""
+    for gundi_object_id, observation in events_to_patch:
+        try:
+            updated_at = observation.updated_at
+            state = {
+                "object_id": gundi_object_id,
+                STATE_INAT_UPDATED_AT_KEY: (
+                    updated_at.strftime(STATE_DATETIME_FMT)
+                    if hasattr(updated_at, "strftime") else str(updated_at)
+                ),
+            }
+            await state_manager.set_state(
+                integration_id=str(integration.id),
+                action_id="pull_events",
+                state=state,
+                source_id=str(observation.id),
+            )
+        except Exception as e:
+            logger.exception(
+                "Error saving state for patched observation %s: %s",
+                observation.id,
+                e,
+                extra={"integration_id": str(integration.id), "attention_needed": True},
+            )
             raise e
 
 
