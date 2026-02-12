@@ -1,11 +1,10 @@
 from datetime import date, datetime, timedelta, timezone
 import logging
-from math import ceil
 from typing import Dict, List
 
-from gundi_core.schemas.v2 import Integration, LogLevel
 import httpx
-from pyinaturalist import Annotation, Observation, get_observations_v2
+from gundi_core.schemas.v2 import Integration, LogLevel
+from pyinaturalist import Observation
 
 from app.actions.configurations import PullEventsConfig
 from app.services.activity_logger import activity_logger, log_action_activity
@@ -14,12 +13,30 @@ from app.services.gundi import (
     send_events_to_gundi,
     update_event_in_gundi,
 )
+from app.datasource.inaturalist import get_observations
 from app.services.state import IntegrationStateManager
 
 GUNDI_SUBMISSION_CHUNK_SIZE = 100
 
+# Pull-events state: single key for the cursor (legacy "updated_to" still read for backward compatibility)
+STATE_LAST_RUN_KEY = "last_run"
+STATE_DATETIME_FMT = "%Y-%m-%d %H:%M:%S%z"
+
 logger = logging.getLogger(__name__)
 state_manager = IntegrationStateManager()
+
+
+def _get_load_since(state: dict, fallback_days: int) -> datetime:
+    """Return the datetime to use for updated_since. Uses stored cursor or now - fallback_days."""
+    raw = state.get(STATE_LAST_RUN_KEY) or state.get("updated_to")
+    if raw:
+        return datetime.strptime(raw, STATE_DATETIME_FMT)
+    return datetime.now(tz=timezone.utc) - timedelta(days=fallback_days)
+
+
+def _build_pull_events_state(last_updated: datetime) -> dict:
+    """Build the state dict to persist after a pull_events run."""
+    return {STATE_LAST_RUN_KEY: last_updated.strftime(STATE_DATETIME_FMT)}
 
 async def handle_transformed_data(transformed_data, integration_id, action_id):
     try:
@@ -41,70 +58,6 @@ async def handle_transformed_data(transformed_data, integration_id, action_id):
     else:
         return response
 
-def get_inaturalist_observations(integration: Integration, config: PullEventsConfig, since: datetime):
-
-    nelat = nelng = swlat = swlng = None
-    if(config.bounding_box):
-        nelat, nelng, swlat, swlng = config.bounding_box
-
-    target_taxa = []
-    for taxa in config.taxa:
-        target_taxa.append(str(taxa))
-    target_taxa = ",".join(target_taxa)
-
-    fields = ",".join(["observed_on", "created_at", "id", "captive", "obscured", "place_guess", "quality_grade", "species_guess", "updated_at", 
-                       "uri", "photos", "user", "location", "place_ids", "taxon", "photos.large_url", "photos.url", "taxon.id", "taxon.rank", "taxon.name",
-                       "taxon.preferred_common_name", "taxon.wikipedia_url", "taxon.conservation_status", "user.id", "user.name", "user.login",
-                       "annotations.controlled_attribute_id", "annotations.controlled_value_id"])
-    get_observations_params = { "page": 1,
-                                "per_page": 0,
-                                "updated_since": since,
-                                "project_id" : config.projects,
-                                "quality_grade" : config.quality_grade,
-                                "taxon_id" : target_taxa, 
-                                "order_by" : "updated_at", 
-                                "order" : "asc"}
-    if nelat and nelng and swlat and swlng:
-        get_observations_params["nelat"] = nelat
-        get_observations_params["nelng"] = nelng
-        get_observations_params["swlat"] = swlat
-        get_observations_params["swlng"] = swlng
-    inat_count_req = get_observations_v2(**get_observations_params)
-    inat_count = inat_count_req.get("total_results") or 0
-    pages = ceil(inat_count / 200) if inat_count else 0
-
-    observation_map = {}
-    for page in range(1,pages+1):
-        logger.debug(f"Loading page {page} of {pages} from iNaturalist")
-        get_observations_v2_params = {
-            "page" : page,
-            "per_page" : 200, 
-            "updated_since" : since, 
-            "project_id" : config.projects,
-            "quality_grade" : config.quality_grade, 
-            "taxon_id" : target_taxa,
-            "order_by" : 'updated_at', 
-            "order":"asc", 
-            "fields":fields
-        }
-        if nelat and nelng and swlat and swlng:
-            get_observations_v2_params["nelat"] = nelat
-            get_observations_v2_params["nelng"] = nelng
-            get_observations_v2_params["swlat"] = swlat
-            get_observations_v2_params["swlng"] = swlng
-        response = get_observations_v2(**get_observations_v2_params)
-        observations = Observation.from_json_list(response)
-
-        logger.info(f"Loaded {len(observations)} observations from iNaturalist before annotation filters.")
-        for o in observations:
-            if(config.annotations):
-                if(_match_annotations_to_config(o.annotations, config.annotations)):    
-                    observation_map[o.id] = o
-            else:
-                observation_map[o.id] = o
-
-    return observation_map
-
 def chunk_list(list_a, chunk_size):
   for i in range(0, len(list_a), chunk_size):
     yield list_a[i:i + chunk_size]
@@ -115,15 +68,17 @@ async def action_pull_events(integration: Integration, action_config: PullEvents
     logger.info(f"Executing 'pull_events' action with integration {integration} and action_config {action_config}...")
 
     state = await state_manager.get_state(integration.id, "pull_events")
+    load_since = _get_load_since(state, action_config.days_to_load)
 
-    last_run = state.get('updated_to') or state.get('last_run')
-    now = datetime.now(tz=timezone.utc)
-    if(last_run):
-        load_since = datetime.strptime(last_run, '%Y-%m-%d %H:%M:%S%z')
-    else:
-        load_since = now - timedelta(days=action_config.days_to_load)
-
-    observations = get_inaturalist_observations(integration, action_config, load_since)
+    # Todo: write an async version of get_observations that uses httpx.AsyncClient to fetch the observations.
+    observations = get_observations(
+        load_since,
+        bounding_box=action_config.bounding_box,
+        taxa=action_config.taxa,
+        projects=action_config.projects,
+        quality_grade=action_config.quality_grade,
+        annotations=action_config.annotations,
+    )
 
     if not observations:
         msg = f"No new iNaturalist observations to process for integration ID: {str(integration.id)}."
@@ -134,6 +89,11 @@ async def action_pull_events(integration: Integration, action_config: PullEvents
             level=LogLevel.WARNING,
             title=msg,
             data={"message": msg}
+        )
+        # Advance cursor so next run doesn't re-query the same window (avoids repeated heavy requests)
+        now = datetime.now(tz=timezone.utc)
+        await state_manager.set_state(
+            str(integration.id), "pull_events", _build_pull_events_state(now)
         )
         return {'result': {'events_extracted': 0,
                            'events_updated': 0,
@@ -204,12 +164,11 @@ async def action_pull_events(integration: Integration, action_config: PullEvents
         response = await patch_events(events_to_patch, action_config, integration)
         updated_count += len(response)
 
-    # Taking the most recent 'updated_at' date from all the extracted obs from iNaturalist
     last_updated = max(ob.updated_at for ob in observations.values())
-
-    logger.info(f"Updating state through {last_updated}")
-    state = {"last_run": last_updated.strftime('%Y-%m-%d %H:%M:%S%z')}
-    await state_manager.set_state(str(integration.id), "pull_events", state)
+    logger.info("Updating state through %s", last_updated)
+    await state_manager.set_state(
+        str(integration.id), "pull_events", _build_pull_events_state(last_updated)
+    )
         
     return {'result': {'events_extracted': added_count,
                        'events_updated': updated_count,
@@ -305,26 +264,6 @@ async def save_events_state(response, events, integration):
                 "attention_needed": True
             })
             raise e
-
-
-def _match_annotations_to_config(annotations: List[Annotation], config: Dict) -> bool:
-    """Check that the observation has all annotation term/value pairs required by config."""
-    annot_map = {}
-    for annotation in annotations:
-        key = str(annotation.term)
-        if key not in annot_map:
-            annot_map[key] = []
-        annot_map[key].append(str(annotation.value))
-
-    for term, values in config.items():
-        term_str = str(term)
-        if term_str not in annot_map:
-            return False
-        allowed = annot_map[term_str]
-        for value in values:
-            if str(value) not in allowed:
-                return False
-    return True
 
 
 def _normalize_recorded_at(observed_on, created_at):
