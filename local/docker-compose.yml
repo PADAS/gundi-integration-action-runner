@@ -14,6 +14,7 @@ services:
 
   pubsub_emulator:
     image: google/cloud-sdk:latest
+    platform: linux/amd64
     container_name: pubsub_emulator
     entrypoint: ["gcloud", "beta", "emulators", "pubsub", "start", "--project=local-project", "--host-port=0.0.0.0:8085"]
     environment:
@@ -59,7 +60,7 @@ services:
       pubsub_topic_initializer:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://0.0.0.0:8080/"]
-      interval: 15s
-      timeout: 15s
-      retries: 10
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://0.0.0.0:8080/')\""]
+      interval: 5s
+      timeout: 5s
+      retries: 5
