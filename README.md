@@ -1,7 +1,19 @@
-# gundi-integration-action-runner
-Template repo for integration in Gundi v2.
+# gundi-integration-kineis
 
-## Usage
+Gundi v2 pull integration for **Kineis/CLS** telemetry (CONNECTORS-836). Pulls bulk telemetry from the CLS API and sends observations to Gundi/Earth Ranger.
+
+## Kineis integration
+
+- **Action:** `pull_telemetry` — runs on a schedule (default: every 4 hours) or on demand.
+- **Config (per integration in the Gundi portal):** Username, password (CLS/Kineis API), lookback hours (UTC time window), **use realtime** (default: on), optional device filters (`device_refs` / `device_uids`), page size, and options for metadata/raw data.
+- **Flow:**
+  - **Realtime (default):** When "Use realtime API" is enabled, the action uses the checkpoint-based realtime endpoint (`POST .../retrieve-realtime`). On first run (or if no checkpoint is stored), checkpoint 0 is used (returns last 6 hours). The returned checkpoint is persisted (e.g. in Redis via `IntegrationStateManager`) and used on the next run so only new messages are fetched. Ideal for periodic scheduled pulls.
+  - **Bulk (initial or fallback):** When realtime is disabled or state is unavailable, the action uses the bulk endpoint (`POST .../retrieve-bulk`) with the configured lookback window and cursor pagination. Useful for initial backfill or one-off full pulls.
+- **Datasource example:** `app.datasource.kineis_client` provides a sync reference implementation: `fetch_bulk()` for paginated historical data and `fetch_realtime()` / `poll_realtime_locations()` for the checkpoint-based realtime pattern. The integration uses the same patterns in async form in `app.services.kineis_client`.
+- **Env (optional):** `KINEIS_AUTH_BASE_URL`, `KINEIS_API_BASE_URL`, `KINEIS_AUTH_PATH` (defaults: account.groupcls.com, api.groupcls.com, `/auth/realms/cls/protocol/openid-connect/token`). Credentials are configured per integration in the portal, not in env.
+- **API reference:** Implementation follows the *API-Telemetry User Manual* (CLS-ENVS-MU-25-0230, V1.2 – 22/10/2025) and the OpenAPI spec for bulk retrieve (cursor-based pagination, device refs/uids).
+
+## Usage (template)
 - Fork this repo
 - Implement your own actions in `actions/handlers.py`
 - Define configurations needed for your actions in `action/configurations.py`

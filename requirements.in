@@ -1,1 +1,3 @@
 # Add your integration-specific dependencies here
+# Pin httpx<0.28 for Starlette TestClient compatibility (httpx 0.28+ removed 'app' from Client.__init__)
+httpx<0.28

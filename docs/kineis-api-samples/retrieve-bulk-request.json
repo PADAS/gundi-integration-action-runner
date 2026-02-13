@@ -1,0 +1,40 @@
+{
+  "sortBy": [
+    {
+      "field": "msgTs",
+      "sortDirection": "ASC"
+    }
+  ],
+  "retrieveMetadata": false,
+  "retrieveRawData": false,
+  "retrieveDoppler": false,
+  "retrieveGpsLoc": true,
+  "retrieveSensors": false,
+  "retrieveJsonSensors": false,
+  "retrieveAdditionnalProperties": false,
+  "deviceUids": [
+    1788,
+    6785,
+    4523
+  ],
+  "deviceRefs": [
+    516134,
+    518932,
+    516231
+  ],
+  "programRefContain": "1730",
+  "dopplerLocErrorRadius": {
+    "minEqualValue": 2,
+    "maxEqualValue": 12
+  },
+  "locationType": "GPS",
+  "fromTs": 1730385000000,
+  "fromDatetime": "2024-10-31T14:30:00.001Z",
+  "toTs": 1730534400000,
+  "toDatetime": "2024-11-02T08:00:00.001Z",
+  "datetimeFormat": "TS",
+  "pagination": {
+    "first": 10,
+    "after": "30"
+  }
+}

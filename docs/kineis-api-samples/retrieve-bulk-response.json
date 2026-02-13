@@ -1,0 +1,54 @@
+{
+  "contents": [
+    {
+      "deviceMsgUid": 59220647342112780,
+      "providerMsgId": 1229782859166781400,
+      "msgType": "operation-mo-pdrgroup",
+      "deviceUid": 67899,
+      "deviceRef": "7896",
+      "modemRef": "7896",
+      "msgTs": 1727798179000,
+      "msgDatetime": "2024-10-01T15:56:19.001Z",
+      "acqTs": 1727798185000,
+      "acqDatetime": "2024-10-01T15:56:25.001Z",
+      "kineisMetadata": {
+        "sat": "CS",
+        "mod": "LDA2",
+        "level": -129.27,
+        "snr": 38,
+        "freq": 401676789.94
+      },
+      "rawData": "4b209627d4543f5dc4e959f7e525a0007e4c5c",
+      "bitLength": 152,
+      "dopplerLocId": 1261,
+      "dopplerRevision": 2,
+      "dopplerTs": 1727798180000,
+      "dopplerDatetime": "2024-10-01T15:56:20.001Z",
+      "dopplerAcqTs": 1727798188000,
+      "dopplerAcqDatetime": "2024-10-01T15:56:28.001Z",
+      "dopplerLocLon": 58.74947,
+      "dopplerLocLat": 20.44812,
+      "dopplerLocAlt": 0,
+      "dopplerLocErrorRadius": 2527,
+      "dopplerDeviceFrequency": 401673765.0727859,
+      "dopplerLocClass": "doppler Loc Class",
+      "dopplerNbMsg": 2,
+      "gpsLocTs": 1727798178000,
+      "gpsLocDatetime": "2024-10-01T15:56:18.001Z",
+      "gpsLocLon": 58.77856,
+      "gpsLocLat": 20.45123,
+      "gpsLocAlt": 0,
+      "gpsLocSpeed": 2.78,
+      "gpsLocHeading": 67.45,
+      "sensors": "\"DIGITAL_SENSOR\": \"7.6\", \"POWER_SUPPLY\": \"5.2\"",
+      "jsonSensors": "\"jsonSensors\" : { \"DIGITAL_SENSOR\": \"7.6\", \"POWER_SUPPLY\": \"5.2\" }",
+      "domains": "[env.herding, fish]",
+      "programRef": "56780"
+    }
+  ],
+  "pageInfo": {
+    "hasNextPage": true,
+    "hasPreviousPage": true,
+    "endCursor": "19"
+  }
+}

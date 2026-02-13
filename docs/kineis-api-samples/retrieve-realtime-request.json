@@ -1,0 +1,27 @@
+{
+  "retrieveMetadata": false,
+  "retrieveRawData": false,
+  "retrieveDoppler": false,
+  "retrieveGpsLoc": true,
+  "retrieveSensors": false,
+  "retrieveJsonSensors": false,
+  "retrieveAdditionnalProperties": false,
+  "deviceUids": [
+    1788,
+    6785,
+    4523
+  ],
+  "deviceRefs": [
+    516134,
+    518932,
+    516231
+  ],
+  "programRefContain": "1730",
+  "dopplerLocErrorRadius": {
+    "minEqualValue": 2,
+    "maxEqualValue": 12
+  },
+  "locationType": "GPS",
+  "datetimeFormat": "TS",
+  "fromCheckpoint": 1727798490000
+}

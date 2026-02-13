@@ -1,0 +1,28 @@
+{
+  "contents": [
+    {
+      "deviceUid": 67899,
+      "deviceRef": "7896",
+      "programRef": "56780",
+      "modems": [
+        {
+          "modemRef": "291865",
+          "modemAddress": "FFF54EEA",
+          "modemType": "ARGOS",
+          "modemModel": "PSAT"
+        }
+      ],
+      "customerId": 678,
+      "customerName": "WILDLIFE COMPUTER",
+      "sharings": [
+        {
+          "customerId": 678,
+          "customerName": "WILDLIFE COMPUTER",
+          "sharingStartDatetime": "2024-10-31T14:30:00.001Z",
+          "sharingEndDatetime": "2024-12-31T23:59:59Z"
+        }
+      ]
+    }
+  ]
+}
+
