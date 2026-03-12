@@ -43,8 +43,8 @@ async def register_integration_in_gundi(gundi_client, type_slug=None, service_ur
 
     # Prepare the actions and schemas
     actions = []
-    for action_id, handler in action_handlers.items():
-        func, config_model = handler
+    for action_id, value in action_handlers.items():
+        func, config_model, data_model = value
         if issubclass(config_model, InternalActionConfiguration):
             logger.info(f"Skipping internal action '{action_id}'.")
             continue  # Internal actions are not registered in Gundi

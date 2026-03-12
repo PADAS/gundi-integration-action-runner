@@ -27,13 +27,14 @@ from gundi_core.events import (
     IntegrationWebhookCustomLog,
     CustomWebhookLog,
     LogLevel,
+    ObservationTransformedER
 )
 from app.actions import (
     PullActionConfiguration,
     AuthActionConfiguration,
-    ExecutableActionMixin, InternalActionConfiguration,
+    ExecutableActionMixin, InternalActionConfiguration, PushActionConfiguration,
 )
-from app.services.utils import GlobalUISchemaOptions, FieldWithUIOptions, UIOptions
+from app.services.utils import GlobalUISchemaOptions, FieldWithUIOptions, UIOptions, OptionalStringType
 from app.services.action_scheduler import CrontabSchedule
 from app.webhooks import (
     GenericJsonTransformConfig,
@@ -124,6 +125,27 @@ def mock_redis_with_action_config(mocker, pull_observations_config_as_json):
     redis_client = mocker.MagicMock()
     redis_client.set.return_value = async_return(MagicMock())
     redis_client.get.return_value = async_return(pull_observations_config_as_json)
+    redis_client.delete.return_value = async_return(MagicMock())
+    redis_client.setex.return_value = async_return(None)
+    redis_client.incr.return_value = redis_client
+    redis_client.decr.return_value = async_return(None)
+    redis_client.expire.return_value = redis_client
+    redis_client.execute.return_value = async_return((1, True))
+    redis_client.__aenter__.return_value = redis_client
+    redis_client.__aexit__.return_value = None
+    redis_client.pipeline.return_value = redis_client
+    redis.Redis.return_value = redis_client
+    return redis
+
+
+@pytest.fixture
+def mock_redis_with_webhook_config(mocker, integration_v2_with_webhook):
+    redis = MagicMock()
+    redis_client = mocker.MagicMock()
+    redis_client.set.return_value = async_return(MagicMock())
+    # Return webhook config JSON when asked for webhook key
+    webhook_config_json = integration_v2_with_webhook.webhook_configuration.json()
+    redis_client.get.return_value = async_return(webhook_config_json)
     redis_client.delete.return_value = async_return(MagicMock())
     redis_client.setex.return_value = async_return(None)
     redis_client.incr.return_value = redis_client
@@ -232,6 +254,14 @@ def integration_v2_as_dict():
                         "type": "push",
                         "name": "Push Events",
                         "value": "push_events",
+                        "description": "EarthRanger sites support sending Events (a.k.a Reports)",
+                        "schema": {},
+                    },
+                    {
+                        "id": "9f211f31-e693-404c-b6ee-20fde6019fa5",
+                        "type": "push",
+                        "name": "Push Observations",
+                        "value": "push_observations",
                         "description": "EarthRanger sites support sending Events (a.k.a Reports)",
                         "schema": {},
                     },
@@ -781,6 +811,30 @@ def mock_gundi_client_v2_class(mocker, mock_gundi_client_v2):
 
 
 @pytest.fixture
+def mock_gundi_client_v2_class_for_webhooks(mocker, integration_v2_with_webhook):
+    """Mock GundiClient class for webhook tests that need cache miss simulation"""
+    mock_gundi_client_v2_class = mocker.MagicMock()
+    mock_gundi_instance = mocker.AsyncMock()
+    mock_gundi_instance.get_integration_details = mocker.AsyncMock(return_value=integration_v2_with_webhook)
+    mock_gundi_client_v2_class.return_value.__aenter__.return_value = mock_gundi_instance
+    mock_gundi_client_v2_class.return_value.__aexit__.return_value = None
+    return mock_gundi_client_v2_class
+
+
+@pytest.fixture
+def mock_gundi_client_v2_class_with_error(mocker):
+    """Mock GundiClient class that raises an exception for error testing"""
+    mock_gundi_client_v2_class = mocker.MagicMock()
+    mock_gundi_instance = mocker.AsyncMock()
+    mock_gundi_instance.get_integration_details = mocker.AsyncMock(
+        side_effect=Exception("Gundi API unavailable")
+    )
+    mock_gundi_client_v2_class.return_value.__aenter__.return_value = mock_gundi_instance
+    mock_gundi_client_v2_class.return_value.__aexit__.return_value = None
+    return mock_gundi_client_v2_class
+
+
+@pytest.fixture
 def mock_gundi_sensors_client_class(
     mocker,
     events_created_response,
@@ -928,8 +982,10 @@ class MockPullActionConfiguration(PullActionConfiguration):
             widget="select",
         ),
     )
+    region_code: OptionalStringType = pydantic.Field(None, title="Region Code")
     ui_global_options = GlobalUISchemaOptions(
         order=[
+            "region_code",
             "lookback_days",
             "force_fetch",
         ],
@@ -960,17 +1016,42 @@ class MockSubActionConfiguration(InternalActionConfiguration):
     end_datetime: datetime.datetime
 
 
+class MockPushActionConfiguration(PushActionConfiguration):
+    pass
+
+
 @pytest.fixture
-def mock_action_handlers(mocker):
+def mock_pull_observations_action_handler():
     mock_pull_observations_action_handler = AsyncMock()
     mock_pull_observations_action_handler.return_value = {"observations_extracted": 10}
     mock_pull_observations_action_handler.crontab_schedule = CrontabSchedule.parse_obj_from_crontab("*/10 * * * * -5")
+    return mock_pull_observations_action_handler
+
+
+@pytest.fixture
+def mock_pull_observations_by_date_action_handler():
     mock_pull_observations_by_date_action_handler = AsyncMock()
     mock_pull_observations_by_date_action_handler.return_value = {"observations_extracted": 10}
     del mock_pull_observations_by_date_action_handler.crontab_schedule
+    return mock_pull_observations_by_date_action_handler
+
+
+@pytest.fixture
+def mock_push_observations_handler():
+    mock_push_observations_handler = AsyncMock()
+    mock_push_observations_handler.return_value = {"observations_pushed": 1}
+    return mock_push_observations_handler
+
+
+@pytest.fixture
+def mock_action_handlers(
+        mock_pull_observations_action_handler,
+        mock_pull_observations_by_date_action_handler, mock_push_observations_handler
+):
     mock_action_handlers = {
-        "pull_observations": (mock_pull_observations_action_handler, MockPullActionConfiguration),
-        "pull_observations_by_date": (mock_pull_observations_by_date_action_handler, MockSubActionConfiguration)
+        "pull_observations": (mock_pull_observations_action_handler, MockPullActionConfiguration, None),
+        "pull_observations_by_date": (mock_pull_observations_by_date_action_handler, MockSubActionConfiguration, None),
+        "push_observations": (mock_push_observations_handler, MockPushActionConfiguration, ObservationTransformedER),
     }
     return mock_action_handlers
 
@@ -1041,7 +1122,7 @@ def mock_action_handlers_with_request_errors(
     else:
         handler = mock_pull_observations_handler_with_generic_error
     mock_action_handlers = {
-        "pull_observations": (handler, MockPullActionConfiguration)
+        "pull_observations": (handler, MockPullActionConfiguration, None)
     }
     return mock_action_handlers
 
@@ -1054,7 +1135,7 @@ def mock_auth_action_handlers():
         "password": "something-fancy",
     }
     mock_action_handlers = {
-        "auth": (mock_action_handler, MockAuthenticateActionConfiguration)
+        "auth": (mock_action_handler, MockAuthenticateActionConfiguration, None)
     }
     return mock_action_handlers
 
@@ -1080,7 +1161,7 @@ def mock_api_key():
 
 
 @pytest.fixture
-def event_v2_pubsub_payload():
+def run_pull_action_pubsub_payload():
     timestamp = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     return {
         "message": {
@@ -1095,7 +1176,36 @@ def event_v2_pubsub_payload():
 
 
 @pytest.fixture
-def event_v2_pubsub_payload_with_config_overrides():
+def run_push_action_pubsub_payload(integration_v2):
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    return {
+        'message': {
+            'data': 'eyJldmVudF9pZCI6ICI0OGJkMDczYS04ZTM1LTQzY2YtOTFjMi1jN2I0Yjg3YTI2ZDciLCAidGltZXN0YW1wIjogIjIwMjQtMDctMjQgMTM6MjM6NDMuOTUyMDU2KzAwOjAwIiwgInNjaGVtYV92ZXJzaW9uIjogInYxIiwgInBheWxvYWQiOiB7Im1hbnVmYWN0dXJlcl9pZCI6ICJ0ZXN0LWRldmljZSIsICJzb3VyY2VfdHlwZSI6ICJ0cmFja2luZy1kZXZpY2UiLCAic3ViamVjdF9uYW1lIjogIk1hcmlhbm8iLCAic3ViamVjdF90eXBlIjogIm1tLXRyYWNrZXIiLCAic3ViamVjdF9zdWJ0eXBlIjogIm1tLXRyYWNrZXIiLCAicmVjb3JkZWRfYXQiOiAiMjAyNC0wNy0yMiAxMTo1MTowNSswMDowMCIsICJsb2NhdGlvbiI6IHsibG9uIjogLTcyLjcwNDQ1OSwgImxhdCI6IC01MS42ODgyNDZ9LCAiYWRkaXRpb25hbCI6IHsic3BlZWRfa21waCI6IDMwfX0sICJldmVudF90eXBlIjogIk9ic2VydmF0aW9uVHJhbnNmb3JtZWRFUiJ9',
+            'attributes': {
+                "gundi_version": "v2",
+                "provider_key": "awt",
+                "gundi_id": "23ca4b15-18b6-4cf4-9da6-36dd69c6f638",
+                "related_to": "None",
+                "stream_type": "obv",
+                "source_id": "afa0d606-c143-4705-955d-68133645db6d",
+                "external_source_id": "Xyz123",
+                "destination_id": str(integration_v2.id),
+                "data_provider_id": "ddd0946d-15b0-4308-b93d-e0470b6d33b6",
+                "annotations": "{}",
+                "tracing_context": "{}"
+            },
+            "messageId": "11937923011474846",
+            "message_id": "11937923011474846",
+            "orderingKey": "",
+            "publishTime": f"{timestamp}",
+            "publish_time": f"{timestamp}"
+        },
+        'subscription': 'projects/MY-PROJECT/subscriptions/MY-SUB'
+    }
+
+
+@pytest.fixture
+def run_pull_action_pubsub_payload_with_config_overrides():
     timestamp = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     return {
         "message": {

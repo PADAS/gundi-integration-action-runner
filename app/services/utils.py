@@ -374,6 +374,31 @@ class UISchemaModelMixin:
         return json_schema_dict
 
 
+class OptionalStringType(str):
+    """
+    A custom type that ensures JSON schema includes both 'string' and 'null'.
+    This is a workaround to solve the following pydantic issue until we can upgrade to v2:
+    https://github.com/pydantic/pydantic/issues/4111
+    """
+
+    @classmethod
+    def __get_validators__(cls):
+        yield cls.validate
+
+    @classmethod
+    def validate(cls, value):
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise TypeError("String expected")
+        return value
+
+    @classmethod
+    def __modify_schema__(cls, field_schema):
+        field_schema["type"] = ["string", "null"]
+
+
 def generate_batches(iterable, batch_size):
     for i in range(0, len(iterable), batch_size):
         yield iterable[i: i + batch_size]
+
