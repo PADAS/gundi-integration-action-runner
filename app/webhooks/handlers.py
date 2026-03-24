@@ -1,4 +1,4 @@
-jruimport json
+import json
 import pyjq
 import logging
 from app.services.gundi import send_observations_to_gundi, send_events_to_gundi
