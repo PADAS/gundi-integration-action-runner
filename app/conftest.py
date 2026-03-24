@@ -621,6 +621,15 @@ def integration_v2_with_webhook_generic():
 
 
 @pytest.fixture
+def integration_v2_with_diagnostic_webhook(integration_v2_with_webhook_generic):
+    data = integration_v2_with_webhook_generic.dict()
+    data["webhook_configuration"]["data"]["diagnostic_destination_url"] = (
+        "https://diagnostics.example.com/webhook-dump"
+    )
+    return Integration.parse_obj(data)
+
+
+@pytest.fixture
 def mock_generic_webhook_config():
     return {
         "jq_filter": '{     "source": .end_device_ids.device_id,     "source_name": .end_device_ids.device_id,     "type": .uplink_message.locations."frm-payload".source,     "recorded_at": .uplink_message.settings.time,     "location": {       "lat": .uplink_message.locations."frm-payload".latitude,       "lon": .uplink_message.locations."frm-payload".longitude     },     "additional": {       "application_id": .end_device_ids.application_ids.application_id,       "dev_eui": .end_device_ids.dev_eui,       "dev_addr": .end_device_ids.dev_addr,       "batterypercent": .uplink_message.decoded_payload.batterypercent,       "gps": .uplink_message.decoded_payload.gps     }   }',

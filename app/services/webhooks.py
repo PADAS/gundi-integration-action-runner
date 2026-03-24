@@ -1,3 +1,5 @@
+import asyncio
+import datetime
 import importlib
 import logging
 import traceback
@@ -14,6 +16,31 @@ from app.services.config_manager import IntegrationConfigurationManager
 
 config_manager = IntegrationConfigurationManager()
 logger = logging.getLogger(__name__)
+
+
+async def forward_payload_to_diagnostic_url(
+    destination_url: str,
+    integration_id: str,
+    json_content: dict,
+):
+    try:
+        body = {
+            "integration_id": integration_id,
+            "received_at": datetime.datetime.utcnow().isoformat() + "Z",
+            "payload": json_content,
+        }
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(destination_url, json=body)
+            response.raise_for_status()
+            logger.debug(
+                f"Diagnostic payload forwarded to '{destination_url}' "
+                f"for integration '{integration_id}'. Status: {response.status_code}"
+            )
+    except Exception as e:
+        logger.warning(
+            f"Diagnostic forwarding to '{destination_url}' failed for integration "
+            f"'{integration_id}': {type(e).__name__}: {e}"
+        )
 
 
 async def get_integration(request):
@@ -97,6 +124,15 @@ async def process_webhook(request: Request):
         else:  # Pass the raw payload
             parsed_payload = json_content
         await webhook_handler(payload=parsed_payload, integration=integration, webhook_config=parsed_config)
+        diag_url = getattr(parsed_config, "diagnostic_destination_url", None)
+        if diag_url:
+            asyncio.ensure_future(
+                forward_payload_to_diagnostic_url(
+                    destination_url=diag_url,
+                    integration_id=str(integration.id),
+                    json_content=json_content,
+                )
+            )
     except (ImportError, AttributeError, NotImplementedError) as e:
         message = "Webhooks handler not found. Please implement a 'webhook_handler' function in app/webhooks/handlers.py"
         logger.exception(message)

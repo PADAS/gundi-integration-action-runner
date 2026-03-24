@@ -1,7 +1,9 @@
+import asyncio
 import base64
 import json
-from unittest.mock import ANY
+from unittest.mock import ANY, MagicMock, patch
 
+import httpx
 import pytest
 from unittest.mock import AsyncMock
 from fastapi.testclient import TestClient
@@ -392,4 +394,128 @@ async def test_process_webhook_handles_gundi_api_failure_gracefully(
     assert "IntegrationWebhookFailed" in str(call_args)
     assert "Gundi API unavailable" in str(call_args)
 
+
+# Diagnostic Forwarding Tests
+
+@pytest.mark.asyncio
+async def test_diagnostic_forwarding_called_when_url_configured(
+        mocker, integration_v2_with_diagnostic_webhook, mock_publish_event,
+        mock_get_webhook_handler_for_generic_json_payload, mock_webhook_handler,
+        mock_webhook_request_headers_onyesha, mock_webhook_request_payload_for_dynamic_schema
+):
+    mocker.patch("app.services.webhooks.get_webhook_handler", mock_get_webhook_handler_for_generic_json_payload)
+    mocker.patch("app.services.config_manager.IntegrationConfigurationManager.get_integration_details", AsyncMock(return_value=integration_v2_with_diagnostic_webhook))
+    mock_ensure_future = mocker.patch("app.services.webhooks.asyncio.ensure_future")
+
+    response = api_client.post(
+        "/webhooks",
+        headers=mock_webhook_request_headers_onyesha,
+        json=mock_webhook_request_payload_for_dynamic_schema,
+    )
+
+    assert response.status_code == 200
+    assert mock_ensure_future.called
+    coroutine_arg = mock_ensure_future.call_args[0][0]
+    assert coroutine_arg.cr_frame.f_locals["destination_url"] == "https://diagnostics.example.com/webhook-dump"
+    assert coroutine_arg.cr_frame.f_locals["integration_id"] == str(integration_v2_with_diagnostic_webhook.id)
+    coroutine_arg.close()  # Prevent "coroutine was never awaited" warning
+
+
+@pytest.mark.asyncio
+async def test_diagnostic_forwarding_not_called_when_url_not_configured(
+        mocker, integration_v2_with_webhook_generic, mock_publish_event,
+        mock_get_webhook_handler_for_generic_json_payload, mock_webhook_handler,
+        mock_webhook_request_headers_onyesha, mock_webhook_request_payload_for_dynamic_schema
+):
+    mocker.patch("app.services.webhooks.get_webhook_handler", mock_get_webhook_handler_for_generic_json_payload)
+    mocker.patch("app.services.config_manager.IntegrationConfigurationManager.get_integration_details", AsyncMock(return_value=integration_v2_with_webhook_generic))
+    mock_ensure_future = mocker.patch("app.services.webhooks.asyncio.ensure_future")
+
+    response = api_client.post(
+        "/webhooks",
+        headers=mock_webhook_request_headers_onyesha,
+        json=mock_webhook_request_payload_for_dynamic_schema,
+    )
+
+    assert response.status_code == 200
+    mock_ensure_future.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_diagnostic_forwarding_does_not_fail_main_webhook(
+        mocker, integration_v2_with_diagnostic_webhook, mock_publish_event,
+        mock_get_webhook_handler_for_generic_json_payload, mock_webhook_handler,
+        mock_webhook_request_headers_onyesha, mock_webhook_request_payload_for_dynamic_schema
+):
+    mocker.patch("app.services.webhooks.get_webhook_handler", mock_get_webhook_handler_for_generic_json_payload)
+    mocker.patch("app.services.config_manager.IntegrationConfigurationManager.get_integration_details", AsyncMock(return_value=integration_v2_with_diagnostic_webhook))
+
+    async def raise_on_forward(**kwargs):
+        raise httpx.HTTPError("Connection refused")
+
+    mocker.patch("app.services.webhooks.forward_payload_to_diagnostic_url", side_effect=raise_on_forward)
+    mocker.patch("app.services.webhooks.asyncio.ensure_future", side_effect=lambda coro: coro.close())
+
+    response = api_client.post(
+        "/webhooks",
+        headers=mock_webhook_request_headers_onyesha,
+        json=mock_webhook_request_payload_for_dynamic_schema,
+    )
+
+    assert response.status_code == 200
+    mock_webhook_handler.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_forward_payload_to_diagnostic_url_success(mocker):
+    from app.services.webhooks import forward_payload_to_diagnostic_url
+
+    destination_url = "https://diagnostics.example.com/webhook-dump"
+    integration_id = "test-integration-id"
+    json_content = {"device": "sensor-1", "value": 42}
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.raise_for_status = MagicMock()
+
+    mock_post = AsyncMock(return_value=mock_response)
+    mock_client = MagicMock()
+    mock_client.__aenter__ = AsyncMock(return_value=MagicMock(post=mock_post))
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mocker.patch("app.services.webhooks.httpx.AsyncClient", return_value=mock_client)
+
+    await forward_payload_to_diagnostic_url(destination_url, integration_id, json_content)
+
+    mock_post.assert_called_once()
+    call_kwargs = mock_post.call_args
+    assert call_kwargs[0][0] == destination_url
+    forwarded_body = call_kwargs[1]["json"]
+    assert forwarded_body["integration_id"] == integration_id
+    assert forwarded_body["payload"] == json_content
+    assert "received_at" in forwarded_body
+
+
+@pytest.mark.asyncio
+async def test_forward_payload_to_diagnostic_url_handles_http_error(mocker):
+    from app.services.webhooks import forward_payload_to_diagnostic_url
+
+    destination_url = "https://diagnostics.example.com/webhook-dump"
+    integration_id = "test-integration-id"
+    json_content = {"device": "sensor-1"}
+
+    mock_post = AsyncMock(side_effect=httpx.HTTPError("Connection refused"))
+    mock_client = MagicMock()
+    mock_client.__aenter__ = AsyncMock(return_value=MagicMock(post=mock_post))
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mocker.patch("app.services.webhooks.httpx.AsyncClient", return_value=mock_client)
+
+    mock_logger = mocker.patch("app.services.webhooks.logger")
+
+    # Should not raise
+    await forward_payload_to_diagnostic_url(destination_url, integration_id, json_content)
+
+    mock_logger.warning.assert_called_once()
+    warning_msg = mock_logger.warning.call_args[0][0]
+    assert destination_url in warning_msg
+    assert integration_id in warning_msg
 

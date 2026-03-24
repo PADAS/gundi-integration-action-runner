@@ -4,10 +4,23 @@ import json
 from typing import Optional, Union
 from pydantic import BaseModel
 from fastapi.encoders import jsonable_encoder
-from app.services.utils import StructHexString, UISchemaModelMixin, FieldWithUIOptions, UIOptions
+from app.services.utils import StructHexString, UISchemaModelMixin, FieldWithUIOptions, UIOptions, OptionalStringType
 
 
 class WebhookConfiguration(UISchemaModelMixin, BaseModel):
+    diagnostic_destination_url: Optional[OptionalStringType] = FieldWithUIOptions(
+        None,
+        title="Diagnostic Destination URL",
+        description=(
+            "Optional URL to forward the raw incoming payload to for diagnostic purposes. "
+            "When set, the original JSON payload is POST'd to this URL before any transformation."
+        ),
+        ui_options=UIOptions(
+            widget="text",
+            placeholder="https://your-diagnostic-app.example.com/webhook-dump",
+        ),
+    )
+
     class Config:
         extra = "allow"
 
