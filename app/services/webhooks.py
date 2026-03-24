@@ -25,9 +25,11 @@ async def forward_payload_to_diagnostic_url(
 ):
     try:
         body = {
-            "integration_id": integration_id,
-            "received_at": datetime.datetime.utcnow().isoformat() + "Z",
-            "payload": json_content,
+            **json_content,
+            "__gundi_diagnostic_metadata": {
+                "integration_id": integration_id,
+                "received_at": datetime.datetime.utcnow().isoformat() + "Z",
+            },
         }
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(destination_url, json=body)

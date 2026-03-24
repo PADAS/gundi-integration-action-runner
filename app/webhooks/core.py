@@ -67,7 +67,7 @@ class GenericJsonTransformConfig(JQTransformConfig, DynamicSchemaConfig):
             widget="text",
             placeholder="https://your-diagnostic-app.example.com/webhook-dump",
         ),
-    )
+    )   
 
 
 class GenericJsonTransformWithHexStrConfig(HexStringConfig, GenericJsonTransformConfig):

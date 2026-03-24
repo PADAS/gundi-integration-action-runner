@@ -517,9 +517,10 @@ async def test_forward_payload_to_diagnostic_url_success(mocker):
     call_kwargs = mock_post.call_args
     assert call_kwargs[0][0] == destination_url
     forwarded_body = call_kwargs[1]["json"]
-    assert forwarded_body["integration_id"] == integration_id
-    assert forwarded_body["payload"] == json_content
-    assert "received_at" in forwarded_body
+    assert forwarded_body["device"] == json_content["device"]
+    assert forwarded_body["value"] == json_content["value"]
+    assert forwarded_body["__gundi_diagnostic_metadata"]["integration_id"] == integration_id
+    assert "received_at" in forwarded_body["__gundi_diagnostic_metadata"]
 
 
 @pytest.mark.asyncio
