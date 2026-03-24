@@ -89,6 +89,16 @@ async def process_webhook(request: Request):
         if parsed_config and issubclass(config_model, HexStringConfig):
             json_content["hex_data_field"] = json_content.get("hex_data_field", parsed_config.hex_data_field)
             json_content["hex_format"] = json_content.get("hex_format", parsed_config.hex_format)
+        # Forward raw payload to diagnostic URL before any transformation or validation
+        diag_url = getattr(parsed_config, "diagnostic_destination_url", None)
+        if diag_url:
+            asyncio.ensure_future(
+                forward_payload_to_diagnostic_url(
+                    destination_url=diag_url,
+                    integration_id=str(integration.id),
+                    json_content=json_content,
+                )
+            )
         # Parse payload if a model was defined in webhooks/configurations.py
         if payload_model:
             try:
@@ -124,15 +134,6 @@ async def process_webhook(request: Request):
         else:  # Pass the raw payload
             parsed_payload = json_content
         await webhook_handler(payload=parsed_payload, integration=integration, webhook_config=parsed_config)
-        diag_url = getattr(parsed_config, "diagnostic_destination_url", None)
-        if diag_url:
-            asyncio.ensure_future(
-                forward_payload_to_diagnostic_url(
-                    destination_url=diag_url,
-                    integration_id=str(integration.id),
-                    json_content=json_content,
-                )
-            )
     except (ImportError, AttributeError, NotImplementedError) as e:
         message = "Webhooks handler not found. Please implement a 'webhook_handler' function in app/webhooks/handlers.py"
         logger.exception(message)

@@ -467,6 +467,33 @@ async def test_diagnostic_forwarding_does_not_fail_main_webhook(
 
 
 @pytest.mark.asyncio
+async def test_diagnostic_forwarding_called_even_when_payload_parsing_fails(
+        mocker, integration_v2_with_diagnostic_webhook, mock_publish_event,
+        mock_get_webhook_handler_for_generic_json_payload,
+        mock_webhook_request_headers_onyesha, mock_webhook_request_payload_for_dynamic_schema
+):
+    mocker.patch("app.services.webhooks.get_webhook_handler", mock_get_webhook_handler_for_generic_json_payload)
+    mocker.patch("app.services.config_manager.IntegrationConfigurationManager.get_integration_details", AsyncMock(return_value=integration_v2_with_diagnostic_webhook))
+    mocker.patch("app.services.webhooks.publish_event", mock_publish_event)
+    mock_ensure_future = mocker.patch("app.services.webhooks.asyncio.ensure_future")
+
+    # Force payload parsing to fail
+    mocker.patch("app.services.webhooks.DyntamicFactory", side_effect=Exception("Schema error"))
+
+    response = api_client.post(
+        "/webhooks",
+        headers=mock_webhook_request_headers_onyesha,
+        json=mock_webhook_request_payload_for_dynamic_schema,
+    )
+
+    # Webhook still returns 200 (errors are swallowed)
+    assert response.status_code == 200
+    # Diagnostic forwarding was still scheduled before the parse error occurred
+    assert mock_ensure_future.called
+    mock_ensure_future.call_args[0][0].close()
+
+
+@pytest.mark.asyncio
 async def test_forward_payload_to_diagnostic_url_success(mocker):
     from app.services.webhooks import forward_payload_to_diagnostic_url
 
