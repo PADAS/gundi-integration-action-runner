@@ -1,8 +1,10 @@
 import asyncio
 import datetime
 import importlib
+import ipaddress
 import logging
 import traceback
+from urllib.parse import urlparse
 import httpx
 import stamina
 from fastapi import Request
@@ -16,28 +18,73 @@ from app.services.config_manager import IntegrationConfigurationManager
 
 config_manager = IntegrationConfigurationManager()
 logger = logging.getLogger(__name__)
+_diagnostic_client = httpx.AsyncClient(timeout=10.0)
+
+_BLOCKED_NETWORKS = [
+    ipaddress.ip_network("127.0.0.0/8"),    # loopback
+    ipaddress.ip_network("::1/128"),          # IPv6 loopback
+    ipaddress.ip_network("10.0.0.0/8"),       # RFC 1918 private
+    ipaddress.ip_network("172.16.0.0/12"),    # RFC 1918 private
+    ipaddress.ip_network("192.168.0.0/16"),   # RFC 1918 private
+    ipaddress.ip_network("169.254.0.0/16"),   # link-local / cloud metadata (AWS, GCP)
+    ipaddress.ip_network("fe80::/10"),        # IPv6 link-local
+    ipaddress.ip_network("fc00::/7"),         # IPv6 unique local
+    ipaddress.ip_network("0.0.0.0/8"),        # unspecified
+    ipaddress.ip_network("100.64.0.0/10"),    # carrier-grade NAT
+    ipaddress.ip_network("224.0.0.0/4"),      # multicast
+    ipaddress.ip_network("240.0.0.0/4"),      # reserved
+]
+
+
+async def _validate_diagnostic_url(url: str) -> None:
+    """Raise ValueError if url fails SSRF safety checks."""
+    parsed = urlparse(url)
+    if parsed.scheme != "https":
+        raise ValueError(
+            f"Diagnostic URL scheme '{parsed.scheme}' is not allowed; only 'https' is permitted."
+        )
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError("Diagnostic URL has no hostname.")
+    allowlist = settings.DIAGNOSTIC_URL_ALLOWLIST
+    if allowlist and hostname not in allowlist:
+        raise ValueError(
+            f"Diagnostic URL hostname '{hostname}' is not in the configured allowlist."
+        )
+    loop = asyncio.get_event_loop()
+    try:
+        addr_infos = await loop.getaddrinfo(hostname, None)
+    except OSError as e:
+        raise ValueError(f"Cannot resolve diagnostic URL hostname '{hostname}': {e}")
+    for _, _, _, _, sockaddr in addr_infos:
+        ip = ipaddress.ip_address(sockaddr[0])
+        if any(ip in net for net in _BLOCKED_NETWORKS):
+            raise ValueError(
+                f"Diagnostic URL resolves to a private or reserved address ({ip}), "
+                "which is blocked to prevent SSRF."
+            )
 
 
 async def forward_payload_to_diagnostic_url(
     destination_url: str,
     integration_id: str,
-    json_content: dict,
+    json_content,
 ):
     try:
-        body = {
-            **json_content,
-            "__gundi_diagnostic_metadata": {
-                "integration_id": integration_id,
-                "received_at": datetime.datetime.utcnow().isoformat() + "Z",
-            },
+        metadata = {
+            "integration_id": integration_id,
+            "received_at": datetime.datetime.utcnow().isoformat() + "Z",
         }
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(destination_url, json=body)
-            response.raise_for_status()
-            logger.debug(
-                f"Diagnostic payload forwarded to '{destination_url}' "
-                f"for integration '{integration_id}'. Status: {response.status_code}"
-            )
+        if isinstance(json_content, dict):
+            body = {**json_content, "__gundi_diagnostic_metadata": metadata}
+        else:
+            body = {"payload": json_content, "__gundi_diagnostic_metadata": metadata}
+        response = await _diagnostic_client.post(destination_url, json=body)
+        response.raise_for_status()
+        logger.debug(
+            f"Diagnostic payload forwarded to '{destination_url}' "
+            f"for integration '{integration_id}'. Status: {response.status_code}"
+        )
     except Exception as e:
         logger.warning(
             f"Diagnostic forwarding to '{destination_url}' failed for integration "
@@ -94,13 +141,20 @@ async def process_webhook(request: Request):
         # Forward raw payload to diagnostic URL before any transformation or validation
         diag_url = getattr(parsed_config, "diagnostic_destination_url", None)
         if diag_url:
-            asyncio.ensure_future(
-                forward_payload_to_diagnostic_url(
-                    destination_url=diag_url,
-                    integration_id=str(integration.id),
-                    json_content=json_content,
+            try:
+                await _validate_diagnostic_url(diag_url)
+            except ValueError as e:
+                logger.warning(
+                    f"Diagnostic forwarding skipped for integration '{integration.id}': {e}"
                 )
-            )
+            else:
+                asyncio.ensure_future(
+                    forward_payload_to_diagnostic_url(
+                        destination_url=diag_url,
+                        integration_id=str(integration.id),
+                        json_content=json_content,
+                    )
+                )
         # Parse payload if a model was defined in webhooks/configurations.py
         if payload_model:
             try:

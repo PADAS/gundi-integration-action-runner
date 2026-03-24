@@ -397,6 +397,14 @@ async def test_process_webhook_handles_gundi_api_failure_gracefully(
 
 # Diagnostic Forwarding Tests
 
+@pytest.fixture
+def mock_validate_diagnostic_url(mocker):
+    return mocker.patch(
+        "app.services.webhooks._validate_diagnostic_url",
+        new_callable=lambda: lambda *a, **kw: AsyncMock(return_value=None)(),
+    )
+
+
 @pytest.mark.asyncio
 async def test_diagnostic_forwarding_called_when_url_configured(
         mocker, integration_v2_with_diagnostic_webhook, mock_publish_event,
@@ -405,7 +413,12 @@ async def test_diagnostic_forwarding_called_when_url_configured(
 ):
     mocker.patch("app.services.webhooks.get_webhook_handler", mock_get_webhook_handler_for_generic_json_payload)
     mocker.patch("app.services.config_manager.IntegrationConfigurationManager.get_integration_details", AsyncMock(return_value=integration_v2_with_diagnostic_webhook))
-    mock_ensure_future = mocker.patch("app.services.webhooks.asyncio.ensure_future")
+    mocker.patch("app.services.webhooks._validate_diagnostic_url", AsyncMock(return_value=None))
+    mock_forward = mocker.patch(
+        "app.services.webhooks.forward_payload_to_diagnostic_url",
+        return_value=AsyncMock(),
+    )
+    mocker.patch("app.services.webhooks.asyncio.ensure_future", side_effect=lambda coro: coro.close())
 
     response = api_client.post(
         "/webhooks",
@@ -414,11 +427,11 @@ async def test_diagnostic_forwarding_called_when_url_configured(
     )
 
     assert response.status_code == 200
-    assert mock_ensure_future.called
-    coroutine_arg = mock_ensure_future.call_args[0][0]
-    assert coroutine_arg.cr_frame.f_locals["destination_url"] == "https://diagnostics.example.com/webhook-dump"
-    assert coroutine_arg.cr_frame.f_locals["integration_id"] == str(integration_v2_with_diagnostic_webhook.id)
-    coroutine_arg.close()  # Prevent "coroutine was never awaited" warning
+    mock_forward.assert_called_once_with(
+        destination_url="https://diagnostics.example.com/webhook-dump",
+        integration_id=str(integration_v2_with_diagnostic_webhook.id),
+        json_content=mock_webhook_request_payload_for_dynamic_schema,
+    )
 
 
 @pytest.mark.asyncio
@@ -449,6 +462,7 @@ async def test_diagnostic_forwarding_does_not_fail_main_webhook(
 ):
     mocker.patch("app.services.webhooks.get_webhook_handler", mock_get_webhook_handler_for_generic_json_payload)
     mocker.patch("app.services.config_manager.IntegrationConfigurationManager.get_integration_details", AsyncMock(return_value=integration_v2_with_diagnostic_webhook))
+    mocker.patch("app.services.webhooks._validate_diagnostic_url", AsyncMock(return_value=None))
 
     async def raise_on_forward(**kwargs):
         raise httpx.HTTPError("Connection refused")
@@ -475,6 +489,7 @@ async def test_diagnostic_forwarding_called_even_when_payload_parsing_fails(
     mocker.patch("app.services.webhooks.get_webhook_handler", mock_get_webhook_handler_for_generic_json_payload)
     mocker.patch("app.services.config_manager.IntegrationConfigurationManager.get_integration_details", AsyncMock(return_value=integration_v2_with_diagnostic_webhook))
     mocker.patch("app.services.webhooks.publish_event", mock_publish_event)
+    mocker.patch("app.services.webhooks._validate_diagnostic_url", AsyncMock(return_value=None))
     mock_ensure_future = mocker.patch("app.services.webhooks.asyncio.ensure_future")
 
     # Force payload parsing to fail
@@ -494,6 +509,110 @@ async def test_diagnostic_forwarding_called_even_when_payload_parsing_fails(
 
 
 @pytest.mark.asyncio
+async def test_diagnostic_forwarding_skipped_when_validation_fails(
+        mocker, integration_v2_with_diagnostic_webhook, mock_publish_event,
+        mock_get_webhook_handler_for_generic_json_payload, mock_webhook_handler,
+        mock_webhook_request_headers_onyesha, mock_webhook_request_payload_for_dynamic_schema
+):
+    mocker.patch("app.services.webhooks.get_webhook_handler", mock_get_webhook_handler_for_generic_json_payload)
+    mocker.patch("app.services.config_manager.IntegrationConfigurationManager.get_integration_details", AsyncMock(return_value=integration_v2_with_diagnostic_webhook))
+    mocker.patch("app.services.webhooks._validate_diagnostic_url", AsyncMock(side_effect=ValueError("blocked")))
+    mock_ensure_future = mocker.patch("app.services.webhooks.asyncio.ensure_future")
+
+    response = api_client.post(
+        "/webhooks",
+        headers=mock_webhook_request_headers_onyesha,
+        json=mock_webhook_request_payload_for_dynamic_schema,
+    )
+
+    assert response.status_code == 200
+    mock_ensure_future.assert_not_called()
+    mock_webhook_handler.assert_called_once()  # main handler still ran
+
+
+# _validate_diagnostic_url unit tests
+
+def _make_getaddrinfo(ip: str):
+    """Return an AsyncMock that resolves to the given IP address."""
+    return AsyncMock(return_value=[(None, None, None, None, (ip, 0))])
+
+
+@pytest.mark.asyncio
+async def test_validate_diagnostic_url_accepts_public_https(mocker):
+    from app.services.webhooks import _validate_diagnostic_url
+    mock_loop = MagicMock()
+    mock_loop.getaddrinfo = _make_getaddrinfo("203.0.113.5")  # TEST-NET, public
+    mocker.patch("app.services.webhooks.asyncio.get_event_loop", return_value=mock_loop)
+    await _validate_diagnostic_url("https://diagnostics.example.com/dump")  # should not raise
+
+
+@pytest.mark.asyncio
+async def test_validate_diagnostic_url_rejects_http_scheme(mocker):
+    from app.services.webhooks import _validate_diagnostic_url
+    with pytest.raises(ValueError, match="scheme"):
+        await _validate_diagnostic_url("http://diagnostics.example.com/dump")
+
+
+@pytest.mark.asyncio
+async def test_validate_diagnostic_url_rejects_loopback(mocker):
+    from app.services.webhooks import _validate_diagnostic_url
+    mock_loop = MagicMock()
+    mock_loop.getaddrinfo = _make_getaddrinfo("127.0.0.1")
+    mocker.patch("app.services.webhooks.asyncio.get_event_loop", return_value=mock_loop)
+    with pytest.raises(ValueError, match="private or reserved"):
+        await _validate_diagnostic_url("https://internal.local/dump")
+
+
+@pytest.mark.asyncio
+async def test_validate_diagnostic_url_rejects_metadata_endpoint(mocker):
+    from app.services.webhooks import _validate_diagnostic_url
+    mock_loop = MagicMock()
+    mock_loop.getaddrinfo = _make_getaddrinfo("169.254.169.254")  # GCP/AWS metadata
+    mocker.patch("app.services.webhooks.asyncio.get_event_loop", return_value=mock_loop)
+    with pytest.raises(ValueError, match="private or reserved"):
+        await _validate_diagnostic_url("https://metadata.google.internal/")
+
+
+@pytest.mark.asyncio
+async def test_validate_diagnostic_url_rejects_private_rfc1918(mocker):
+    from app.services.webhooks import _validate_diagnostic_url
+    mock_loop = MagicMock()
+    mock_loop.getaddrinfo = _make_getaddrinfo("192.168.1.100")
+    mocker.patch("app.services.webhooks.asyncio.get_event_loop", return_value=mock_loop)
+    with pytest.raises(ValueError, match="private or reserved"):
+        await _validate_diagnostic_url("https://internal.corp/dump")
+
+
+@pytest.mark.asyncio
+async def test_validate_diagnostic_url_rejects_unresolvable_host(mocker):
+    from app.services.webhooks import _validate_diagnostic_url
+    import socket
+    mock_loop = MagicMock()
+    mock_loop.getaddrinfo = AsyncMock(side_effect=socket.gaierror("Name not found"))
+    mocker.patch("app.services.webhooks.asyncio.get_event_loop", return_value=mock_loop)
+    with pytest.raises(ValueError, match="Cannot resolve"):
+        await _validate_diagnostic_url("https://no-such-host.invalid/dump")
+
+
+@pytest.mark.asyncio
+async def test_validate_diagnostic_url_enforces_allowlist(mocker):
+    from app.services.webhooks import _validate_diagnostic_url
+    mocker.patch("app.services.webhooks.settings.DIAGNOSTIC_URL_ALLOWLIST", ["allowed.example.com"])
+    with pytest.raises(ValueError, match="allowlist"):
+        await _validate_diagnostic_url("https://other.example.com/dump")
+
+
+@pytest.mark.asyncio
+async def test_validate_diagnostic_url_passes_allowlist(mocker):
+    from app.services.webhooks import _validate_diagnostic_url
+    mocker.patch("app.services.webhooks.settings.DIAGNOSTIC_URL_ALLOWLIST", ["allowed.example.com"])
+    mock_loop = MagicMock()
+    mock_loop.getaddrinfo = _make_getaddrinfo("203.0.113.5")
+    mocker.patch("app.services.webhooks.asyncio.get_event_loop", return_value=mock_loop)
+    await _validate_diagnostic_url("https://allowed.example.com/dump")  # should not raise
+
+
+@pytest.mark.asyncio
 async def test_forward_payload_to_diagnostic_url_success(mocker):
     from app.services.webhooks import forward_payload_to_diagnostic_url
 
@@ -506,10 +625,7 @@ async def test_forward_payload_to_diagnostic_url_success(mocker):
     mock_response.raise_for_status = MagicMock()
 
     mock_post = AsyncMock(return_value=mock_response)
-    mock_client = MagicMock()
-    mock_client.__aenter__ = AsyncMock(return_value=MagicMock(post=mock_post))
-    mock_client.__aexit__ = AsyncMock(return_value=False)
-    mocker.patch("app.services.webhooks.httpx.AsyncClient", return_value=mock_client)
+    mocker.patch("app.services.webhooks._diagnostic_client.post", mock_post)
 
     await forward_payload_to_diagnostic_url(destination_url, integration_id, json_content)
 
@@ -524,6 +640,30 @@ async def test_forward_payload_to_diagnostic_url_success(mocker):
 
 
 @pytest.mark.asyncio
+async def test_forward_payload_to_diagnostic_url_list_payload(mocker):
+    from app.services.webhooks import forward_payload_to_diagnostic_url
+
+    destination_url = "https://diagnostics.example.com/webhook-dump"
+    integration_id = "test-integration-id"
+    json_content = [{"device": "sensor-1"}, {"device": "sensor-2"}]
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.raise_for_status = MagicMock()
+
+    mock_post = AsyncMock(return_value=mock_response)
+    mocker.patch("app.services.webhooks._diagnostic_client.post", mock_post)
+
+    await forward_payload_to_diagnostic_url(destination_url, integration_id, json_content)
+
+    mock_post.assert_called_once()
+    forwarded_body = mock_post.call_args[1]["json"]
+    assert forwarded_body["payload"] == json_content
+    assert forwarded_body["__gundi_diagnostic_metadata"]["integration_id"] == integration_id
+    assert "received_at" in forwarded_body["__gundi_diagnostic_metadata"]
+
+
+@pytest.mark.asyncio
 async def test_forward_payload_to_diagnostic_url_handles_http_error(mocker):
     from app.services.webhooks import forward_payload_to_diagnostic_url
 
@@ -531,12 +671,10 @@ async def test_forward_payload_to_diagnostic_url_handles_http_error(mocker):
     integration_id = "test-integration-id"
     json_content = {"device": "sensor-1"}
 
-    mock_post = AsyncMock(side_effect=httpx.HTTPError("Connection refused"))
-    mock_client = MagicMock()
-    mock_client.__aenter__ = AsyncMock(return_value=MagicMock(post=mock_post))
-    mock_client.__aexit__ = AsyncMock(return_value=False)
-    mocker.patch("app.services.webhooks.httpx.AsyncClient", return_value=mock_client)
-
+    mocker.patch(
+        "app.services.webhooks._diagnostic_client.post",
+        AsyncMock(side_effect=httpx.HTTPError("Connection refused")),
+    )
     mock_logger = mocker.patch("app.services.webhooks.logger")
 
     # Should not raise
