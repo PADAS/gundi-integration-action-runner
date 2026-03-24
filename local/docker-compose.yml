@@ -14,6 +14,7 @@ services:
 
   pubsub_emulator:
     image: google/cloud-sdk:latest
+    platform: linux/amd64
     container_name: pubsub_emulator
     entrypoint: ["gcloud", "beta", "emulators", "pubsub", "start", "--project=local-project", "--host-port=0.0.0.0:8085"]
     environment:
@@ -59,7 +60,25 @@ services:
       pubsub_topic_initializer:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://0.0.0.0:8080/"]
-      interval: 15s
-      timeout: 15s
-      retries: 10
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://0.0.0.0:8080/')\""]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  web-ui:
+    build:
+      context: ./web-ui
+      dockerfile: Dockerfile
+    container_name: web_ui
+    ports:
+      - "3000:3000"
+    depends_on:
+      fastapi:
+        condition: service_started # service_healthy
+    environment:
+      - REACT_APP_API_URL=http://localhost:8080
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://0.0.0.0:3000/ || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5

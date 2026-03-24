@@ -21,36 +21,41 @@ async def webhook_handler(payload: GenericJsonPayload, integration=None, webhook
     filter_expression = webhook_config.jq_filter.replace("\n", "")
     transformed_data = pyjq.all(filter_expression, input_data)
     logger.info(f"Transformed Data: {transformed_data}")
-    # Check if a filter is present in the filtered data
-    for data in transformed_data:
-        if data.get("status", "OK") != 'OK':
-            logger.info(f"'{data}' point received was filtered")
-            transformed_data.remove(data)
     if transformed_data:
-        if webhook_config.output_type == "obv":  # ToDo: Use an enum?
-
-            try:
-                response = await send_observations_to_gundi(
-                    observations=transformed_data,
-                    integration_id=integration.id
+        groups = {}
+        for data in transformed_data:
+            record = dict(data)
+            output_type = record.pop("__gundi_output_type", None) or webhook_config.output_type
+            if not output_type:
+                raise ValueError(
+                    "No output type for record and no default output_type in config. "
+                    "Set output_type in the webhook configuration or emit '__gundi_output_type' per record."
                 )
-            except Exception as e:
-                logger.exception(f"Failed sending Observations. payload: {payload}, transformed_data: {transformed_data}, error: {e}")
-                raise
+            groups.setdefault(output_type, []).append(record)
 
-        elif webhook_config.output_type == "ev":
-            try:
-                response = await send_events_to_gundi(
-                    events=transformed_data,
-                    integration_id=integration.id
-                )
-            except Exception as e:
-                logger.exception(f"Failed sending Events. payload: {payload}, transformed_data: {transformed_data}, error: {e}")
-                raise
-
-        else:
-            raise ValueError(f"Invalid output type: {webhook_config.output_type}. Please review the configuration.")
-        data_points_qty = len(response)
+        data_points_qty = 0
+        for output_type, records in groups.items():
+            if output_type == "obv":
+                try:
+                    response = await send_observations_to_gundi(
+                        observations=records,
+                        integration_id=integration.id
+                    )
+                except Exception as e:
+                    logger.exception(f"Failed sending Observations. error: {e}")
+                    raise
+            elif output_type == "ev":
+                try:
+                    response = await send_events_to_gundi(
+                        events=records,
+                        integration_id=integration.id
+                    )
+                except Exception as e:
+                    logger.exception(f"Failed sending Events. error: {e}")
+                    raise
+            else:
+                raise ValueError(f"Invalid output type: '{output_type}'. Valid values: 'obv', 'ev'.")
+            data_points_qty += len(response)
         logger.info(f"'{data_points_qty}' data point(s) sent to Gundi.")
         return {"data_points_qty": data_points_qty}
     else:
