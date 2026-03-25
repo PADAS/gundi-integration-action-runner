@@ -397,14 +397,6 @@ async def test_process_webhook_handles_gundi_api_failure_gracefully(
 
 # Diagnostic Forwarding Tests
 
-@pytest.fixture
-def mock_validate_diagnostic_url(mocker):
-    return mocker.patch(
-        "app.services.webhooks._validate_diagnostic_url",
-        new_callable=lambda: lambda *a, **kw: AsyncMock(return_value=None)(),
-    )
-
-
 @pytest.mark.asyncio
 async def test_diagnostic_forwarding_called_when_url_configured(
         mocker, integration_v2_with_diagnostic_webhook, mock_publish_event,
@@ -463,12 +455,14 @@ async def test_diagnostic_forwarding_does_not_fail_main_webhook(
     mocker.patch("app.services.webhooks.get_webhook_handler", mock_get_webhook_handler_for_generic_json_payload)
     mocker.patch("app.services.config_manager.IntegrationConfigurationManager.get_integration_details", AsyncMock(return_value=integration_v2_with_diagnostic_webhook))
     mocker.patch("app.services.webhooks._validate_diagnostic_url", AsyncMock(return_value=None))
-
-    async def raise_on_forward(**kwargs):
-        raise httpx.HTTPError("Connection refused")
-
-    mocker.patch("app.services.webhooks.forward_payload_to_diagnostic_url", side_effect=raise_on_forward)
-    mocker.patch("app.services.webhooks.asyncio.ensure_future", side_effect=lambda coro: coro.close())
+    # Simulate a real HTTP failure in the forwarding POST. forward_payload_to_diagnostic_url
+    # catches all exceptions internally, so this must not propagate to the main flow.
+    mocker.patch(
+        "app.services.webhooks._diagnostic_client.post",
+        AsyncMock(side_effect=httpx.HTTPError("Connection refused")),
+    )
+    # Do not mock ensure_future — the coroutine is scheduled for real and its internal
+    # try/except catches the HTTPError, proving isolation from the main request.
 
     response = api_client.post(
         "/webhooks",
@@ -541,8 +535,8 @@ def _make_getaddrinfo(ip: str):
 async def test_validate_diagnostic_url_accepts_public_https(mocker):
     from app.services.webhooks import _validate_diagnostic_url
     mock_loop = MagicMock()
-    mock_loop.getaddrinfo = _make_getaddrinfo("203.0.113.5")  # TEST-NET, public
-    mocker.patch("app.services.webhooks.asyncio.get_event_loop", return_value=mock_loop)
+    mock_loop.getaddrinfo = _make_getaddrinfo("203.0.113.5")  # TEST-NET-3 (RFC 5737), not in blocked list
+    mocker.patch("app.services.webhooks.asyncio.get_running_loop", return_value=mock_loop)
     await _validate_diagnostic_url("https://diagnostics.example.com/dump")  # should not raise
 
 
@@ -558,7 +552,7 @@ async def test_validate_diagnostic_url_rejects_loopback(mocker):
     from app.services.webhooks import _validate_diagnostic_url
     mock_loop = MagicMock()
     mock_loop.getaddrinfo = _make_getaddrinfo("127.0.0.1")
-    mocker.patch("app.services.webhooks.asyncio.get_event_loop", return_value=mock_loop)
+    mocker.patch("app.services.webhooks.asyncio.get_running_loop", return_value=mock_loop)
     with pytest.raises(ValueError, match="private or reserved"):
         await _validate_diagnostic_url("https://internal.local/dump")
 
@@ -568,7 +562,7 @@ async def test_validate_diagnostic_url_rejects_metadata_endpoint(mocker):
     from app.services.webhooks import _validate_diagnostic_url
     mock_loop = MagicMock()
     mock_loop.getaddrinfo = _make_getaddrinfo("169.254.169.254")  # GCP/AWS metadata
-    mocker.patch("app.services.webhooks.asyncio.get_event_loop", return_value=mock_loop)
+    mocker.patch("app.services.webhooks.asyncio.get_running_loop", return_value=mock_loop)
     with pytest.raises(ValueError, match="private or reserved"):
         await _validate_diagnostic_url("https://metadata.google.internal/")
 
@@ -578,7 +572,7 @@ async def test_validate_diagnostic_url_rejects_private_rfc1918(mocker):
     from app.services.webhooks import _validate_diagnostic_url
     mock_loop = MagicMock()
     mock_loop.getaddrinfo = _make_getaddrinfo("192.168.1.100")
-    mocker.patch("app.services.webhooks.asyncio.get_event_loop", return_value=mock_loop)
+    mocker.patch("app.services.webhooks.asyncio.get_running_loop", return_value=mock_loop)
     with pytest.raises(ValueError, match="private or reserved"):
         await _validate_diagnostic_url("https://internal.corp/dump")
 
@@ -589,7 +583,7 @@ async def test_validate_diagnostic_url_rejects_unresolvable_host(mocker):
     import socket
     mock_loop = MagicMock()
     mock_loop.getaddrinfo = AsyncMock(side_effect=socket.gaierror("Name not found"))
-    mocker.patch("app.services.webhooks.asyncio.get_event_loop", return_value=mock_loop)
+    mocker.patch("app.services.webhooks.asyncio.get_running_loop", return_value=mock_loop)
     with pytest.raises(ValueError, match="Cannot resolve"):
         await _validate_diagnostic_url("https://no-such-host.invalid/dump")
 
@@ -608,7 +602,7 @@ async def test_validate_diagnostic_url_passes_allowlist(mocker):
     mocker.patch("app.services.webhooks.settings.DIAGNOSTIC_URL_ALLOWLIST", ["allowed.example.com"])
     mock_loop = MagicMock()
     mock_loop.getaddrinfo = _make_getaddrinfo("203.0.113.5")
-    mocker.patch("app.services.webhooks.asyncio.get_event_loop", return_value=mock_loop)
+    mocker.patch("app.services.webhooks.asyncio.get_running_loop", return_value=mock_loop)
     await _validate_diagnostic_url("https://allowed.example.com/dump")  # should not raise
 
 

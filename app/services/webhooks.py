@@ -37,21 +37,28 @@ _BLOCKED_NETWORKS = [
 
 
 async def _validate_diagnostic_url(url: str) -> None:
-    """Raise ValueError if url fails SSRF safety checks."""
+    """Raise ValueError if url fails SSRF safety checks.
+
+    Note: this validation is a best-effort defence. Because DNS is re-resolved
+    by httpx at request time, a DNS-rebinding attack could cause the actual
+    connection to reach a private address even after this check passes (TOCTOU).
+    Operators should also restrict outbound network access at the infrastructure
+    level for a complete mitigation.
+    """
     parsed = urlparse(url)
     if parsed.scheme != "https":
         raise ValueError(
             f"Diagnostic URL scheme '{parsed.scheme}' is not allowed; only 'https' is permitted."
         )
-    hostname = parsed.hostname
+    hostname = (parsed.hostname or "").rstrip(".").lower()
     if not hostname:
         raise ValueError("Diagnostic URL has no hostname.")
     allowlist = settings.DIAGNOSTIC_URL_ALLOWLIST
-    if allowlist and hostname not in allowlist:
+    if allowlist and hostname not in [h.rstrip(".").lower() for h in allowlist]:
         raise ValueError(
             f"Diagnostic URL hostname '{hostname}' is not in the configured allowlist."
         )
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     try:
         addr_infos = await loop.getaddrinfo(hostname, None)
     except OSError as e:
