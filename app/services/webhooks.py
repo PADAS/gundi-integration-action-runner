@@ -161,7 +161,7 @@ async def process_webhook(request: Request):
             json_content["hex_data_field"] = json_content.get("hex_data_field", parsed_config.hex_data_field)
             json_content["hex_format"] = json_content.get("hex_format", parsed_config.hex_format)
         # Forward raw payload to diagnostic URL before any transformation or validation
-        if diag_url := getattr(parsed_config, "diagnostic_destination_url", None)
+        if diag_url := getattr(parsed_config, "diagnostic_destination_url", None):
             asyncio.ensure_future(
                 forward_payload_to_diagnostic_url(
                     destination_url=diag_url,
