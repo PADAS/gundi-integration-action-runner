@@ -95,7 +95,7 @@ async def forward_payload_to_diagnostic_url(
         await _validate_diagnostic_url(destination_url)
         metadata = {
             "integration_id": integration_id,
-            "received_at": datetime.datetime.utcnow().isoformat() + "Z",
+            "received_at": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
         }
         if isinstance(json_content, dict):
             body = {**json_content, "__gundi_diagnostic_metadata": metadata}
@@ -161,8 +161,7 @@ async def process_webhook(request: Request):
             json_content["hex_data_field"] = json_content.get("hex_data_field", parsed_config.hex_data_field)
             json_content["hex_format"] = json_content.get("hex_format", parsed_config.hex_format)
         # Forward raw payload to diagnostic URL before any transformation or validation
-        diag_url = getattr(parsed_config, "diagnostic_destination_url", None)
-        if diag_url:
+        if diag_url := getattr(parsed_config, "diagnostic_destination_url", None)
             asyncio.ensure_future(
                 forward_payload_to_diagnostic_url(
                     destination_url=diag_url,
