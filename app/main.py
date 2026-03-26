@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.services.action_runner import execute_action, _portal
 from app.services.self_registration import register_integration_in_gundi
-from app.services.webhooks import _diagnostic_client
+from app.services.webhooks import close_diagnostic_client
 
 
 # For running behind a proxy, we'll want to configure the root path for OpenAPI browser.
@@ -29,7 +29,7 @@ async def lifespan(app: FastAPI):
     yield
     # Shutdown Hook
     await _portal.close()
-    await _diagnostic_client.aclose()
+    await close_diagnostic_client()
 
 
 app = FastAPI(

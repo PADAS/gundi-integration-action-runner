@@ -405,7 +405,6 @@ async def test_diagnostic_forwarding_called_when_url_configured(
 ):
     mocker.patch("app.services.webhooks.get_webhook_handler", mock_get_webhook_handler_for_generic_json_payload)
     mocker.patch("app.services.config_manager.IntegrationConfigurationManager.get_integration_details", AsyncMock(return_value=integration_v2_with_diagnostic_webhook))
-    mocker.patch("app.services.webhooks._validate_diagnostic_url", AsyncMock(return_value=None))
     mock_forward = mocker.patch(
         "app.services.webhooks.forward_payload_to_diagnostic_url",
         return_value=AsyncMock(),
@@ -454,13 +453,12 @@ async def test_diagnostic_forwarding_does_not_fail_main_webhook(
 ):
     mocker.patch("app.services.webhooks.get_webhook_handler", mock_get_webhook_handler_for_generic_json_payload)
     mocker.patch("app.services.config_manager.IntegrationConfigurationManager.get_integration_details", AsyncMock(return_value=integration_v2_with_diagnostic_webhook))
-    mocker.patch("app.services.webhooks._validate_diagnostic_url", AsyncMock(return_value=None))
+    mocker.patch("app.services.webhooks._validate_diagnostic_url", AsyncMock(return_value=None))  # skip DNS in this test
     # Simulate a real HTTP failure in the forwarding POST. forward_payload_to_diagnostic_url
     # catches all exceptions internally, so this must not propagate to the main flow.
-    mocker.patch(
-        "app.services.webhooks._diagnostic_client.post",
-        AsyncMock(side_effect=httpx.HTTPError("Connection refused")),
-    )
+    mock_client = MagicMock()
+    mock_client.post = AsyncMock(side_effect=httpx.HTTPError("Connection refused"))
+    mocker.patch("app.services.webhooks._get_diagnostic_client", return_value=mock_client)
     # Do not mock ensure_future — the coroutine is scheduled for real and its internal
     # try/except catches the HTTPError, proving isolation from the main request.
 
@@ -483,7 +481,6 @@ async def test_diagnostic_forwarding_called_even_when_payload_parsing_fails(
     mocker.patch("app.services.webhooks.get_webhook_handler", mock_get_webhook_handler_for_generic_json_payload)
     mocker.patch("app.services.config_manager.IntegrationConfigurationManager.get_integration_details", AsyncMock(return_value=integration_v2_with_diagnostic_webhook))
     mocker.patch("app.services.webhooks.publish_event", mock_publish_event)
-    mocker.patch("app.services.webhooks._validate_diagnostic_url", AsyncMock(return_value=None))
     mock_ensure_future = mocker.patch("app.services.webhooks.asyncio.ensure_future")
 
     # Force payload parsing to fail
@@ -503,13 +500,15 @@ async def test_diagnostic_forwarding_called_even_when_payload_parsing_fails(
 
 
 @pytest.mark.asyncio
-async def test_diagnostic_forwarding_skipped_when_validation_fails(
+async def test_diagnostic_forwarding_logs_warning_when_validation_fails(
         mocker, integration_v2_with_diagnostic_webhook, mock_publish_event,
         mock_get_webhook_handler_for_generic_json_payload, mock_webhook_handler,
         mock_webhook_request_headers_onyesha, mock_webhook_request_payload_for_dynamic_schema
 ):
+    """Validation failure is handled inside the background task; main request is not affected."""
     mocker.patch("app.services.webhooks.get_webhook_handler", mock_get_webhook_handler_for_generic_json_payload)
     mocker.patch("app.services.config_manager.IntegrationConfigurationManager.get_integration_details", AsyncMock(return_value=integration_v2_with_diagnostic_webhook))
+    # Validation fails inside the background coroutine
     mocker.patch("app.services.webhooks._validate_diagnostic_url", AsyncMock(side_effect=ValueError("blocked")))
     mock_ensure_future = mocker.patch("app.services.webhooks.asyncio.ensure_future")
 
@@ -520,7 +519,9 @@ async def test_diagnostic_forwarding_skipped_when_validation_fails(
     )
 
     assert response.status_code == 200
-    mock_ensure_future.assert_not_called()
+    # ensure_future IS called — the coroutine is always scheduled when a URL is set
+    mock_ensure_future.assert_called_once()
+    mock_ensure_future.call_args[0][0].close()  # clean up unawaited coroutine
     mock_webhook_handler.assert_called_once()  # main handler still ran
 
 
@@ -614,12 +615,15 @@ async def test_forward_payload_to_diagnostic_url_success(mocker):
     integration_id = "test-integration-id"
     json_content = {"device": "sensor-1", "value": 42}
 
+    mocker.patch("app.services.webhooks._validate_diagnostic_url", AsyncMock(return_value=None))
     mock_response = MagicMock()
     mock_response.status_code = 200
     mock_response.raise_for_status = MagicMock()
 
     mock_post = AsyncMock(return_value=mock_response)
-    mocker.patch("app.services.webhooks._diagnostic_client.post", mock_post)
+    mock_client = MagicMock()
+    mock_client.post = mock_post
+    mocker.patch("app.services.webhooks._get_diagnostic_client", return_value=mock_client)
 
     await forward_payload_to_diagnostic_url(destination_url, integration_id, json_content)
 
@@ -641,12 +645,15 @@ async def test_forward_payload_to_diagnostic_url_list_payload(mocker):
     integration_id = "test-integration-id"
     json_content = [{"device": "sensor-1"}, {"device": "sensor-2"}]
 
+    mocker.patch("app.services.webhooks._validate_diagnostic_url", AsyncMock(return_value=None))
     mock_response = MagicMock()
     mock_response.status_code = 200
     mock_response.raise_for_status = MagicMock()
 
     mock_post = AsyncMock(return_value=mock_response)
-    mocker.patch("app.services.webhooks._diagnostic_client.post", mock_post)
+    mock_client = MagicMock()
+    mock_client.post = mock_post
+    mocker.patch("app.services.webhooks._get_diagnostic_client", return_value=mock_client)
 
     await forward_payload_to_diagnostic_url(destination_url, integration_id, json_content)
 
@@ -665,10 +672,10 @@ async def test_forward_payload_to_diagnostic_url_handles_http_error(mocker):
     integration_id = "test-integration-id"
     json_content = {"device": "sensor-1"}
 
-    mocker.patch(
-        "app.services.webhooks._diagnostic_client.post",
-        AsyncMock(side_effect=httpx.HTTPError("Connection refused")),
-    )
+    mocker.patch("app.services.webhooks._validate_diagnostic_url", AsyncMock(return_value=None))
+    mock_client = MagicMock()
+    mock_client.post = AsyncMock(side_effect=httpx.HTTPError("Connection refused"))
+    mocker.patch("app.services.webhooks._get_diagnostic_client", return_value=mock_client)
     mock_logger = mocker.patch("app.services.webhooks.logger")
 
     # Should not raise

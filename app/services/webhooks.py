@@ -18,7 +18,21 @@ from app.services.config_manager import IntegrationConfigurationManager
 
 config_manager = IntegrationConfigurationManager()
 logger = logging.getLogger(__name__)
-_diagnostic_client = httpx.AsyncClient(timeout=10.0)
+_diagnostic_client: httpx.AsyncClient | None = None
+
+
+def _get_diagnostic_client() -> httpx.AsyncClient:
+    global _diagnostic_client
+    if _diagnostic_client is None:
+        _diagnostic_client = httpx.AsyncClient(timeout=10.0)
+    return _diagnostic_client
+
+
+async def close_diagnostic_client() -> None:
+    global _diagnostic_client
+    if _diagnostic_client is not None:
+        await _diagnostic_client.aclose()
+        _diagnostic_client = None
 
 _BLOCKED_NETWORKS = [
     ipaddress.ip_network("127.0.0.0/8"),    # loopback
@@ -78,6 +92,7 @@ async def forward_payload_to_diagnostic_url(
     json_content,
 ):
     try:
+        await _validate_diagnostic_url(destination_url)
         metadata = {
             "integration_id": integration_id,
             "received_at": datetime.datetime.utcnow().isoformat() + "Z",
@@ -86,7 +101,7 @@ async def forward_payload_to_diagnostic_url(
             body = {**json_content, "__gundi_diagnostic_metadata": metadata}
         else:
             body = {"payload": json_content, "__gundi_diagnostic_metadata": metadata}
-        response = await _diagnostic_client.post(destination_url, json=body)
+        response = await _get_diagnostic_client().post(destination_url, json=body)
         response.raise_for_status()
         logger.debug(
             f"Diagnostic payload forwarded to '{destination_url}' "
@@ -148,20 +163,13 @@ async def process_webhook(request: Request):
         # Forward raw payload to diagnostic URL before any transformation or validation
         diag_url = getattr(parsed_config, "diagnostic_destination_url", None)
         if diag_url:
-            try:
-                await _validate_diagnostic_url(diag_url)
-            except ValueError as e:
-                logger.warning(
-                    f"Diagnostic forwarding skipped for integration '{integration.id}': {e}"
+            asyncio.ensure_future(
+                forward_payload_to_diagnostic_url(
+                    destination_url=diag_url,
+                    integration_id=str(integration.id),
+                    json_content=json_content,
                 )
-            else:
-                asyncio.ensure_future(
-                    forward_payload_to_diagnostic_url(
-                        destination_url=diag_url,
-                        integration_id=str(integration.id),
-                        json_content=json_content,
-                    )
-                )
+            )
         # Parse payload if a model was defined in webhooks/configurations.py
         if payload_model:
             try:
