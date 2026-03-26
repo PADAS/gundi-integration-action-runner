@@ -97,6 +97,11 @@ async def test_register_integration_with_slug_setting(
                     "title": "MockWebhookConfigModel",
                     "type": "object",
                     "properties": {
+                        "diagnostic_destination_url": {
+                            "title": "Diagnostic Destination URL",
+                            "description": "Optional URL to forward the raw incoming payload to for diagnostic purposes. When set, the original JSON payload is POST'd to this URL before any transformation.",
+                            "type": ["string", "null"],
+                        },
                         "allowed_devices_list": {
                             "title": "Allowed Devices List",
                             "type": "array",
@@ -107,10 +112,11 @@ async def test_register_integration_with_slug_setting(
                             "type": "boolean",
                         },
                     },
-                    "definitions": {},
                     "required": ["allowed_devices_list", "deduplication_enabled"],
+                    "definitions": {},
                 },
                 "ui_schema": {
+                    "diagnostic_destination_url": {"ui:placeholder": "https://your-diagnostic-app.example.com/webhook-dump", "ui:widget": "text"},
                     "allowed_devices_list": {"ui:widget": "list"},
                     "deduplication_enabled": {"ui:widget": "radio"},
                 },
@@ -210,6 +216,11 @@ async def test_register_integration_with_slug_arg(
                     "title": "MockWebhookConfigModel",
                     "type": "object",
                     "properties": {
+                        "diagnostic_destination_url": {
+                            "title": "Diagnostic Destination URL",
+                            "description": "Optional URL to forward the raw incoming payload to for diagnostic purposes. When set, the original JSON payload is POST'd to this URL before any transformation.",
+                            "type": ["string", "null"],
+                        },
                         "allowed_devices_list": {
                             "title": "Allowed Devices List",
                             "type": "array",
@@ -220,10 +231,11 @@ async def test_register_integration_with_slug_arg(
                             "type": "boolean",
                         },
                     },
-                    "definitions": {},
                     "required": ["allowed_devices_list", "deduplication_enabled"],
+                    "definitions": {},
                 },
                 "ui_schema": {
+                    "diagnostic_destination_url": {"ui:placeholder": "https://your-diagnostic-app.example.com/webhook-dump", "ui:widget": "text"},
                     "allowed_devices_list": {"ui:widget": "list"},
                     "deduplication_enabled": {"ui:widget": "radio"},
                 },
@@ -325,6 +337,11 @@ async def test_register_integration_with_service_url_arg(
                     "title": "MockWebhookConfigModel",
                     "type": "object",
                     "properties": {
+                        "diagnostic_destination_url": {
+                            "title": "Diagnostic Destination URL",
+                            "description": "Optional URL to forward the raw incoming payload to for diagnostic purposes. When set, the original JSON payload is POST'd to this URL before any transformation.",
+                            "type": ["string", "null"],
+                        },
                         "allowed_devices_list": {
                             "title": "Allowed Devices List",
                             "type": "array",
@@ -335,10 +352,11 @@ async def test_register_integration_with_service_url_arg(
                             "type": "boolean",
                         },
                     },
-                    "definitions": {},
                     "required": ["allowed_devices_list", "deduplication_enabled"],
+                    "definitions": {},
                 },
                 "ui_schema": {
+                    "diagnostic_destination_url": {"ui:placeholder": "https://your-diagnostic-app.example.com/webhook-dump", "ui:widget": "text"},
                     "allowed_devices_list": {"ui:widget": "list"},
                     "deduplication_enabled": {"ui:widget": "radio"},
                 },
@@ -443,6 +461,11 @@ async def test_register_integration_with_service_url_setting(
                     "title": "MockWebhookConfigModel",
                     "type": "object",
                     "properties": {
+                        "diagnostic_destination_url": {
+                            "title": "Diagnostic Destination URL",
+                            "description": "Optional URL to forward the raw incoming payload to for diagnostic purposes. When set, the original JSON payload is POST'd to this URL before any transformation.",
+                            "type": ["string", "null"],
+                        },
                         "allowed_devices_list": {
                             "title": "Allowed Devices List",
                             "type": "array",
@@ -453,10 +476,11 @@ async def test_register_integration_with_service_url_setting(
                             "type": "boolean",
                         },
                     },
-                    "definitions": {},
                     "required": ["allowed_devices_list", "deduplication_enabled"],
+                    "definitions": {},
                 },
                 "ui_schema": {
+                    "diagnostic_destination_url": {"ui:placeholder": "https://your-diagnostic-app.example.com/webhook-dump", "ui:widget": "text"},
                     "allowed_devices_list": {"ui:widget": "list"},
                     "deduplication_enabled": {"ui:widget": "radio"},
                 },
@@ -524,6 +548,11 @@ async def test_register_integration_with_executable_action(
                     "title": "MockWebhookConfigModel",
                     "type": "object",
                     "properties": {
+                        "diagnostic_destination_url": {
+                            "title": "Diagnostic Destination URL",
+                            "description": "Optional URL to forward the raw incoming payload to for diagnostic purposes. When set, the original JSON payload is POST'd to this URL before any transformation.",
+                            "type": ["string", "null"],
+                        },
                         "allowed_devices_list": {
                             "title": "Allowed Devices List",
                             "type": "array",
@@ -538,6 +567,7 @@ async def test_register_integration_with_executable_action(
                     "definitions": {},
                 },
                 "ui_schema": {
+                    "diagnostic_destination_url": {"ui:placeholder": "https://your-diagnostic-app.example.com/webhook-dump", "ui:widget": "text"},
                     "allowed_devices_list": {"ui:widget": "list"},
                     "deduplication_enabled": {"ui:widget": "radio"},
                 },

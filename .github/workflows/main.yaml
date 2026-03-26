@@ -26,7 +26,7 @@ jobs:
 
   run_unit_tests:
     uses: ./.github/workflows/_tests.yml
-    
+
   build:
     uses: PADAS/gundi-workflows/.github/workflows/build_docker.yml@v2
     needs: [run_unit_tests, vars]
@@ -35,7 +35,6 @@ jobs:
       tag: ${{ needs.vars.outputs.tag }}
       workload_identity_provider: ${{ vars.GUNDI_INTEGRATIONS_WORKLOAD_IDENTITY_PROVIDER}}
       service_account: ${{ vars.GUNDI_INTEGRATIONS_SERVICE_ACCOUNT }}
-
 
   deploy_dev:
     uses: PADAS/gundi-workflows/.github/workflows/update_hcl.yml@v2

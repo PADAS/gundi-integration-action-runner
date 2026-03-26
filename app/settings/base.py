@@ -74,3 +74,8 @@ INTEGRATION_EVENTS_TOPIC = env.str("INTEGRATION_EVENTS_TOPIC", "integration-even
 default_commands_topic = f"{INTEGRATION_TYPE_SLUG}-actions-topic" if INTEGRATION_TYPE_SLUG else None
 INTEGRATION_COMMANDS_TOPIC = env.str("INTEGRATION_COMMANDS_TOPIC", default_commands_topic)
 TRIGGER_ACTIONS_ALWAYS_SYNC = env.bool("TRIGGER_ACTIONS_ALWAYS_SYNC", False)
+
+# SSRF protection for diagnostic URL forwarding.
+# When non-empty, only the listed hostnames are permitted as diagnostic destinations.
+# Example: "diagnostics.example.com,hooks.example.org"
+DIAGNOSTIC_URL_ALLOWLIST = env.list("DIAGNOSTIC_URL_ALLOWLIST", [])
