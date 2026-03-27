@@ -95,7 +95,7 @@ async def forward_payload_to_diagnostic_url(
         await _validate_diagnostic_url(destination_url)
         metadata = {
             "integration_id": integration_id,
-            "received_at": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
+            "received_at": datetime.datetime.now(datetime.datetime.UTC).isoformat() + "Z",
         }
         if isinstance(json_content, dict):
             body = {**json_content, "__gundi_diagnostic_metadata": metadata}
