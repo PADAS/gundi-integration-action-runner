@@ -182,23 +182,18 @@ async def action_process_ornitela_file(integration, action_config: ProcessOrnite
         # Transform and send observations
         transformed_data = generate_gundi_observations(telemetry_data, action_config.historical_limit_days)
         observations_sent = 0
-        
+
         for i, batch in enumerate(batches_from_generator(transformed_data, 200)):
             logger.info(f'Sending observations batch #{i}: {len(batch)} observations.')
             await send_observations_to_gundi(observations=batch, integration_id=integration.id)
             observations_sent += len(batch)
-        
-        # Handle file archiving and deletion after successful processing
-        archive_result = await _handle_file_archiving_and_deletion(
-            file_storage, integration_id, action_config.file_name, 
-            action_config.archive_days, action_config.delete_after_archive_days
-        )
-        
-        message = f"Processed file {action_config.file_name}: extracted {len(telemetry_data)} records, sent {observations_sent} observations"
-        if archive_result["archived"]:
-            message += f", archived file"
-        if archive_result["deleted"]:
-            message += f", deleted archived file"
+
+        # Move file to archive after successful processing
+        archive_path = f"archive/{action_config.file_name}"
+        await file_storage.move_file(integration_id, action_config.file_name, archive_path)
+        logger.info(f"Moved file to archive: {action_config.file_name}")
+
+        message = f"Processed file {action_config.file_name}: extracted {len(telemetry_data)} records, sent {observations_sent} observations, archived file"
             
         logger.info(message)
         
@@ -217,8 +212,7 @@ async def action_process_ornitela_file(integration, action_config: ProcessOrnite
             "file_name": action_config.file_name,
             "telemetry_records": len(telemetry_data),
             "observations_sent": observations_sent,
-            "archived": archive_result["archived"],
-            "deleted": archive_result["deleted"]
+            "archived": True,
         }
         
     except Exception as e:
@@ -240,73 +234,6 @@ async def action_process_ornitela_file(integration, action_config: ProcessOrnite
             "error": str(e)
         }
 
-
-async def _handle_file_archiving_and_deletion(file_storage, integration_id: str, file_name: str, 
-                                            archive_days: int, delete_after_archive_days: int) -> Dict[str, bool]:
-    """
-    Handle archiving and deletion of processed files based on configuration.
-    
-    Args:
-        file_storage: CloudFileStorage instance
-        integration_id: Integration ID
-        file_name: Name of the file to process
-        archive_days: Days after processing before archiving
-        delete_after_archive_days: Days after archiving before deletion
-        
-    Returns:
-        Dict with 'archived' and 'deleted' boolean flags
-    """
-    result = {"archived": False, "deleted": False}
-    
-    try:
-        # Get file metadata to check age
-        metadata = await file_storage.get_file_metadata(integration_id, file_name)
-        file_created = metadata.timeCreated or datetime.now(timezone.utc)
-        
-        # Ensure timezone awareness
-        if file_created.tzinfo is None:
-            file_created = file_created.replace(tzinfo=timezone.utc)
-            
-        current_time = datetime.now(timezone.utc)
-        days_since_created = (current_time - file_created).days
-        
-        # Check if file should be archived
-        if days_since_created >= archive_days:
-            try:
-                # Move file to archive folder by copying and then deleting original
-                archive_path = f"archive/{file_name}"
-                
-                # Copy file to archive location
-                import tempfile
-                with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-                    await file_storage.download_file(integration_id, file_name, temp_file.name)
-                    await file_storage.upload_file(integration_id, temp_file.name, archive_path)
-                
-                # Delete original file
-                await file_storage.delete_file(integration_id, file_name)
-                
-                result["archived"] = True
-                logger.info(f"Archived file: {file_name}")
-                
-            except Exception as e:
-                logger.error(f"Error archiving file {file_name}: {str(e)}")
-        
-        # Check if archived file should be deleted
-        elif days_since_created >= delete_after_archive_days:
-            try:
-                archive_path = f"archive/{file_name}"
-                await file_storage.delete_file(integration_id, archive_path)
-                
-                result["deleted"] = True
-                logger.info(f"Deleted archived file: {file_name}")
-                
-            except Exception as e:
-                logger.error(f"Error deleting archived file {file_name}: {str(e)}")
-                
-    except Exception as e:
-        logger.error(f"Error handling file archiving/deletion for {file_name}: {str(e)}")
-    
-    return result
 
 
 @crontab_schedule("*/10 * * * *")  # Regular schedule.
@@ -332,26 +259,32 @@ async def action_process_new_files(integration, action_config: ProcessTelemetryD
             root_prefix=action_config.bucket_path
         )
         
-        # Get current state to track processed files
-        state = await state_manager.get_state(integration_id, action_id)
-        processed_files = set(state.get("processed_files", []))
-        
         # List all files in the bucket path
         file_list = await file_storage.list_files(integration_id)
-        
+
         new_files = []
-        
+        archived_files_to_delete = []
         current_time = datetime.now(timezone.utc)
-        
+
         for file_name in file_list:
             # Skip directories
             if file_name.endswith("/"):
                 continue
-            
-            # Skip files in the archive folder
+
+            # Check archived files for deletion
             if file_name.startswith("archive/"):
+                try:
+                    metadata = await file_storage.get_file_metadata(integration_id, file_name)
+                    file_created = metadata.timeCreated or current_time
+                    if file_created.tzinfo is None:
+                        file_created = file_created.replace(tzinfo=timezone.utc)
+                    days_since_created = (current_time - file_created).days
+                    if days_since_created >= action_config.delete_after_archive_days:
+                        archived_files_to_delete.append(file_name)
+                except Exception as e:
+                    logger.warning(f"Could not get metadata for archived file {file_name}: {str(e)}")
                 continue
-                
+
             # Get file metadata
             try:
                 metadata = await file_storage.get_file_metadata(integration_id, file_name)
@@ -363,15 +296,13 @@ async def action_process_new_files(integration, action_config: ProcessTelemetryD
                 file_modified = current_time
                 file_size = 0
                 content_type = "application/octet-stream"
-            
-            # Check if file is new (not processed)
-            if file_name not in processed_files:
-                new_files.append({
-                    "name": file_name,
-                    "size": file_size,
-                    "created": file_modified.isoformat(),
-                    "content_type": content_type
-                })
+
+            new_files.append({
+                "name": file_name,
+                "size": file_size,
+                "created": file_modified.isoformat(),
+                "content_type": content_type
+            })
         
         # Trigger processing for each new file individually
         subactions_triggered = 0
@@ -382,8 +313,7 @@ async def action_process_new_files(integration, action_config: ProcessTelemetryD
                     bucket_path=action_config.bucket_path,
                     file_name=file_info["name"],
                     historical_limit_days=action_config.historical_limit_days,
-                    archive_days=action_config.archive_days,
-                    delete_after_archive_days=action_config.delete_after_archive_days
+                    delete_after_archive_days=action_config.delete_after_archive_days,
                 )
                 
                 await trigger_action(
@@ -393,36 +323,37 @@ async def action_process_new_files(integration, action_config: ProcessTelemetryD
                 )
                 
                 subactions_triggered += 1
-                processed_files.add(file_info["name"])
 
             except Exception as e:
                 logger.exception(f"Error triggering action for file {file_info['name']}: {str(e)}")
                 continue
 
-        # Archive and delete logic is now handled in the process_ornitela_file action
-        archived_count = 0
+        # Delete old archived files
         deleted_count = 0
+        for file_name in archived_files_to_delete:
+            try:
+                await file_storage.delete_file(integration_id, file_name)
+                deleted_count += 1
+                logger.info(f"Deleted old archived file: {file_name}")
+            except Exception as e:
+                logger.error(f"Error deleting archived file {file_name}: {str(e)}")
 
         # Update state
         await state_manager.set_state(
             integration_id,
             action_id,
             {
-                "processed_files": list(processed_files),
                 "last_run": current_time.isoformat(),
                 "last_subactions_triggered": subactions_triggered,
-                "last_archived_count": archived_count,
-                "last_deleted_count": deleted_count
+                "last_deleted_count": deleted_count,
             }
         )
-        
+
         return {
             "status": "success",
             "new_files_found": len(new_files),
             "subactions_triggered": subactions_triggered,
-            "files_archived": archived_count,
             "files_deleted": deleted_count,
-            "total_processed_files": len(processed_files)
         }
         
     except Exception as e:

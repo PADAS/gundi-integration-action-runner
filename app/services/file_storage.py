@@ -113,6 +113,16 @@ class CloudFileStorage:
             with attempt:
                 await self.storage_client.patch_metadata(self.bucket_name, target_path, custom_metadata)
 
+    async def move_file(self, integration_id, source_blob_name, destination_blob_name):
+        """Move a file within the same bucket by copying then deleting the original."""
+        source_path = self.get_file_fullname(integration_id, source_blob_name)
+        dest_path = self.get_file_fullname(integration_id, destination_blob_name)
+        for attempt in stamina.retry_context(on=(aiohttp.ClientError, asyncio.TimeoutError),
+                                             attempts=5, wait_initial=1.0, wait_max=30, wait_jitter=3.0):
+            with attempt:
+                await self.storage_client.copy(self.bucket_name, source_path, self.bucket_name, dest_path)
+                await self.storage_client.delete(self.bucket_name, source_path)
+
     async def stream_file(self, integration_id, blob_name):
         """
         Stream file contents from GCS as an async generator.
