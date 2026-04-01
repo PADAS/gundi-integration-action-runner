@@ -116,6 +116,10 @@ def get_file_processing_config(integration):
 
 @activity_logger()
 async def action_process_ornitela_file(integration, action_config: ProcessOrnitelaFileActionConfiguration):
+    """
+    Process a single Ornitela CSV file that has already been moved to the archive/ prefix.
+    Streams the file from GCS, parses telemetry records, and sends observations to Gundi.
+    """
     integration_id = str(integration.id)
 
     try:

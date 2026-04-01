@@ -35,7 +35,7 @@ class FileMetadata(BaseModel):
 # ToDo. Move this to the template for other integrations needing file support
 class CloudFileStorage:
     def __init__(self, bucket_name=None, root_prefix=None):
-        self.root_prefix = root_prefix
+        self.root_prefix = root_prefix.strip("/") if root_prefix else ""
         self.bucket_name = bucket_name or settings.INFILE_STORAGE_BUCKET
         self._storage_client = None  # Lazy initialization
 
@@ -46,8 +46,9 @@ class CloudFileStorage:
         return self._storage_client
 
     def get_file_fullname(self, integration_id, blob_name):
-        # Remove integration_id from path - use only root_prefix and blob_name
-        return f"{self.root_prefix}/{blob_name}"
+        if self.root_prefix:
+            return f"{self.root_prefix}/{blob_name}"
+        return blob_name
 
     async def upload_file(self, integration_id, local_file_path, destination_blob_name, metadata=None):
         target_path = self.get_file_fullname(integration_id, destination_blob_name)
