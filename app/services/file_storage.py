@@ -35,8 +35,8 @@ class FileMetadata(BaseModel):
 # ToDo. Move this to the template for other integrations needing file support
 class CloudFileStorage:
     def __init__(self, bucket_name=None, root_prefix=None):
-        self.root_prefix = root_prefix or settings.GCP_BUCKET_ROOT_PREFIX
-        self.bucket_name = bucket_name or settings.GCP_BUCKET_NAME
+        self.root_prefix = root_prefix
+        self.bucket_name = bucket_name or settings.INFILE_STORAGE_BUCKET
         self._storage_client = None  # Lazy initialization
 
     @property

@@ -393,19 +393,20 @@ async def action_process_new_files(integration, action_config: ProcessTelemetryD
                 )
                 
                 subactions_triggered += 1
-                
+                processed_files.add(file_info["name"])
+
             except Exception as e:
                 logger.exception(f"Error triggering action for file {file_info['name']}: {str(e)}")
                 continue
-        
+
         # Archive and delete logic is now handled in the process_ornitela_file action
         archived_count = 0
         deleted_count = 0
-        
+
         # Update state
         await state_manager.set_state(
-            integration_id, 
-            action_id, 
+            integration_id,
+            action_id,
             {
                 "processed_files": list(processed_files),
                 "last_run": current_time.isoformat(),
