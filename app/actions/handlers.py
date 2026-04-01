@@ -176,9 +176,14 @@ async def action_process_ornitela_file(integration, action_config: ProcessOrnite
                 "file_name": action_config.file_name
             }
         
+        # Move file to archive immediately to prevent re-processing
+        archive_path = f"archive/{action_config.file_name}"
+        await file_storage.move_file(integration_id, action_config.file_name, archive_path)
+        logger.info(f"Moved file to archive: {action_config.file_name}")
+
         # Stream CSV file for memory efficiency
-        telemetry_data = await _process_csv_file_streaming(file_storage, integration_id, action_config.file_name)
-        
+        telemetry_data = await _process_csv_file_streaming(file_storage, integration_id, archive_path)
+
         # Transform and send observations
         transformed_data = generate_gundi_observations(telemetry_data, action_config.historical_limit_days)
         observations_sent = 0
@@ -187,11 +192,6 @@ async def action_process_ornitela_file(integration, action_config: ProcessOrnite
             logger.info(f'Sending observations batch #{i}: {len(batch)} observations.')
             await send_observations_to_gundi(observations=batch, integration_id=integration.id)
             observations_sent += len(batch)
-
-        # Move file to archive after successful processing
-        archive_path = f"archive/{action_config.file_name}"
-        await file_storage.move_file(integration_id, action_config.file_name, archive_path)
-        logger.info(f"Moved file to archive: {action_config.file_name}")
 
         message = f"Processed file {action_config.file_name}: extracted {len(telemetry_data)} records, sent {observations_sent} observations, archived file"
             
