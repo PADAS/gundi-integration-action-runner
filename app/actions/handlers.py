@@ -13,7 +13,6 @@ from app.services.activity_logger import activity_logger, log_action_activity
 from app.services.action_scheduler import crontab_schedule, trigger_action
 from gundi_core.schemas.v2.gundi import LogLevel
 from app.actions.configurations import ProcessTelemetryDataActionConfiguration, ProcessOrnitelaFileActionConfiguration
-from app.actions.utils import FileProcessingLockManager
 from app.services.state import IntegrationStateManager
 from app.services.file_storage import CloudFileStorage
 from app import settings
@@ -117,71 +116,18 @@ def get_file_processing_config(integration):
 
 @activity_logger()
 async def action_process_ornitela_file(integration, action_config: ProcessOrnitelaFileActionConfiguration):
-    """
-    Action handler that processes a single Ornitela telemetry data file.
-    
-    This handler:
-    1. Acquires a processing lock to prevent concurrent processing
-    2. Streams and parses the CSV file
-    3. Transforms the data into Gundi observations
-    4. Sends observations to Gundi in batches
-    5. Archives and deletes files based on configuration
-    6. Releases the processing lock
-    """
     integration_id = str(integration.id)
-    lock_manager = FileProcessingLockManager()
-    
-    # Try to acquire a lock for this file
-    if not await lock_manager.acquire_lock(integration_id, action_config.file_name):
-        logger.info(f"File {action_config.file_name} is already being processed, skipping")
-        message = f"Skipped file {action_config.file_name} - already being processed"
-        await log_action_activity(
-            integration_id=integration_id,
-            action_id="process_ornitela_file",
-            title=message,
-            level=LogLevel.INFO
-        )
-        return {
-            "status": "skipped",
-            "reason": "File is already being processed",
-            "file_name": action_config.file_name
-        }
-    
+
     try:
-        # Initialize CloudFileStorage service
         file_storage = CloudFileStorage(
             bucket_name=settings.INFILE_STORAGE_BUCKET,
             root_prefix=action_config.bucket_path
         )
-        
-        logger.info(f"Processing file {action_config.file_name} for integration {integration_id}")
-        
-        # Skip non-CSV files
-        if not action_config.file_name.endswith('.csv'):
-            logger.info(f"Skipping non-CSV file: {action_config.file_name} (only CSV files are processed)")
-            message = f"Skipped non-CSV file: {action_config.file_name}"
-            await log_action_activity(
-                integration_id=integration_id,
-                action_id="process_ornitela_file",
-                title=message,
-                level=LogLevel.INFO
-            )
-            
-            # Release lock
-            await lock_manager.release_lock(integration_id, action_config.file_name)
-            
-            return {
-                "status": "skipped",
-                "reason": "Not a CSV file",
-                "file_name": action_config.file_name
-            }
-        
-        # Move file to archive immediately to prevent re-processing
-        archive_path = f"archive/{action_config.file_name}"
-        await file_storage.move_file(integration_id, action_config.file_name, archive_path)
-        logger.info(f"Moved file to archive: {action_config.file_name}")
 
-        # Stream CSV file for memory efficiency
+        logger.info(f"Processing file {action_config.file_name} for integration {integration_id}")
+
+        # Stream CSV from archive (file was moved before this action was triggered)
+        archive_path = f"archive/{action_config.file_name}"
         telemetry_data = await _process_csv_file_streaming(file_storage, integration_id, archive_path)
 
         # Transform and send observations
@@ -193,28 +139,22 @@ async def action_process_ornitela_file(integration, action_config: ProcessOrnite
             await send_observations_to_gundi(observations=batch, integration_id=integration.id)
             observations_sent += len(batch)
 
-        message = f"Processed file {action_config.file_name}: extracted {len(telemetry_data)} records, sent {observations_sent} observations, archived file"
-            
+        message = f"Processed file {action_config.file_name}: extracted {len(telemetry_data)} records, sent {observations_sent} observations"
         logger.info(message)
-        
         await log_action_activity(
             integration_id=integration_id,
             action_id="process_ornitela_file",
             title=message,
             level=LogLevel.INFO
         )
-        
-        # Release the processing lock
-        await lock_manager.release_lock(integration_id, action_config.file_name)
-        
+
         return {
             "status": "success",
             "file_name": action_config.file_name,
             "telemetry_records": len(telemetry_data),
             "observations_sent": observations_sent,
-            "archived": True,
         }
-        
+
     except Exception as e:
         logger.exception(f"Error processing file {action_config.file_name}: {str(e)}")
         message = f"Error processing file {action_config.file_name}: {str(e)}"
@@ -224,10 +164,6 @@ async def action_process_ornitela_file(integration, action_config: ProcessOrnite
             title=message,
             level=LogLevel.ERROR
         )
-        
-        # Release the processing lock even in case of error
-        await lock_manager.release_lock(integration_id, action_config.file_name)
-        
         return {
             "status": "error",
             "file_name": action_config.file_name,
@@ -304,24 +240,27 @@ async def action_process_new_files(integration, action_config: ProcessTelemetryD
                 "content_type": content_type
             })
         
-        # Trigger processing for each new file individually
+        # Move each file to archive and trigger processing
         subactions_triggered = 0
         for file_info in new_files:
             try:
-                # Trigger the single-file processing action
+                archive_path = f"archive/{file_info['name']}"
+                await file_storage.move_file(integration_id, file_info["name"], archive_path)
+                logger.info(f"Moved file to archive: {file_info['name']}")
+
                 config = ProcessOrnitelaFileActionConfiguration(
                     bucket_path=action_config.bucket_path,
                     file_name=file_info["name"],
                     historical_limit_days=action_config.historical_limit_days,
                     delete_after_archive_days=action_config.delete_after_archive_days,
                 )
-                
+
                 await trigger_action(
                     integration_id=integration.id,
-                    action_id="process_ornitela_file",  # This is the action ID (without action_ prefix)
+                    action_id="process_ornitela_file",
                     config=config
                 )
-                
+
                 subactions_triggered += 1
 
             except Exception as e:
