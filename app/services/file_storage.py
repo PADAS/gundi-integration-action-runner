@@ -120,7 +120,7 @@ class CloudFileStorage:
         for attempt in stamina.retry_context(on=(aiohttp.ClientError, asyncio.TimeoutError),
                                              attempts=5, wait_initial=1.0, wait_max=30, wait_jitter=3.0):
             with attempt:
-                await self.storage_client.copy(self.bucket_name, source_path, self.bucket_name, dest_path)
+                await self.storage_client.copy(self.bucket_name, source_path, self.bucket_name, new_name=dest_path)
                 await self.storage_client.delete(self.bucket_name, source_path)
 
     async def stream_file(self, integration_id, blob_name):
