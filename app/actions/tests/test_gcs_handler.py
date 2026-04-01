@@ -13,6 +13,13 @@ from app.actions.handlers import (
 from app.services.file_storage import FileMetadata
 
 
+@pytest.fixture(autouse=True)
+def mock_publish_event():
+    """Prevent all tests from making real GCP PubSub calls."""
+    with patch("app.services.activity_logger.publish_event", new_callable=AsyncMock):
+        yield
+
+
 HEADER = "device_id,device_name,UTC_datetime,UTC_date,UTC_time,datatype,satcount,U_bat_mV,bat_soc_pct,solar_I_mA,hdop,Latitude,Longitude,MSL_altitude_m,Reserved,speed_km/h,direction_deg,int_temperature_C,mag_x,mag_y,mag_z,acc_x,acc_y,acc_z,UTC_timestamp,milliseconds,light,altimeter_m,depth_m,conductivity_mS/cm,ext_temperature_C\n"
 GPS_ROW = "226976,GF_BAR_2022_ADU_W_IMA_Gauele,2025-01-18 09:10:11,2025-01-18,09:10:11,GPSS,3,3702,8,,,44.394531250000000,5.370184421539307,,,,,,,,,,,247,2025-01-18 09:10:11.0,0,,,,,\n"
 GPS_ROW_2 = "226976,GF_BAR_2022_ADU_W_IMA_Gauele,2025-01-18 10:10:11,2025-01-18,10:10:11,GPSS,3,3702,8,,,44.395652770996094,5.367559432983398,,,,,,,,,,,247,2025-01-18 10:10:11.0,0,,,,,\n"
@@ -207,15 +214,8 @@ async def test_process_ornitela_file_reads_from_archive(
     mock_file_storage_cls.return_value = storage
     mock_send.return_value = None
 
-    # Patch activity logger to be a no-op
-    with patch("app.actions.handlers.log_action_activity", AsyncMock()):
-        await action_process_ornitela_file(mock_integration, file_action_config)
+    await action_process_ornitela_file(mock_integration, file_action_config)
 
-    # stream_file should be called with the archive path
-    stream_calls = [str(c) for c in storage.stream_file.__wrapped__.__code__.co_varnames
-                    if "archive" in str(c)] if hasattr(storage.stream_file, "__wrapped__") else []
-    # Verify via the actual call args on the mock
-    # Since stream_file is an async generator we verify via CloudFileStorage init path
     assert mock_file_storage_cls.called
 
 
@@ -230,8 +230,7 @@ async def test_process_ornitela_file_sends_observations(
     mock_file_storage_cls.return_value = storage
     mock_send.return_value = None
 
-    with patch("app.actions.handlers.log_action_activity", AsyncMock()):
-        result = await action_process_ornitela_file(mock_integration, file_action_config)
+    result = await action_process_ornitela_file(mock_integration, file_action_config)
 
     assert result["status"] == "success"
     assert result["observations_sent"] > 0
@@ -247,8 +246,7 @@ async def test_process_ornitela_file_error_handling(
     """Errors during processing must be caught and returned."""
     mock_file_storage_cls.side_effect = Exception("storage unavailable")
 
-    with patch("app.actions.handlers.log_action_activity", AsyncMock()):
-        result = await action_process_ornitela_file(mock_integration, file_action_config)
+    result = await action_process_ornitela_file(mock_integration, file_action_config)
 
     assert result["status"] == "error"
     assert "storage unavailable" in result["error"]
