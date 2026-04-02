@@ -134,13 +134,7 @@ async def action_process_ornitela_file(integration, action_config: ProcessOrnite
 
         logger.info(f"Processing file {action_config.file_name} for integration {integration_id}")
 
-        telemetry_data, row_count = await _process_csv_file(file_storage, integration_id, in_progress_path)
-        await log_action_activity(
-            integration_id=integration_id,
-            action_id="process_ornitela_file",
-            title=f"File {action_config.file_name}: {row_count} rows",
-            level=LogLevel.INFO
-        )
+        telemetry_data = await _process_csv_file(file_storage, integration_id, in_progress_path)
 
         # Transform and send observations
         transformed_data = generate_gundi_observations(telemetry_data, action_config.historical_limit_days)
@@ -339,7 +333,7 @@ async def action_process_new_files(integration, action_config: ProcessTelemetryD
         }
 
 
-async def _process_csv_file(file_storage, integration_id: str, file_name: str) -> tuple[List[Dict[str, Any]], int]:
+async def _process_csv_file(file_storage, integration_id: str, file_name: str) -> List[Dict[str, Any]]:
     """
     Process CSV telemetry data. Downloads the full file into memory, then parses it.
     Handles both SMS and GPRS files, grouping sensor data with GPS locations.
@@ -363,6 +357,12 @@ async def _process_csv_file(file_storage, integration_id: str, file_name: str) -
         rows = list(reader)
         row_count = len(rows)
         logger.info(f"Processing {file_name}: {row_count} rows")
+        await log_action_activity(
+            integration_id=integration_id,
+            action_id="process_ornitela_file",
+            title=f"File {file_name}: {row_count} rows",
+            level=LogLevel.INFO
+        )
 
         for row_data in rows:
             if row_data.get("device_id") == "device_id":
@@ -399,8 +399,7 @@ async def _process_csv_file(file_storage, integration_id: str, file_name: str) -
             observation = _create_observation(current_gps_location, sensor_readings, file_name)
             telemetry_data.append(observation)
 
-        logger.info(f"Processed {len(telemetry_data)} grouped observations from {file_name}")
-        return telemetry_data, row_count
+        return telemetry_data
 
     except Exception as e:
         logger.exception(f"Error processing CSV file {file_name}: {str(e)}")

@@ -309,7 +309,7 @@ async def test_process_csv_file_gps_and_sensors():
 
     mock_storage.download_bytes = Mock(side_effect=mock_download_bytes)
 
-    result, row_count = await _process_csv_file(mock_storage, "test-integration", "test.csv")
+    result = await _process_csv_file(mock_storage, "test-integration", "test.csv")
 
     assert len(result) == 1
     obs = result[0]
@@ -333,7 +333,7 @@ async def test_process_csv_file_gps_only():
 
     mock_storage.download_bytes = Mock(side_effect=mock_download_bytes)
 
-    result, row_count = await _process_csv_file(mock_storage, "test-integration", "test.csv")
+    result = await _process_csv_file(mock_storage, "test-integration", "test.csv")
 
     assert len(result) == 2
     assert result[0]["timestamp"] == "2025-01-18 09:10:11"
