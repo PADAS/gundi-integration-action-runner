@@ -124,6 +124,17 @@ async def action_process_ornitela_file(integration, action_config: ProcessOrnite
     """
     integration_id = str(integration.id)
     file_storage = None
+
+    # Fast-path: old code stored full paths including the folder prefix.
+    # If the file_name already carries a managed prefix it is a stale message.
+    managed_prefixes = ("archive/", "in_progress/", "dead_letter/")
+    if any(action_config.file_name.startswith(p) for p in managed_prefixes):
+        logger.warning(
+            f"Received stale PubSub message with prefixed file_name '{action_config.file_name}' "
+            f"— skipping (triggered by old code before lifecycle migration)"
+        )
+        return {"status": "skipped", "file_name": action_config.file_name, "reason": "stale message with path prefix"}
+
     in_progress_path = f"in_progress/{action_config.file_name}"
 
     try:
@@ -133,11 +144,8 @@ async def action_process_ornitela_file(integration, action_config: ProcessOrnite
         )
 
         # Verify the file is actually in in_progress/ before doing any work.
-        # If it's missing, this is a stale PubSub message (e.g. left over from before
-        # the in_progress/ lifecycle was introduced, or already processed on a prior delivery).
-        try:
-            await file_storage.get_file_metadata(integration_id, in_progress_path)
-        except Exception:
+        # Use file_exists so a missing file returns False immediately (no retries on 404).
+        if not await file_storage.file_exists(integration_id, in_progress_path):
             logger.warning(
                 f"File not found at {in_progress_path} — stale or duplicate PubSub message, skipping. "
                 f"(file may already be in archive/ or dead_letter/)"

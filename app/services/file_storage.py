@@ -85,6 +85,17 @@ class CloudFileStorage:
                 results = [blob['name'].replace(f"{self.root_prefix}/", "") for blob in items if blob['name'].startswith(f"{self.root_prefix}/")]
                 return results
 
+    async def file_exists(self, integration_id, blob_name) -> bool:
+        """Return True if the blob exists, False if it does not (404). Other errors are raised."""
+        target_path = self.get_file_fullname(integration_id, blob_name)
+        try:
+            await self.storage_client.download_metadata(self.bucket_name, target_path)
+            return True
+        except aiohttp.ClientResponseError as e:
+            if e.status == 404:
+                return False
+            raise
+
     async def get_file_metadata(self, integration_id, blob_name) -> FileMetadata:
         """
         Get file metadata from Google Cloud Storage and return as a validated Pydantic model.

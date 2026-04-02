@@ -84,8 +84,12 @@ def make_file_storage_mock(files=None, metadata=None, move_file=None):
         for chunk in [HEADER, recent_row]:
             yield chunk.encode("utf-8")
 
+    async def default_file_exists(*a, **kw):
+        return True
+
     mock.list_files = Mock(side_effect=default_list)
     mock.get_file_metadata = Mock(side_effect=default_metadata)
+    mock.file_exists = Mock(side_effect=default_file_exists)
     mock.move_file = Mock(side_effect=move_file or default_move)
     mock.delete_file = Mock(side_effect=default_delete)
     mock.stream_file = default_stream
@@ -259,12 +263,12 @@ async def test_process_ornitela_file_sends_observations_then_archives(
 @pytest.mark.asyncio
 @patch("app.actions.handlers.send_observations_to_gundi")
 @patch("app.actions.handlers.CloudFileStorage")
-async def test_process_ornitela_file_skips_stale_pubsub_message(
+async def test_process_ornitela_file_skips_when_not_in_in_progress(
     mock_file_storage_cls, mock_send, mock_integration, file_action_config
 ):
     """If the file is not found in in_progress/, log a warning and skip — no dead_letter move."""
     storage = make_file_storage_mock()
-    storage.get_file_metadata = Mock(side_effect=AsyncMock(side_effect=Exception("404 Not Found")))
+    storage.file_exists = Mock(side_effect=AsyncMock(return_value=False))
     mock_file_storage_cls.return_value = storage
     mock_send.return_value = None
 
@@ -274,6 +278,30 @@ async def test_process_ornitela_file_skips_stale_pubsub_message(
     assert result["reason"] == "not found in in_progress/"
     mock_send.assert_not_called()
     storage.move_file.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch("app.actions.handlers.send_observations_to_gundi")
+@patch("app.actions.handlers.CloudFileStorage")
+async def test_process_ornitela_file_skips_prefixed_file_name(
+    mock_file_storage_cls, mock_send, mock_integration, mock_integration_plain=None
+):
+    """file_name values that already carry a managed prefix are stale messages — skip immediately."""
+    for prefixed in ["archive/bird001.csv", "in_progress/bird001.csv", "dead_letter/bird001.csv"]:
+        config = ProcessOrnitelaFileActionConfiguration(
+            bucket_path="telemetry-data",
+            file_name=prefixed,
+            delete_after_archive_days=90,
+        )
+        integration = Mock()
+        integration.id = "test-integration-123"
+
+        result = await action_process_ornitela_file(integration, config)
+
+        assert result["status"] == "skipped", f"Expected skipped for file_name={prefixed}"
+        assert result["reason"] == "stale message with path prefix"
+    mock_send.assert_not_called()
+    mock_file_storage_cls.assert_not_called()
 
 
 @pytest.mark.asyncio
