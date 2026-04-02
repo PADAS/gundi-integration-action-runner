@@ -1,12 +1,13 @@
 import asyncio
 import json
 import logging
+import math
 import os
 import csv
 import io
 from datetime import datetime, timedelta, timezone
-from typing import List, Dict, Any, AsyncGenerator, Generator
-from app.services.gundi import send_observations_to_gundi
+from typing import List, Dict, Any, AsyncGenerator, Generator, Optional
+from app.services.gundi import send_observations_to_gundi, _get_sensors_api_client
 from app.services.utils import batches_from_generator, find_config_for_action
 from app.services.errors import ConfigurationNotFound
 from app.services.activity_logger import activity_logger, log_action_activity
@@ -125,6 +126,7 @@ async def action_process_ornitela_file(integration, action_config: ProcessOrnite
     integration_id = str(integration.id)
     file_storage = None
     in_progress_path = f"in_progress/{action_config.file_name}"
+    tag = f"[{action_config.file_name}]"
 
     try:
         file_storage = CloudFileStorage(
@@ -132,25 +134,27 @@ async def action_process_ornitela_file(integration, action_config: ProcessOrnite
             root_prefix=action_config.bucket_path
         )
 
-        logger.info(f"Processing file {action_config.file_name} for integration {integration_id}")
+        logger.info(f"{tag} Starting processing for integration {integration_id}")
 
         telemetry_data = await _process_csv_file(file_storage, integration_id, in_progress_path)
 
-        # Transform and send observations
-        transformed_data = generate_gundi_observations(telemetry_data, action_config.historical_limit_days)
+        transformed_data = list(generate_gundi_observations(telemetry_data, action_config.historical_limit_days))
+        all_batches = list(batches_from_generator(iter(transformed_data), action_config.batch_size))
+        total_batches = len(all_batches)
         observations_sent = 0
+        sensors_client = await _get_sensors_api_client(integration_id=str(integration.id))
 
-        for i, batch in enumerate(batches_from_generator(transformed_data, 200)):
-            logger.info(f'Sending observations batch #{i}: {len(batch)} observations.')
-            await send_observations_to_gundi(observations=batch, integration_id=integration.id)
+        for i, batch in enumerate(all_batches):
+            logger.info(f"{tag} Sending batch {i + 1} of {total_batches}")
+            await send_observations_to_gundi(observations=batch, sensors_api_client=sensors_client, integration_id=integration.id)
             observations_sent += len(batch)
 
         # Move to archive only after all observations are sent
         archive_path = f"archive/{action_config.file_name}"
         await file_storage.move_file(integration_id, in_progress_path, archive_path)
-        logger.info(f"Archived file: {action_config.file_name}")
+        logger.info(f"{tag} Archived successfully")
 
-        message = f"Processed file {action_config.file_name}: extracted {len(telemetry_data)} records, sent {observations_sent} observations"
+        message = f"{tag} Processed: extracted {len(telemetry_data)} records, sent {observations_sent} observations"
         logger.info(message)
         await log_action_activity(
             integration_id=integration_id,
@@ -167,13 +171,19 @@ async def action_process_ornitela_file(integration, action_config: ProcessOrnite
         }
 
     except asyncio.CancelledError:
-        logger.error(f"Task cancelled while processing file {action_config.file_name} — moving to dead_letter/")
+        logger.error(f"{tag} Timed out — moving to dead_letter/")
         await _move_to_dead_letter(file_storage, integration_id, in_progress_path, action_config.file_name)
+        await log_action_activity(
+            integration_id=integration_id,
+            action_id="process_ornitela_file",
+            title=f"{tag} Timed out and was moved to dead_letter/",
+            level=LogLevel.ERROR
+        )
         raise
     except Exception as e:
-        logger.exception(f"Error processing file {action_config.file_name}: {str(e)}")
+        logger.exception(f"{tag} Error: {str(e)}")
         await _move_to_dead_letter(file_storage, integration_id, in_progress_path, action_config.file_name)
-        message = f"Error processing file {action_config.file_name}: {str(e)}"
+        message = f"{tag} Error: {str(e)}"
         await log_action_activity(
             integration_id=str(integration.id),
             action_id="process_ornitela_file",
@@ -185,6 +195,57 @@ async def action_process_ornitela_file(integration, action_config: ProcessOrnite
             "file_name": action_config.file_name,
             "error": str(e)
         }
+    finally:
+        if file_storage:
+            await file_storage.close()
+
+
+async def _create_chunk(file_storage, integration_id: str, file_name: str, chunk_size: int) -> Optional[str]:
+    """
+    Download file from root, carve off the first chunk_size data rows, upload the chunk
+    to in_progress/, and write the remaining rows back to root (or delete if empty).
+    Returns the chunk filename, or None if the file had no data rows.
+    """
+    raw_bytes = await file_storage.download_bytes(integration_id, file_name)
+    encoding = _detect_encoding(raw_bytes)
+    content = raw_bytes.decode('utf-8', errors='replace') if encoding == 'utf-8' else raw_bytes.decode(encoding)
+
+    reader = csv.reader(io.StringIO(content))
+    rows = list(reader)
+
+    if len(rows) <= 1:
+        await file_storage.delete_file(integration_id, file_name)
+        logger.info(f"File {file_name} is empty, deleted from root")
+        return None
+
+    header = rows[0]
+    data_rows = rows[1:]
+    chunk_rows = data_rows[:chunk_size]
+    remaining_rows = data_rows[chunk_size:]
+
+    # Build chunk bytes
+    chunk_buffer = io.StringIO()
+    csv.writer(chunk_buffer).writerows([header] + chunk_rows)
+    chunk_bytes = chunk_buffer.getvalue().encode('utf-8')
+
+    # Unique chunk filename
+    timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
+    base_name = file_name.rsplit('.', 1)[0]
+    chunk_name = f"{base_name}_chunk_{timestamp}.csv"
+
+    await file_storage.upload_bytes(integration_id, f"in_progress/{chunk_name}", chunk_bytes)
+
+    if remaining_rows:
+        remaining_buffer = io.StringIO()
+        csv.writer(remaining_buffer).writerows([header] + remaining_rows)
+        remaining_bytes = remaining_buffer.getvalue().encode('utf-8')
+        await file_storage.upload_bytes(integration_id, file_name, remaining_bytes)
+        logger.info(f"File {file_name}: chunk of {len(chunk_rows)} rows created, {len(remaining_rows)} rows remaining")
+    else:
+        await file_storage.delete_file(integration_id, file_name)
+        logger.info(f"File {file_name}: final chunk of {len(chunk_rows)} rows, root file deleted")
+
+    return chunk_name
 
 
 async def _move_to_dead_letter(file_storage, integration_id: str, in_progress_path: str, file_name: str):
@@ -200,7 +261,7 @@ async def _move_to_dead_letter(file_storage, integration_id: str, in_progress_pa
 
 
 
-@crontab_schedule("*/10 * * * *")  # Regular schedule.
+@crontab_schedule("*/5 * * * *")  # Regular schedule.
 async def action_process_new_files(integration, action_config: ProcessTelemetryDataActionConfiguration):
     """
     Action handler that processes new telemetry data files from Google Cloud Storage.
@@ -271,18 +332,25 @@ async def action_process_new_files(integration, action_config: ProcessTelemetryD
             })
         
         # Move each file to in_progress and trigger processing
+        if action_config.process_most_recent_first:
+            new_files.sort(key=lambda f: f["created"], reverse=True)
+        max_files = action_config.max_files_per_run
+        logger.info(f"Found {len(new_files)} new files, processing {min(len(new_files), max_files)}")
         subactions_triggered = 0
-        for file_info in new_files:
+        for file_info in new_files[:max_files]:
             try:
-                in_progress_path = f"in_progress/{file_info['name']}"
-                await file_storage.move_file(integration_id, file_info["name"], in_progress_path)
-                logger.info(f"Moved file to in_progress: {file_info['name']}")
+                chunk_name = await _create_chunk(
+                    file_storage, integration_id, file_info["name"], action_config.chunk_size
+                )
+                if chunk_name is None:
+                    continue
 
                 config = ProcessOrnitelaFileActionConfiguration(
                     bucket_path=action_config.bucket_path,
-                    file_name=file_info["name"],
+                    file_name=chunk_name,
                     historical_limit_days=action_config.historical_limit_days,
                     delete_after_archive_days=action_config.delete_after_archive_days,
+                    batch_size=action_config.batch_size,
                 )
 
                 await trigger_action(
@@ -336,12 +404,10 @@ async def action_process_new_files(integration, action_config: ProcessTelemetryD
 async def _process_csv_file(file_storage, integration_id: str, file_name: str) -> List[Dict[str, Any]]:
     """
     Process CSV telemetry data. Downloads the full file into memory, then parses it.
-    Handles both SMS and GPRS files, grouping sensor data with GPS locations.
+    Each GPS row becomes one observation with its real location.
+    Each SEN_ row becomes one observation with location (0, 0).
     """
     telemetry_data = []
-    current_gps_location = None
-    sensor_readings = []
-    in_sensor_sequence = False
 
     try:
         raw_bytes = await file_storage.download_bytes(integration_id, file_name)
@@ -366,38 +432,18 @@ async def _process_csv_file(file_storage, integration_id: str, file_name: str) -
 
         for row_data in rows:
             if row_data.get("device_id") == "device_id":
-                # Skip repeated header rows
                 continue
 
             datatype = row_data.get("datatype", "")
 
             try:
                 if datatype in ["GPS", "GPSS"]:
-                    if current_gps_location:
-                        observation = _create_observation(current_gps_location, sensor_readings, file_name)
-                        telemetry_data.append(observation)
-                    current_gps_location = _parse_gps_row(row_data, file_name)
-                    sensor_readings = []
-                    in_sensor_sequence = False
-
+                    telemetry_data.append(_create_observation(_parse_gps_row(row_data, file_name), [], file_name))
                 elif datatype.startswith("SEN_"):
-                    if datatype.endswith("_START"):
-                        in_sensor_sequence = True
-                        sensor_readings = []
-                    elif datatype.endswith("_END"):
-                        in_sensor_sequence = False
-
-                    if in_sensor_sequence and current_gps_location:
-                        sensor_reading = _parse_sensor_row(row_data)
-                        sensor_readings.append(sensor_reading)
-
+                    telemetry_data.append(_parse_sensor_row_as_observation(row_data, file_name))
             except (ValueError, KeyError) as e:
                 logger.exception(f"Error parsing CSV row in {file_name}: {str(e)}")
                 continue
-
-        if current_gps_location:
-            observation = _create_observation(current_gps_location, sensor_readings, file_name)
-            telemetry_data.append(observation)
 
         return telemetry_data
 
@@ -486,6 +532,46 @@ def _parse_sensor_row(row_data: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _make_observation_id(row_data: Dict[str, Any]) -> str:
+    base = (
+        f"{row_data.get('device_id', '')}_"
+        f"{(row_data.get('UTC_datetime') or '').replace(' ', '_').replace(':', '-')}"
+    )
+    ms = row_data.get("milliseconds")
+    try:
+        if ms not in (None, ""):
+            return f"{base}-{int(ms):03d}"
+    except (ValueError, TypeError):
+        pass
+    return base
+
+
+def _parse_sensor_row_as_observation(row_data: Dict[str, Any], file_name: str) -> Dict[str, Any]:
+    """Parse a sensor row into a standalone observation with location (0, 0)."""
+    sensor = _parse_sensor_row(row_data)
+    return {
+        "file": file_name,
+        "observation_id": _make_observation_id(row_data),
+        "timestamp": row_data.get("UTC_datetime", ""),
+        "device_id": row_data.get("device_id", ""),
+        "device_name": row_data.get("device_name", ""),
+        "location": {"lat": 0, "lon": 0, "altitude": None},
+        "movement": {},
+        "device_status": {},
+        "sensor_readings": [],
+        "sensor_count": 0,
+        "sensors": sensor["sensors"],
+        "environmental": sensor["environmental"],
+        "additional": {
+            "datatype": row_data.get("datatype", ""),
+            "utc_date": row_data.get("UTC_date", ""),
+            "utc_time": row_data.get("UTC_time", ""),
+            "utc_timestamp": row_data.get("UTC_timestamp", ""),
+            "milliseconds": _safe_int(row_data.get("milliseconds")),
+        },
+    }
+
+
 def _create_observation(gps_location: Dict[str, Any], sensor_readings: List[Dict[str, Any]], file_name: str) -> Dict[str, Any]:
     """Create a single observation combining GPS location with sensor readings."""
     return {
@@ -506,27 +592,27 @@ def _create_observation(gps_location: Dict[str, Any], sensor_readings: List[Dict
 
 def generate_gundi_observations(telemetry_data: List[Dict[str, Any]], historical_limit_days: int = 30) -> Generator[Dict[str, Any], None, None]:
     """
-    Transform grouped observations into individual observations for each sensor record.
-    
-    This generator function takes observations that have GPS location + sensor readings grouped together
-    and yields individual observations for each sensor record, with the GPS location applied
-    to each sensor observation. This saves memory by yielding observations one at a time.
-    
+    Filters and transforms parsed telemetry rows into Gundi observation dicts.
+    GPS rows carry their real location; sensor rows carry location (0, 0).
+    Rows older than historical_limit_days are skipped.
+    Millisecond offsets from the additional field are applied to recorded_at.
+
     Args:
-        telemetry_data: List of grouped observations with GPS location and sensor readings
+        telemetry_data: List of observations produced by _process_csv_file
         historical_limit_days: Maximum age of observations to include (in days)
-        
+
     Yields:
-        Individual observations - one GPS observation + one per sensor reading
+        One Gundi observation dict per input row
     """
     current_time = datetime.now(timezone.utc)
     cutoff_time = current_time - timedelta(days=historical_limit_days)
     for observation in telemetry_data:
 
         recorded_at = datetime.strptime(observation["timestamp"], "%Y-%m-%d %H:%M:%S")
+        milliseconds = observation.get("additional", {}).get("milliseconds") or 0
+        recorded_at = recorded_at + timedelta(milliseconds=milliseconds)
         recorded_at = recorded_at.replace(tzinfo=timezone.utc)
 
-        # Skip observations older than historical_limit_days
         if recorded_at < cutoff_time:
             continue
 
@@ -537,53 +623,16 @@ def generate_gundi_observations(telemetry_data: List[Dict[str, Any]], historical
             "sensors": observation.get("sensors", {}),
             "environmental": observation.get("environmental", {}),
         }
-        # Always create a GPS-only observation first
-        gundi_observation = {
+        yield {
             "file": observation["file"],
-            # "observation_id": f"{observation['device_id']}_{observation['timestamp'].replace(' ', '_').replace(':', '-')}",
             "recorded_at": recorded_at.isoformat(),
             "source": observation["device_id"],
             "source_name": observation["device_name"],
-            'subject_type': 'unassigned',
+            "subject_type": "unassigned",
             "type": "tracking-device",
-            "additional": additional,
             "location": observation["location"],
+            "additional": additional,
         }
-        yield gundi_observation
-        
-        # Create one observation per sensor reading record
-        for sensor_reading in observation.get("sensor_readings", []):
-            
-            # Calculate recorded_at by adding milliseconds to timestamp
-            sensor_timestamp = datetime.strptime(sensor_reading["timestamp"], "%Y-%m-%d %H:%M:%S")
-            milliseconds = sensor_reading.get("additional", {}).get("milliseconds", 0)
-            recorded_at = sensor_timestamp + timedelta(milliseconds=milliseconds)
-            recorded_at = recorded_at.replace(tzinfo=timezone.utc)
-
-            # Skip sensor observations older than historical_limit_days
-            if recorded_at < cutoff_time:
-                continue
-            
-            additional = {
-                "datatype": sensor_reading["additional"].get("datatype", ""),
-                "movement": sensor_reading.get("movement", {}),
-                "device_status": sensor_reading.get("device_status", {}),
-                "sensors": sensor_reading.get("sensors", {}),
-                "environmental": sensor_reading.get("environmental", {}),
-            }
-            
-            sensor_observation = {
-                "file": observation["file"],
-                # "observation_id": f"{observation['device_id']}_{sensor_reading['timestamp'].replace(' ', '_').replace(':', '-')}_{milliseconds}",
-                "recorded_at": recorded_at.isoformat(),  # Precise timestamp with milliseconds
-                "source": observation["device_id"],
-                "source_name": observation["device_name"],
-                'subject_type': 'unassigned',
-                "type": "tracking-device",
-                "location": observation["location"],  # Apply GPS location 
-                "additional": additional,    
-            }
-            yield sensor_observation
 
 
 def _process_telemetry_file(content: str, file_name: str) -> List[Dict[str, Any]]:

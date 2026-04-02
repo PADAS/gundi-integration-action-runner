@@ -42,8 +42,15 @@ class CloudFileStorage:
     @property
     def storage_client(self):
         if self._storage_client is None:
-            self._storage_client = Storage()
+            timeout = aiohttp.ClientTimeout(total=120, connect=30)
+            session = aiohttp.ClientSession(timeout=timeout)
+            self._storage_client = Storage(session=session)
         return self._storage_client
+
+    async def close(self):
+        if self._storage_client is not None:
+            await self._storage_client.close()
+            self._storage_client = None
 
     def get_file_fullname(self, integration_id, blob_name):
         if self.root_prefix:
@@ -123,6 +130,13 @@ class CloudFileStorage:
             with attempt:
                 await self.storage_client.copy(self.bucket_name, source_path, self.bucket_name, new_name=dest_path)
                 await self.storage_client.delete(self.bucket_name, source_path)
+
+    async def upload_bytes(self, integration_id, blob_name, data: bytes, content_type: str = 'text/csv'):
+        target_path = self.get_file_fullname(integration_id, blob_name)
+        for attempt in stamina.retry_context(on=(aiohttp.ClientError, asyncio.TimeoutError),
+                                             attempts=5, wait_initial=1.0, wait_max=30, wait_jitter=3.0):
+            with attempt:
+                await self.storage_client.upload(self.bucket_name, target_path, data, content_type=content_type)
 
     async def download_bytes(self, integration_id, blob_name) -> bytes:
         """Download full file contents into memory and return as bytes."""

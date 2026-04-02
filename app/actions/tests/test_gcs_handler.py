@@ -8,6 +8,7 @@ from app.actions.handlers import (
     action_process_ornitela_file,
     _process_telemetry_file,
     _process_csv_file,
+    _create_chunk,
     generate_gundi_observations,
 )
 from app.services.file_storage import FileMetadata
@@ -73,6 +74,9 @@ def make_file_storage_mock(files=None, metadata=None, move_file=None):
     async def default_delete(*a, **kw):
         return None
 
+    async def default_upload_bytes(*a, **kw):
+        return None
+
     async def default_download_bytes(*a, **kw):
         now = datetime.now(timezone.utc)
         recent_row = (
@@ -88,6 +92,7 @@ def make_file_storage_mock(files=None, metadata=None, move_file=None):
     mock.move_file = Mock(side_effect=move_file or default_move)
     mock.delete_file = Mock(side_effect=default_delete)
     mock.download_bytes = Mock(side_effect=default_download_bytes)
+    mock.upload_bytes = Mock(side_effect=default_upload_bytes)
     return mock
 
 
@@ -102,18 +107,18 @@ def make_file_storage_mock(files=None, metadata=None, move_file=None):
 async def test_process_new_files_moves_to_in_progress_before_trigger(
     mock_state_manager, mock_file_storage_cls, mock_trigger_action, mock_integration, action_config
 ):
-    """Files must be moved to in_progress/ BEFORE the sub-action is triggered."""
+    """Chunk must be uploaded to in_progress/ BEFORE the sub-action is triggered."""
     call_order = []
 
     storage = make_file_storage_mock(files=["bird001.csv"])
 
-    async def record_move(*a, **kw):
-        call_order.append("move")
+    async def record_upload(*a, **kw):
+        call_order.append("upload")
 
     async def record_trigger(*a, **kw):
         call_order.append("trigger")
 
-    storage.move_file = Mock(side_effect=record_move)
+    storage.upload_bytes = Mock(side_effect=record_upload)
     mock_file_storage_cls.return_value = storage
     mock_trigger_action.side_effect = record_trigger
 
@@ -125,10 +130,10 @@ async def test_process_new_files_moves_to_in_progress_before_trigger(
     assert result["status"] == "success"
     assert result["new_files_found"] == 1
     assert result["subactions_triggered"] == 1
-    assert call_order == ["move", "trigger"], "move must happen before trigger"
-    # Verify it moved to in_progress/, not archive/
-    move_dest = storage.move_file.call_args[0][2]
-    assert move_dest.startswith("in_progress/")
+    assert call_order == ["upload", "trigger"], "chunk upload must happen before trigger"
+    # Verify the chunk was uploaded to in_progress/
+    upload_dest = storage.upload_bytes.call_args_list[0][0][1]
+    assert upload_dest.startswith("in_progress/")
 
 
 @pytest.mark.asyncio
@@ -151,8 +156,12 @@ async def test_process_new_files_skips_in_progress_archive_and_dead_letter_folde
 
     assert result["new_files_found"] == 1
     assert result["subactions_triggered"] == 1
-    storage.move_file.assert_called_once()
-    assert "bird004.csv" in storage.move_file.call_args[0]
+    # Chunk for bird004.csv must have been uploaded to in_progress/
+    upload_calls = storage.upload_bytes.call_args_list
+    assert len(upload_calls) >= 1
+    chunk_dest = upload_calls[0][0][1]
+    assert chunk_dest.startswith("in_progress/")
+    assert "bird004" in chunk_dest
 
 
 @pytest.mark.asyncio
@@ -207,10 +216,11 @@ async def test_process_new_files_storage_error(
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
+@patch("app.actions.handlers._get_sensors_api_client", new_callable=AsyncMock)
 @patch("app.actions.handlers.send_observations_to_gundi")
 @patch("app.actions.handlers.CloudFileStorage")
 async def test_process_ornitela_file_reads_from_in_progress(
-    mock_file_storage_cls, mock_send, mock_integration, file_action_config
+    mock_file_storage_cls, mock_send, mock_get_client, mock_integration, file_action_config
 ):
     """action_process_ornitela_file must stream from in_progress/<file_name>."""
     storage = make_file_storage_mock()
@@ -226,10 +236,11 @@ async def test_process_ornitela_file_reads_from_in_progress(
 
 
 @pytest.mark.asyncio
+@patch("app.actions.handlers._get_sensors_api_client", new_callable=AsyncMock)
 @patch("app.actions.handlers.send_observations_to_gundi")
 @patch("app.actions.handlers.CloudFileStorage")
 async def test_process_ornitela_file_sends_observations_then_archives(
-    mock_file_storage_cls, mock_send, mock_integration, file_action_config
+    mock_file_storage_cls, mock_send, mock_get_client, mock_integration, file_action_config
 ):
     """Observations must be sent before the file is moved to archive/."""
     call_order = []
@@ -281,6 +292,46 @@ async def test_process_ornitela_file_moves_to_dead_letter_on_error(
 
 
 @pytest.mark.asyncio
+@patch("app.actions.handlers._get_sensors_api_client", new_callable=AsyncMock)
+@patch("app.actions.handlers.send_observations_to_gundi")
+@patch("app.actions.handlers.CloudFileStorage")
+async def test_process_ornitela_file_respects_batch_size(
+    mock_file_storage_cls, mock_send, mock_get_client, mock_integration
+):
+    """Observations must be batched according to the batch_size config field."""
+    now = datetime.now(timezone.utc)
+    # Build a CSV with 5 recent GPS rows
+    rows = "\n".join(
+        f"226976,TestBird,{now.strftime('%Y-%m-%d %H:%M:%S')},{now.strftime('%Y-%m-%d')},{now.strftime('%H:%M:%S')},GPSS,3,3702,8,,,44.39,5.37,,,,,,,,,,,247,{now.strftime('%Y-%m-%d %H:%M:%S')}.0,0,,,,,"
+        for _ in range(5)
+    )
+    csv_bytes = (HEADER.strip() + "\n" + rows).encode("utf-8")
+
+    storage = make_file_storage_mock()
+
+    async def download(*a, **kw):
+        return csv_bytes
+
+    storage.download_bytes = Mock(side_effect=download)
+    mock_file_storage_cls.return_value = storage
+    mock_send.return_value = None
+
+    config = ProcessOrnitelaFileActionConfiguration(
+        bucket_path="telemetry-data",
+        file_name="bird001_20240101.csv",
+        delete_after_archive_days=90,
+        batch_size=2,  # should split 5 rows into 3 batches: 2, 2, 1
+    )
+
+    result = await action_process_ornitela_file(mock_integration, config)
+
+    assert result["status"] == "success"
+    assert mock_send.call_count == 3
+    batch_sizes = [len(call.kwargs["observations"]) for call in mock_send.call_args_list]
+    assert batch_sizes == [2, 2, 1]
+
+
+@pytest.mark.asyncio
 @patch("app.actions.handlers.send_observations_to_gundi")
 @patch("app.actions.handlers.CloudFileStorage")
 async def test_process_ornitela_file_storage_init_error_no_dead_letter_move(
@@ -301,7 +352,7 @@ async def test_process_ornitela_file_storage_init_error_no_dead_letter_move(
 
 @pytest.mark.asyncio
 async def test_process_csv_file_gps_and_sensors():
-    """GPS row with a sensor burst should produce 1 grouped observation."""
+    """GPS row and sensor rows should each become separate observations."""
     mock_storage = Mock()
 
     async def mock_download_bytes(*a, **kw):
@@ -311,16 +362,21 @@ async def test_process_csv_file_gps_and_sensors():
 
     result = await _process_csv_file(mock_storage, "test-integration", "test.csv")
 
-    assert len(result) == 1
-    obs = result[0]
-    assert obs["device_id"] == "226976"
-    assert obs["timestamp"] == "2025-01-18 09:10:11"
-    assert obs["location"]["lat"] == 44.394531250000000
-    assert obs["location"]["lon"] == 5.370184421539307
-    assert obs["device_status"]["battery_voltage"] == 3702.0
-    assert obs["sensor_count"] == 2  # SEN_START and SEN_ROW
-    assert obs["sensor_readings"][0]["datatype"] == "SEN_ALL_20Hz_START"
-    assert obs["sensor_readings"][1]["datatype"] == "SEN_ALL_20Hz"
+    # 1 GPS + 3 sensor rows (SEN_START, SEN_ROW, SEN_END)
+    assert len(result) == 4
+
+    gps_obs = result[0]
+    assert gps_obs["device_id"] == "226976"
+    assert gps_obs["timestamp"] == "2025-01-18 09:10:11"
+    assert gps_obs["location"]["lat"] == 44.394531250000000
+    assert gps_obs["location"]["lon"] == 5.370184421539307
+    assert gps_obs["device_status"]["battery_voltage"] == 3702.0
+    assert gps_obs["sensor_count"] == 0
+
+    assert result[1]["additional"]["datatype"] == "SEN_ALL_20Hz_START"
+    assert result[1]["location"] == {"lat": 0, "lon": 0, "altitude": None}
+    assert result[2]["additional"]["datatype"] == "SEN_ALL_20Hz"
+    assert result[3]["additional"]["datatype"] == "SEN_ALL_20Hz_END"
 
 
 @pytest.mark.asyncio
@@ -338,8 +394,80 @@ async def test_process_csv_file_gps_only():
     assert len(result) == 2
     assert result[0]["timestamp"] == "2025-01-18 09:10:11"
     assert result[1]["timestamp"] == "2025-01-18 10:10:11"
-    assert result[0]["sensor_count"] == 0
-    assert result[1]["sensor_count"] == 0
+    assert result[0]["location"]["lat"] == 44.394531250000000
+    assert result[1]["location"]["lat"] == 44.395652770996094
+
+
+# ---------------------------------------------------------------------------
+# _create_chunk
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_create_chunk_uploads_chunk_and_writes_remaining():
+    """_create_chunk must upload the first N rows to in_progress/ and write the rest back to root."""
+    storage = make_file_storage_mock()
+    uploaded = {}
+
+    async def capture_upload(integration_id, blob_name, data, **kw):
+        uploaded[blob_name] = data
+
+    storage.upload_bytes = Mock(side_effect=capture_upload)
+
+    # Build a CSV with 5 data rows, chunk_size=3
+    rows = "\n".join(
+        f"226976,TestBird,2025-01-18 09:10:{10+i:02d},2025-01-18,09:10:{10+i:02d},GPSS,3,3702,8,,,44.39,5.37,,,,,,,,,,,247,2025-01-18 09:10:{10+i:02d}.0,0,,,,,"
+        for i in range(5)
+    )
+    csv_bytes = (HEADER.strip() + "\n" + rows).encode("utf-8")
+
+    async def download(*a, **kw):
+        return csv_bytes
+
+    storage.download_bytes = Mock(side_effect=download)
+
+    chunk_name = await _create_chunk(storage, "test-integration", "bird001.csv", chunk_size=3)
+
+    assert chunk_name is not None
+    assert chunk_name.startswith("bird001_chunk_")
+    # Chunk uploaded to in_progress/
+    assert f"in_progress/{chunk_name}" in uploaded
+    # Remaining rows written back to root
+    assert "bird001.csv" in uploaded
+    # Root not deleted (remaining rows exist)
+    storage.delete_file.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_chunk_deletes_root_when_final_chunk():
+    """_create_chunk must delete the root file when all rows fit in the chunk."""
+    storage = make_file_storage_mock()
+    uploaded = {}
+
+    async def capture_upload(integration_id, blob_name, data, **kw):
+        uploaded[blob_name] = data
+
+    storage.upload_bytes = Mock(side_effect=capture_upload)
+
+    # 2 data rows, chunk_size=3000 — all fit in one chunk
+    rows = "\n".join(
+        f"226976,TestBird,2025-01-18 09:10:{10+i:02d},2025-01-18,09:10:{10+i:02d},GPSS,3,3702,8,,,44.39,5.37,,,,,,,,,,,247,2025-01-18 09:10:{10+i:02d}.0,0,,,,,"
+        for i in range(2)
+    )
+    csv_bytes = (HEADER.strip() + "\n" + rows).encode("utf-8")
+
+    async def download(*a, **kw):
+        return csv_bytes
+
+    storage.download_bytes = Mock(side_effect=download)
+
+    chunk_name = await _create_chunk(storage, "test-integration", "bird001.csv", chunk_size=3000)
+
+    assert chunk_name is not None
+    # Chunk uploaded to in_progress/
+    assert f"in_progress/{chunk_name}" in uploaded
+    # Root file must be deleted since no remaining rows
+    storage.delete_file.assert_called_once()
+    assert "bird001.csv" in storage.delete_file.call_args[0][1]
 
 
 # ---------------------------------------------------------------------------
@@ -377,43 +505,38 @@ def test_generate_gundi_observations_yields_gps_observation():
 
 
 def test_generate_gundi_observations_yields_sensor_observations():
-    """Each sensor reading must produce a separate observation."""
+    """Sensor observations must be yielded with location (0, 0)."""
     now = datetime.now(timezone.utc)
-    telemetry = [
-        {
+
+    def make_obs(datatype, location, ms=0):
+        return {
             "file": "test.csv",
-            "observation_id": "226976_ts",
+            "observation_id": f"226976_{datatype}",
             "timestamp": now.strftime("%Y-%m-%d %H:%M:%S"),
             "device_id": "226976",
             "device_name": "TestBird",
-            "location": {"lat": 44.39, "lon": 5.37, "altitude": None},
+            "location": location,
             "movement": {},
             "device_status": {},
-            "sensor_readings": [
-                {
-                    "timestamp": now.strftime("%Y-%m-%d %H:%M:%S"),
-                    "datatype": "SEN_ALL_20Hz",
-                    "environmental": {},
-                    "sensors": {},
-                    "additional": {"datatype": "SEN_ALL_20Hz", "utc_date": "", "utc_time": "", "utc_timestamp": "", "milliseconds": 50},
-                },
-                {
-                    "timestamp": now.strftime("%Y-%m-%d %H:%M:%S"),
-                    "datatype": "SEN_ALL_20Hz",
-                    "environmental": {},
-                    "sensors": {},
-                    "additional": {"datatype": "SEN_ALL_20Hz", "utc_date": "", "utc_time": "", "utc_timestamp": "", "milliseconds": 100},
-                },
-            ],
-            "sensor_count": 2,
+            "sensor_readings": [],
+            "sensor_count": 0,
             "sensors": {},
-            "additional": {"datatype": "GPSS", "utc_date": "", "utc_time": "", "utc_timestamp": "", "milliseconds": 0},
+            "environmental": {},
+            "additional": {"datatype": datatype, "utc_date": "", "utc_time": "", "utc_timestamp": "", "milliseconds": ms},
         }
+
+    telemetry = [
+        make_obs("GPSS", {"lat": 44.39, "lon": 5.37, "altitude": None}),
+        make_obs("SEN_ALL_20Hz", {"lat": 0, "lon": 0, "altitude": None}, ms=50),
+        make_obs("SEN_ALL_20Hz", {"lat": 0, "lon": 0, "altitude": None}, ms=100),
     ]
 
     results = list(generate_gundi_observations(telemetry, historical_limit_days=30))
 
-    assert len(results) == 3  # 1 GPS + 2 sensor
+    assert len(results) == 3
+    assert results[0]["location"]["lat"] == 44.39
+    assert results[1]["location"] == {"lat": 0, "lon": 0, "altitude": None}
+    assert results[2]["location"] == {"lat": 0, "lon": 0, "altitude": None}
 
 
 def test_generate_gundi_observations_filters_old_records():
