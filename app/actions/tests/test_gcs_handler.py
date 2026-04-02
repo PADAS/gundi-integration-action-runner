@@ -100,10 +100,10 @@ def make_file_storage_mock(files=None, metadata=None, move_file=None):
 @patch("app.actions.handlers.trigger_action")
 @patch("app.actions.handlers.CloudFileStorage")
 @patch("app.actions.handlers.IntegrationStateManager")
-async def test_process_new_files_moves_to_archive_before_trigger(
+async def test_process_new_files_moves_to_in_progress_before_trigger(
     mock_state_manager, mock_file_storage_cls, mock_trigger_action, mock_integration, action_config
 ):
-    """Files must be moved to archive BEFORE the sub-action is triggered."""
+    """Files must be moved to in_progress/ BEFORE the sub-action is triggered."""
     call_order = []
 
     storage = make_file_storage_mock(files=["bird001.csv"])
@@ -127,17 +127,22 @@ async def test_process_new_files_moves_to_archive_before_trigger(
     assert result["new_files_found"] == 1
     assert result["subactions_triggered"] == 1
     assert call_order == ["move", "trigger"], "move must happen before trigger"
+    # Verify it moved to in_progress/, not archive/
+    move_dest = storage.move_file.call_args[0][2]
+    assert move_dest.startswith("in_progress/")
 
 
 @pytest.mark.asyncio
 @patch("app.actions.handlers.trigger_action")
 @patch("app.actions.handlers.CloudFileStorage")
 @patch("app.actions.handlers.IntegrationStateManager")
-async def test_process_new_files_skips_archive_folder(
+async def test_process_new_files_skips_in_progress_and_archive_folders(
     mock_state_manager, mock_file_storage_cls, mock_trigger_action, mock_integration, action_config
 ):
-    """Files already in archive/ must not be triggered for processing."""
-    storage = make_file_storage_mock(files=["archive/bird001.csv", "bird002.csv"])
+    """Files in in_progress/ or archive/ must not be triggered for processing."""
+    storage = make_file_storage_mock(
+        files=["archive/bird001.csv", "in_progress/bird002.csv", "bird003.csv"]
+    )
     mock_file_storage_cls.return_value = storage
     mock_trigger_action.side_effect = AsyncMock()
     mock_state_manager.return_value.get_state = AsyncMock(return_value={})
@@ -147,9 +152,8 @@ async def test_process_new_files_skips_archive_folder(
 
     assert result["new_files_found"] == 1
     assert result["subactions_triggered"] == 1
-    # move_file should only be called for bird002.csv, not the archived one
     storage.move_file.assert_called_once()
-    assert "bird002.csv" in storage.move_file.call_args[0]
+    assert "bird003.csv" in storage.move_file.call_args[0]
 
 
 @pytest.mark.asyncio
@@ -206,35 +210,50 @@ async def test_process_new_files_storage_error(
 @pytest.mark.asyncio
 @patch("app.actions.handlers.send_observations_to_gundi")
 @patch("app.actions.handlers.CloudFileStorage")
-async def test_process_ornitela_file_reads_from_archive(
+async def test_process_ornitela_file_reads_from_in_progress(
     mock_file_storage_cls, mock_send, mock_integration, file_action_config
 ):
-    """action_process_ornitela_file must stream from archive/<file_name>."""
+    """action_process_ornitela_file must stream from in_progress/<file_name>."""
     storage = make_file_storage_mock()
     mock_file_storage_cls.return_value = storage
     mock_send.return_value = None
 
     await action_process_ornitela_file(mock_integration, file_action_config)
 
-    assert mock_file_storage_cls.called
+    # Verify the first move call is from in_progress to archive
+    first_move = storage.move_file.call_args_list[0]
+    assert "in_progress/" in first_move[0][1]
+    assert "archive/" in first_move[0][2]
 
 
 @pytest.mark.asyncio
 @patch("app.actions.handlers.send_observations_to_gundi")
 @patch("app.actions.handlers.CloudFileStorage")
-async def test_process_ornitela_file_sends_observations(
+async def test_process_ornitela_file_sends_observations_then_archives(
     mock_file_storage_cls, mock_send, mock_integration, file_action_config
 ):
-    """Observations parsed from the CSV must be sent to Gundi."""
+    """Observations must be sent before the file is moved to archive/."""
+    call_order = []
+
     storage = make_file_storage_mock()
+
+    async def record_move(*a, **kw):
+        call_order.append("move")
+
+    async def record_send(*a, **kw):
+        call_order.append("send")
+
+    storage.move_file = Mock(side_effect=record_move)
     mock_file_storage_cls.return_value = storage
-    mock_send.return_value = None
+    mock_send.side_effect = record_send
 
     result = await action_process_ornitela_file(mock_integration, file_action_config)
 
     assert result["status"] == "success"
     assert result["observations_sent"] > 0
-    mock_send.assert_called()
+    # All sends must come before the archive move
+    assert call_order[-1] == "move", "archive move must be last"
+    assert "send" in call_order
 
 
 @pytest.mark.asyncio

@@ -117,8 +117,10 @@ def get_file_processing_config(integration):
 @activity_logger()
 async def action_process_ornitela_file(integration, action_config: ProcessOrnitelaFileActionConfiguration):
     """
-    Process a single Ornitela CSV file that has already been moved to the archive/ prefix.
-    Streams the file from GCS, parses telemetry records, and sends observations to Gundi.
+    Process a single Ornitela CSV file that has been moved to the in_progress/ prefix.
+    Streams the file from GCS, parses telemetry records, sends observations to Gundi,
+    then moves the file to archive/ on success. On failure the file stays in in_progress/
+    as a visible signal that processing did not complete.
     """
     integration_id = str(integration.id)
 
@@ -130,9 +132,8 @@ async def action_process_ornitela_file(integration, action_config: ProcessOrnite
 
         logger.info(f"Processing file {action_config.file_name} for integration {integration_id}")
 
-        # Stream CSV from archive (file was moved before this action was triggered)
-        archive_path = f"archive/{action_config.file_name}"
-        telemetry_data = await _process_csv_file_streaming(file_storage, integration_id, archive_path)
+        in_progress_path = f"in_progress/{action_config.file_name}"
+        telemetry_data = await _process_csv_file_streaming(file_storage, integration_id, in_progress_path)
 
         # Transform and send observations
         transformed_data = generate_gundi_observations(telemetry_data, action_config.historical_limit_days)
@@ -142,6 +143,11 @@ async def action_process_ornitela_file(integration, action_config: ProcessOrnite
             logger.info(f'Sending observations batch #{i}: {len(batch)} observations.')
             await send_observations_to_gundi(observations=batch, integration_id=integration.id)
             observations_sent += len(batch)
+
+        # Move to archive only after all observations are sent
+        archive_path = f"archive/{action_config.file_name}"
+        await file_storage.move_file(integration_id, in_progress_path, archive_path)
+        logger.info(f"Archived file: {action_config.file_name}")
 
         message = f"Processed file {action_config.file_name}: extracted {len(telemetry_data)} records, sent {observations_sent} observations"
         logger.info(message)
@@ -211,18 +217,20 @@ async def action_process_new_files(integration, action_config: ProcessTelemetryD
             if file_name.endswith("/"):
                 continue
 
-            # Check archived files for deletion
-            if file_name.startswith("archive/"):
-                try:
-                    metadata = await file_storage.get_file_metadata(integration_id, file_name)
-                    file_created = metadata.timeCreated or current_time
-                    if file_created.tzinfo is None:
-                        file_created = file_created.replace(tzinfo=timezone.utc)
-                    days_since_created = (current_time - file_created).days
-                    if days_since_created >= action_config.delete_after_archive_days:
-                        archived_files_to_delete.append(file_name)
-                except Exception as e:
-                    logger.warning(f"Could not get metadata for archived file {file_name}: {str(e)}")
+            # Skip files already in progress or archived — only process root files
+            if file_name.startswith("in_progress/") or file_name.startswith("archive/"):
+                # Check archived files for deletion
+                if file_name.startswith("archive/"):
+                    try:
+                        metadata = await file_storage.get_file_metadata(integration_id, file_name)
+                        file_created = metadata.timeCreated or current_time
+                        if file_created.tzinfo is None:
+                            file_created = file_created.replace(tzinfo=timezone.utc)
+                        days_since_created = (current_time - file_created).days
+                        if days_since_created >= action_config.delete_after_archive_days:
+                            archived_files_to_delete.append(file_name)
+                    except Exception as e:
+                        logger.warning(f"Could not get metadata for archived file {file_name}: {str(e)}")
                 continue
 
             # Get file metadata
@@ -244,13 +252,13 @@ async def action_process_new_files(integration, action_config: ProcessTelemetryD
                 "content_type": content_type
             })
         
-        # Move each file to archive and trigger processing
+        # Move each file to in_progress and trigger processing
         subactions_triggered = 0
         for file_info in new_files:
             try:
-                archive_path = f"archive/{file_info['name']}"
-                await file_storage.move_file(integration_id, file_info["name"], archive_path)
-                logger.info(f"Moved file to archive: {file_info['name']}")
+                in_progress_path = f"in_progress/{file_info['name']}"
+                await file_storage.move_file(integration_id, file_info["name"], in_progress_path)
+                logger.info(f"Moved file to in_progress: {file_info['name']}")
 
                 config = ProcessOrnitelaFileActionConfiguration(
                     bucket_path=action_config.bucket_path,
