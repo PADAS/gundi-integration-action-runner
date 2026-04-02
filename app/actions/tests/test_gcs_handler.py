@@ -7,7 +7,7 @@ from app.actions.handlers import (
     action_process_new_files,
     action_process_ornitela_file,
     _process_telemetry_file,
-    _process_csv_file_streaming,
+    _process_csv_file,
     generate_gundi_observations,
 )
 from app.services.file_storage import FileMetadata
@@ -73,7 +73,7 @@ def make_file_storage_mock(files=None, metadata=None, move_file=None):
     async def default_delete(*a, **kw):
         return None
 
-    async def default_stream(*a, **kw):
+    async def default_download_bytes(*a, **kw):
         now = datetime.now(timezone.utc)
         recent_row = (
             f"226976,TestBird,{now.strftime('%Y-%m-%d %H:%M:%S')},"
@@ -81,14 +81,13 @@ def make_file_storage_mock(files=None, metadata=None, move_file=None):
             f"GPSS,3,3702,8,,,44.394531250000000,5.370184421539307,"
             f",,,,,,,,,,247,{now.strftime('%Y-%m-%d %H:%M:%S')}.0,0,,,,,\n"
         )
-        for chunk in [HEADER, recent_row]:
-            yield chunk.encode("utf-8")
+        return (HEADER + recent_row).encode("utf-8")
 
     mock.list_files = Mock(side_effect=default_list)
     mock.get_file_metadata = Mock(side_effect=default_metadata)
     mock.move_file = Mock(side_effect=move_file or default_move)
     mock.delete_file = Mock(side_effect=default_delete)
-    mock.stream_file = default_stream
+    mock.download_bytes = Mock(side_effect=default_download_bytes)
     return mock
 
 
@@ -265,11 +264,10 @@ async def test_process_ornitela_file_moves_to_dead_letter_on_error(
     """On processing failure the file must be moved to dead_letter/."""
     storage = make_file_storage_mock()
 
-    async def raise_on_stream(*a, **kw):
+    async def raise_on_download(*a, **kw):
         raise RuntimeError("GCS read error")
-        yield  # make it an async generator
 
-    storage.stream_file = raise_on_stream
+    storage.download_bytes = Mock(side_effect=raise_on_download)
     mock_file_storage_cls.return_value = storage
     mock_send.return_value = None
 
@@ -298,21 +296,20 @@ async def test_process_ornitela_file_storage_init_error_no_dead_letter_move(
 
 
 # ---------------------------------------------------------------------------
-# _process_csv_file_streaming
+# _process_csv_file
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_process_csv_file_streaming_gps_and_sensors():
+async def test_process_csv_file_gps_and_sensors():
     """GPS row with a sensor burst should produce 1 grouped observation."""
     mock_storage = Mock()
 
-    async def mock_stream(*a, **kw):
-        for chunk in [HEADER, GPS_ROW, SEN_START, SEN_ROW, SEN_END]:
-            yield chunk.encode("utf-8")
+    async def mock_download_bytes(*a, **kw):
+        return (HEADER + GPS_ROW + SEN_START + SEN_ROW + SEN_END).encode("utf-8")
 
-    mock_storage.stream_file = mock_stream
+    mock_storage.download_bytes = Mock(side_effect=mock_download_bytes)
 
-    result = await _process_csv_file_streaming(mock_storage, "test-integration", "test.csv")
+    result = await _process_csv_file(mock_storage, "test-integration", "test.csv")
 
     assert len(result) == 1
     obs = result[0]
@@ -327,17 +324,16 @@ async def test_process_csv_file_streaming_gps_and_sensors():
 
 
 @pytest.mark.asyncio
-async def test_process_csv_file_streaming_gps_only():
+async def test_process_csv_file_gps_only():
     """Multiple GPS rows with no sensors should each produce one observation."""
     mock_storage = Mock()
 
-    async def mock_stream(*a, **kw):
-        for chunk in [HEADER, GPS_ROW, GPS_ROW_2]:
-            yield chunk.encode("utf-8")
+    async def mock_download_bytes(*a, **kw):
+        return (HEADER + GPS_ROW + GPS_ROW_2).encode("utf-8")
 
-    mock_storage.stream_file = mock_stream
+    mock_storage.download_bytes = Mock(side_effect=mock_download_bytes)
 
-    result = await _process_csv_file_streaming(mock_storage, "test-integration", "test.csv")
+    result = await _process_csv_file(mock_storage, "test-integration", "test.csv")
 
     assert len(result) == 2
     assert result[0]["timestamp"] == "2025-01-18 09:10:11"

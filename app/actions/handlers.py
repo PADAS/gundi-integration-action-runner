@@ -134,7 +134,7 @@ async def action_process_ornitela_file(integration, action_config: ProcessOrnite
 
         logger.info(f"Processing file {action_config.file_name} for integration {integration_id}")
 
-        telemetry_data = await _process_csv_file_streaming(file_storage, integration_id, in_progress_path)
+        telemetry_data = await _process_csv_file(file_storage, integration_id, in_progress_path)
 
         # Transform and send observations
         transformed_data = generate_gundi_observations(telemetry_data, action_config.historical_limit_days)
@@ -333,126 +333,71 @@ async def action_process_new_files(integration, action_config: ProcessTelemetryD
         }
 
 
-async def _process_csv_file_streaming(file_storage, integration_id: str, file_name: str) -> List[Dict[str, Any]]:
+async def _process_csv_file(file_storage, integration_id: str, file_name: str) -> List[Dict[str, Any]]:
     """
-    Process CSV telemetry data using streaming for memory efficiency.
-    This handles both SMS and GPRS files, grouping sensor data with GPS locations.
+    Process CSV telemetry data. Downloads the full file into memory, then parses it.
+    Handles both SMS and GPRS files, grouping sensor data with GPS locations.
     """
     telemetry_data = []
-    buffer = ""
-    csv_reader = None
-    detected_encoding = None
-    
-    # Track current GPS location and sensor readings
     current_gps_location = None
     sensor_readings = []
     in_sensor_sequence = False
-    
+
     try:
-        # Stream the file content
-        async for chunk in file_storage.stream_file(integration_id, file_name):
-            # Detect encoding on first chunk if not already detected
-            if detected_encoding is None:
-                detected_encoding = _detect_encoding(chunk)
-                logger.debug(f"Detected encoding '{detected_encoding}' for file {file_name}")
+        raw_bytes = await file_storage.download_bytes(integration_id, file_name)
+        encoding = _detect_encoding(raw_bytes)
+        logger.debug(f"Detected encoding '{encoding}' for file {file_name}")
 
-            try:
-                if detected_encoding == 'utf-8':
-                    buffer += chunk.decode('utf-8', errors='replace')
-                else:
-                    buffer += chunk.decode(detected_encoding)
-            except Exception as e:
-                logger.exception(f"Error decoding chunk in {file_name}: {str(e)}")
+        if encoding == 'utf-8':
+            content = raw_bytes.decode('utf-8', errors='replace')
+        else:
+            content = raw_bytes.decode(encoding)
+
+        reader = csv.DictReader(io.StringIO(content))
+        rows = list(reader)
+        logger.info(f"Processing {file_name}: {len(rows)} rows")
+
+        for row_data in rows:
+            if row_data.get("device_id") == "device_id":
+                # Skip repeated header rows
                 continue
-            
-            # Process complete lines
-            while '\n' in buffer:
-                line, buffer = buffer.split('\n', 1)
-                
-                if csv_reader is None:
-                    # Initialize CSV reader with the first line (header)
-                    csv_reader = csv.DictReader(io.StringIO(line + '\n'))
-                    continue
-                
-                # Process data row
-                if line.strip():  # Skip empty lines
-                    try:
 
-                        if line.startswith("device_id"):
-                            # Skip rows that look like headers (contain field names as values)
-                            continue
+            datatype = row_data.get("datatype", "")
 
-                        # Parse CSV row using the same fieldnames as the header
-                        row_data = dict(zip(csv_reader.fieldnames, next(csv.reader(io.StringIO(line)))))
-                            
-                        datatype = row_data.get("datatype", "")
-                        
-                        # Handle different data types
-                        if datatype in ["GPS", "GPSS"]:
-                            # GPS location data - create new observation
-                            if current_gps_location:
-                                # Create observation with GPS location and any sensor data
-                                observation = _create_observation(current_gps_location, sensor_readings, file_name)
-                                telemetry_data.append(observation)
-                            
-                            # Start new GPS location
-                            current_gps_location = _parse_gps_row(row_data, file_name)
-                            sensor_readings = []
-                            in_sensor_sequence = False
-                            
-                        elif datatype.startswith("SEN_"):
-                            # Sensor data - add to current readings
-                            if datatype.endswith("_START"):
-                                in_sensor_sequence = True
-                                sensor_readings = []
-                            elif datatype.endswith("_END"):
-                                in_sensor_sequence = False
-                            
-                            if in_sensor_sequence and current_gps_location:
-                                sensor_reading = _parse_sensor_row(row_data)
-                                sensor_readings.append(sensor_reading)
-                        
-                        # Optional: Process in batches to avoid memory issues
-                        if len(telemetry_data) % 1000 == 0:
-                            logger.debug(f"Processed {len(telemetry_data)} observations from {file_name}")
-                            
-                    except (ValueError, KeyError) as e:
-                        logger.exception(f"Error parsing CSV row in {file_name}: {str(e)}")
-                        continue
-        
-        # Process any remaining data in buffer
-        if buffer.strip() and csv_reader is not None:
             try:
-                row_data = dict(zip(csv_reader.fieldnames, next(csv.reader(io.StringIO(buffer)))))
-                
-                datatype = row_data.get("datatype", "")
-                
                 if datatype in ["GPS", "GPSS"]:
                     if current_gps_location:
                         observation = _create_observation(current_gps_location, sensor_readings, file_name)
                         telemetry_data.append(observation)
                     current_gps_location = _parse_gps_row(row_data, file_name)
+                    sensor_readings = []
+                    in_sensor_sequence = False
+
                 elif datatype.startswith("SEN_"):
+                    if datatype.endswith("_START"):
+                        in_sensor_sequence = True
+                        sensor_readings = []
+                    elif datatype.endswith("_END"):
+                        in_sensor_sequence = False
+
                     if in_sensor_sequence and current_gps_location:
                         sensor_reading = _parse_sensor_row(row_data)
                         sensor_readings.append(sensor_reading)
-                elif datatype.startswith("datatype"):
-                    logger.warning(f"Skipping a header row. Is this a programming error?")
 
             except (ValueError, KeyError) as e:
-                logger.exception(f"Error parsing final CSV row in {file_name}: {str(e)}")
-        
-        # Create final observation if we have GPS location (with or without sensor data)
+                logger.exception(f"Error parsing CSV row in {file_name}: {str(e)}")
+                continue
+
         if current_gps_location:
             observation = _create_observation(current_gps_location, sensor_readings, file_name)
             telemetry_data.append(observation)
-        
-        logger.info(f"Streamed and processed {len(telemetry_data)} observations from CSV file {file_name}")
+
+        logger.info(f"Processed {len(telemetry_data)} grouped observations from {file_name}")
         return telemetry_data
-        
+
     except Exception as e:
-        logger.exception(f"Error streaming CSV file {file_name}: {str(e)}")
-        raise OrnitelaFileProcessingError(f"Error streaming CSV file {file_name}: {str(e)}")
+        logger.exception(f"Error processing CSV file {file_name}: {str(e)}")
+        raise OrnitelaFileProcessingError(f"Error processing CSV file {file_name}: {str(e)}")
         
 
 

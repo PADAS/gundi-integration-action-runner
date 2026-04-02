@@ -124,20 +124,11 @@ class CloudFileStorage:
                 await self.storage_client.copy(self.bucket_name, source_path, self.bucket_name, new_name=dest_path)
                 await self.storage_client.delete(self.bucket_name, source_path)
 
-    async def stream_file(self, integration_id, blob_name):
-        """
-        Stream file contents from GCS as an async generator.
-        This is memory-efficient for large files.
-        """
+    async def download_bytes(self, integration_id, blob_name) -> bytes:
+        """Download full file contents into memory and return as bytes."""
         target_path = self.get_file_fullname(integration_id, blob_name)
         for attempt in stamina.retry_context(on=(aiohttp.ClientError, asyncio.TimeoutError),
                                              attempts=5, wait_initial=1.0, wait_max=30, wait_jitter=3.0):
             with attempt:
-                stream_response = await self.storage_client.download_stream(self.bucket_name, target_path)
-                chunk_size = 8192  # 8KB chunks
-                while True:
-                    chunk = await stream_response.read(chunk_size)
-                    if not chunk:  # End of stream
-                        break
-                    yield chunk
+                return await self.storage_client.download(self.bucket_name, target_path)
 
