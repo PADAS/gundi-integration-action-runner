@@ -11,5 +11,5 @@ curl -X PUT http://pubsub_emulator:8085/v1/projects/local-project/topics/local-a
 
 # ...and this is where the subscription is made, to push 'local-actions-topic' messages to the FastAPI server (the action runner service).
 curl http://pubsub_emulator:8085/v1/projects/local-project/subscriptions/local-actions-subscription \
- --data '{"topic": "projects/local-project/topics/local-actions-topic", "pushConfig": {"pushEndpoint": "http://fastapi:8080/"}, "ackDeadlineSeconds": 600}' \
+ --data '{"topic": "projects/local-project/topics/local-actions-topic", "pushConfig": {"pushEndpoint": "http://fastapi:8080/"}, "ackDeadlineSeconds": 1200}' \
   -X PUT -H 'content-type: application/json'
