@@ -259,6 +259,26 @@ async def test_process_ornitela_file_sends_observations_then_archives(
 @pytest.mark.asyncio
 @patch("app.actions.handlers.send_observations_to_gundi")
 @patch("app.actions.handlers.CloudFileStorage")
+async def test_process_ornitela_file_skips_stale_pubsub_message(
+    mock_file_storage_cls, mock_send, mock_integration, file_action_config
+):
+    """If the file is not found in in_progress/, log a warning and skip — no dead_letter move."""
+    storage = make_file_storage_mock()
+    storage.get_file_metadata = Mock(side_effect=AsyncMock(side_effect=Exception("404 Not Found")))
+    mock_file_storage_cls.return_value = storage
+    mock_send.return_value = None
+
+    result = await action_process_ornitela_file(mock_integration, file_action_config)
+
+    assert result["status"] == "skipped"
+    assert result["reason"] == "not found in in_progress/"
+    mock_send.assert_not_called()
+    storage.move_file.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch("app.actions.handlers.send_observations_to_gundi")
+@patch("app.actions.handlers.CloudFileStorage")
 async def test_process_ornitela_file_moves_to_dead_letter_on_error(
     mock_file_storage_cls, mock_send, mock_integration, file_action_config
 ):

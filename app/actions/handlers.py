@@ -132,6 +132,18 @@ async def action_process_ornitela_file(integration, action_config: ProcessOrnite
             root_prefix=action_config.bucket_path
         )
 
+        # Verify the file is actually in in_progress/ before doing any work.
+        # If it's missing, this is a stale PubSub message (e.g. left over from before
+        # the in_progress/ lifecycle was introduced, or already processed on a prior delivery).
+        try:
+            await file_storage.get_file_metadata(integration_id, in_progress_path)
+        except Exception:
+            logger.warning(
+                f"File not found at {in_progress_path} — stale or duplicate PubSub message, skipping. "
+                f"(file may already be in archive/ or dead_letter/)"
+            )
+            return {"status": "skipped", "file_name": action_config.file_name, "reason": "not found in in_progress/"}
+
         logger.info(f"Processing file {action_config.file_name} for integration {integration_id}")
 
         telemetry_data = await _process_csv_file_streaming(file_storage, integration_id, in_progress_path)
