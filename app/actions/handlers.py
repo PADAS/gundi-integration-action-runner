@@ -167,13 +167,9 @@ async def action_process_ornitela_file(integration, action_config: ProcessOrnite
         }
 
     except asyncio.CancelledError:
-        logger.error(f"Task timed out while processing file {action_config.file_name} — moving to dead_letter/")
-        await asyncio.shield(_move_to_dead_letter(file_storage, integration_id, in_progress_path, action_config.file_name))
-        return {
-            "status": "dead_letter",
-            "file_name": action_config.file_name,
-            "reason": "task timed out",
-        }
+        logger.error(f"Task cancelled while processing file {action_config.file_name} — moving to dead_letter/")
+        await _move_to_dead_letter(file_storage, integration_id, in_progress_path, action_config.file_name)
+        raise
     except Exception as e:
         logger.exception(f"Error processing file {action_config.file_name}: {str(e)}")
         await _move_to_dead_letter(file_storage, integration_id, in_progress_path, action_config.file_name)
