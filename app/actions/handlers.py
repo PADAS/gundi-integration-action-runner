@@ -165,6 +165,12 @@ async def action_process_ornitela_file(integration, action_config: ProcessOrnite
             "observations_sent": observations_sent,
         }
 
+    except asyncio.CancelledError:
+        logger.error(
+            f"Task cancelled while processing file {action_config.file_name} "
+            f"— file stays in in_progress/ for visibility"
+        )
+        raise
     except Exception as e:
         logger.exception(f"Error processing file {action_config.file_name}: {str(e)}")
         message = f"Error processing file {action_config.file_name}: {str(e)}"
