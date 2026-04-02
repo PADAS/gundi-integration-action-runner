@@ -119,10 +119,12 @@ async def action_process_ornitela_file(integration, action_config: ProcessOrnite
     """
     Process a single Ornitela CSV file that has been moved to the in_progress/ prefix.
     Streams the file from GCS, parses telemetry records, sends observations to Gundi,
-    then moves the file to archive/ on success. On failure the file stays in in_progress/
-    as a visible signal that processing did not complete.
+    then moves the file to archive/ on success. On any failure the file is moved to
+    dead_letter/ so it is visible and does not get retried automatically.
     """
     integration_id = str(integration.id)
+    file_storage = None
+    in_progress_path = f"in_progress/{action_config.file_name}"
 
     try:
         file_storage = CloudFileStorage(
@@ -132,7 +134,6 @@ async def action_process_ornitela_file(integration, action_config: ProcessOrnite
 
         logger.info(f"Processing file {action_config.file_name} for integration {integration_id}")
 
-        in_progress_path = f"in_progress/{action_config.file_name}"
         telemetry_data = await _process_csv_file_streaming(file_storage, integration_id, in_progress_path)
 
         # Transform and send observations
@@ -166,13 +167,12 @@ async def action_process_ornitela_file(integration, action_config: ProcessOrnite
         }
 
     except asyncio.CancelledError:
-        logger.error(
-            f"Task cancelled while processing file {action_config.file_name} "
-            f"— file stays in in_progress/ for visibility"
-        )
+        logger.error(f"Task cancelled while processing file {action_config.file_name} — moving to dead_letter/")
+        await _move_to_dead_letter(file_storage, integration_id, in_progress_path, action_config.file_name)
         raise
     except Exception as e:
         logger.exception(f"Error processing file {action_config.file_name}: {str(e)}")
+        await _move_to_dead_letter(file_storage, integration_id, in_progress_path, action_config.file_name)
         message = f"Error processing file {action_config.file_name}: {str(e)}"
         await log_action_activity(
             integration_id=str(integration.id),
@@ -185,6 +185,18 @@ async def action_process_ornitela_file(integration, action_config: ProcessOrnite
             "file_name": action_config.file_name,
             "error": str(e)
         }
+
+
+async def _move_to_dead_letter(file_storage, integration_id: str, in_progress_path: str, file_name: str):
+    """Move a file from in_progress/ to dead_letter/ after a processing failure."""
+    if file_storage is None:
+        return
+    try:
+        dead_letter_path = f"dead_letter/{file_name}"
+        await file_storage.move_file(integration_id, in_progress_path, dead_letter_path)
+        logger.error(f"Moved to dead_letter/: {file_name}")
+    except Exception:
+        logger.exception(f"Could not move {file_name} to dead_letter/ — file remains in in_progress/")
 
 
 
@@ -223,8 +235,8 @@ async def action_process_new_files(integration, action_config: ProcessTelemetryD
             if file_name.endswith("/"):
                 continue
 
-            # Skip files already in progress or archived — only process root files
-            if file_name.startswith("in_progress/") or file_name.startswith("archive/"):
+            # Skip files already in progress, archived, or in dead_letter — only process root files
+            if file_name.startswith("in_progress/") or file_name.startswith("archive/") or file_name.startswith("dead_letter/"):
                 # Check archived files for deletion
                 if file_name.startswith("archive/"):
                     try:

@@ -136,12 +136,12 @@ async def test_process_new_files_moves_to_in_progress_before_trigger(
 @patch("app.actions.handlers.trigger_action")
 @patch("app.actions.handlers.CloudFileStorage")
 @patch("app.actions.handlers.IntegrationStateManager")
-async def test_process_new_files_skips_in_progress_and_archive_folders(
+async def test_process_new_files_skips_in_progress_archive_and_dead_letter_folders(
     mock_state_manager, mock_file_storage_cls, mock_trigger_action, mock_integration, action_config
 ):
-    """Files in in_progress/ or archive/ must not be triggered for processing."""
+    """Files in in_progress/, archive/, or dead_letter/ must not be triggered for processing."""
     storage = make_file_storage_mock(
-        files=["archive/bird001.csv", "in_progress/bird002.csv", "bird003.csv"]
+        files=["archive/bird001.csv", "in_progress/bird002.csv", "dead_letter/bird003.csv", "bird004.csv"]
     )
     mock_file_storage_cls.return_value = storage
     mock_trigger_action.side_effect = AsyncMock()
@@ -153,7 +153,7 @@ async def test_process_new_files_skips_in_progress_and_archive_folders(
     assert result["new_files_found"] == 1
     assert result["subactions_triggered"] == 1
     storage.move_file.assert_called_once()
-    assert "bird003.csv" in storage.move_file.call_args[0]
+    assert "bird004.csv" in storage.move_file.call_args[0]
 
 
 @pytest.mark.asyncio
@@ -259,10 +259,36 @@ async def test_process_ornitela_file_sends_observations_then_archives(
 @pytest.mark.asyncio
 @patch("app.actions.handlers.send_observations_to_gundi")
 @patch("app.actions.handlers.CloudFileStorage")
-async def test_process_ornitela_file_error_handling(
+async def test_process_ornitela_file_moves_to_dead_letter_on_error(
     mock_file_storage_cls, mock_send, mock_integration, file_action_config
 ):
-    """Errors during processing must be caught and returned."""
+    """On processing failure the file must be moved to dead_letter/."""
+    storage = make_file_storage_mock()
+
+    async def raise_on_stream(*a, **kw):
+        raise RuntimeError("GCS read error")
+        yield  # make it an async generator
+
+    storage.stream_file = raise_on_stream
+    mock_file_storage_cls.return_value = storage
+    mock_send.return_value = None
+
+    result = await action_process_ornitela_file(mock_integration, file_action_config)
+
+    assert result["status"] == "error"
+    assert "GCS read error" in result["error"]
+    # File must have been moved to dead_letter/
+    move_calls = storage.move_file.call_args_list
+    assert any("dead_letter/" in str(c) for c in move_calls), "Expected a move to dead_letter/"
+
+
+@pytest.mark.asyncio
+@patch("app.actions.handlers.send_observations_to_gundi")
+@patch("app.actions.handlers.CloudFileStorage")
+async def test_process_ornitela_file_storage_init_error_no_dead_letter_move(
+    mock_file_storage_cls, mock_send, mock_integration, file_action_config
+):
+    """If storage fails to initialize there is nothing to move to dead_letter/."""
     mock_file_storage_cls.side_effect = Exception("storage unavailable")
 
     result = await action_process_ornitela_file(mock_integration, file_action_config)
