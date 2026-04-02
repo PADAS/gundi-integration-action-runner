@@ -20,8 +20,8 @@ class ProcessTelemetryDataActionConfiguration(PullActionConfiguration, Executabl
 class ProcessOrnitelaFileActionConfiguration(InternalActionConfiguration):
     bucket_path: str = pydantic.Field("", title="Bucket Path", description="Path within the bucket where telemetry files are stored")
     file_name: str = pydantic.Field(..., title="File Name", description="Name of the file to process")
-    historical_limit_days: int = pydantic.Field(30, title="Historical Limit Days", description="Number of days to look back for data")
-    delete_after_archive_days: int = pydantic.Field(90, title="Delete After Archive Days", description="Number of days after archiving before files are deleted")
+    historical_limit_days: int = pydantic.Field(5, title="Historical Limit Days", description="Number of days to look back for data")
+    delete_after_archive_days: int = pydantic.Field(5, title="Delete After Archive Days", description="Number of days after archiving before files are deleted")
     batch_size: int = pydantic.Field(500, title="Batch Size", description="Number of observations per batch when sending to Gundi")
 
     @pydantic.validator("bucket_path")

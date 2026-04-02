@@ -87,12 +87,16 @@ def make_file_storage_mock(files=None, metadata=None, move_file=None):
         )
         return (HEADER + recent_row).encode("utf-8")
 
+    async def default_close(*a, **kw):
+        return None
+
     mock.list_files = Mock(side_effect=default_list)
     mock.get_file_metadata = Mock(side_effect=default_metadata)
     mock.move_file = Mock(side_effect=move_file or default_move)
     mock.delete_file = Mock(side_effect=default_delete)
     mock.download_bytes = Mock(side_effect=default_download_bytes)
     mock.upload_bytes = Mock(side_effect=default_upload_bytes)
+    mock.close = Mock(side_effect=default_close)
     return mock
 
 

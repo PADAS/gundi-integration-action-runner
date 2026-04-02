@@ -1,7 +1,6 @@
 import asyncio
 import json
 import logging
-import math
 import os
 import csv
 import io
@@ -276,7 +275,8 @@ async def action_process_new_files(integration, action_config: ProcessTelemetryD
     state_manager = IntegrationStateManager()
     integration_id = str(integration.id)
     action_id = "process_new_files"
-    
+    file_storage = None
+
     try:
         # Initialize CloudFileStorage service
         file_storage = CloudFileStorage(
@@ -399,6 +399,9 @@ async def action_process_new_files(integration, action_config: ProcessTelemetryD
             "status": "error",
             "error": str(e)
         }
+    finally:
+        if file_storage:
+            await file_storage.close()
 
 
 async def _process_csv_file(file_storage, integration_id: str, file_name: str) -> List[Dict[str, Any]]:
