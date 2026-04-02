@@ -35,19 +35,27 @@ class FileMetadata(BaseModel):
 # ToDo. Move this to the template for other integrations needing file support
 class CloudFileStorage:
     def __init__(self, bucket_name=None, root_prefix=None):
-        self.root_prefix = root_prefix or settings.GCP_BUCKET_ROOT_PREFIX
-        self.bucket_name = bucket_name or settings.GCP_BUCKET_NAME
+        self.root_prefix = root_prefix.strip("/") if root_prefix else ""
+        self.bucket_name = bucket_name or settings.INFILE_STORAGE_BUCKET
         self._storage_client = None  # Lazy initialization
 
     @property
     def storage_client(self):
         if self._storage_client is None:
-            self._storage_client = Storage()
+            timeout = aiohttp.ClientTimeout(total=120, connect=30)
+            session = aiohttp.ClientSession(timeout=timeout)
+            self._storage_client = Storage(session=session)
         return self._storage_client
 
+    async def close(self):
+        if self._storage_client is not None:
+            await self._storage_client.close()
+            self._storage_client = None
+
     def get_file_fullname(self, integration_id, blob_name):
-        # Remove integration_id from path - use only root_prefix and blob_name
-        return f"{self.root_prefix}/{blob_name}"
+        if self.root_prefix:
+            return f"{self.root_prefix}/{blob_name}"
+        return blob_name
 
     async def upload_file(self, integration_id, local_file_path, destination_blob_name, metadata=None):
         target_path = self.get_file_fullname(integration_id, destination_blob_name)
@@ -113,20 +121,28 @@ class CloudFileStorage:
             with attempt:
                 await self.storage_client.patch_metadata(self.bucket_name, target_path, custom_metadata)
 
-    async def stream_file(self, integration_id, blob_name):
-        """
-        Stream file contents from GCS as an async generator.
-        This is memory-efficient for large files.
-        """
+    async def move_file(self, integration_id, source_blob_name, destination_blob_name):
+        """Move a file within the same bucket by copying then deleting the original."""
+        source_path = self.get_file_fullname(integration_id, source_blob_name)
+        dest_path = self.get_file_fullname(integration_id, destination_blob_name)
+        for attempt in stamina.retry_context(on=(aiohttp.ClientError, asyncio.TimeoutError, asyncio.CancelledError),
+                                             attempts=5, wait_initial=1.0, wait_max=30, wait_jitter=3.0):
+            with attempt:
+                await self.storage_client.copy(self.bucket_name, source_path, self.bucket_name, new_name=dest_path)
+                await self.storage_client.delete(self.bucket_name, source_path)
+
+    async def upload_bytes(self, integration_id, blob_name, data: bytes, content_type: str = 'text/csv'):
         target_path = self.get_file_fullname(integration_id, blob_name)
         for attempt in stamina.retry_context(on=(aiohttp.ClientError, asyncio.TimeoutError),
                                              attempts=5, wait_initial=1.0, wait_max=30, wait_jitter=3.0):
             with attempt:
-                stream_response = await self.storage_client.download_stream(self.bucket_name, target_path)
-                chunk_size = 8192  # 8KB chunks
-                while True:
-                    chunk = await stream_response.read(chunk_size)
-                    if not chunk:  # End of stream
-                        break
-                    yield chunk
+                await self.storage_client.upload(self.bucket_name, target_path, data, content_type=content_type)
+
+    async def download_bytes(self, integration_id, blob_name) -> bytes:
+        """Download full file contents into memory and return as bytes."""
+        target_path = self.get_file_fullname(integration_id, blob_name)
+        for attempt in stamina.retry_context(on=(aiohttp.ClientError, asyncio.TimeoutError),
+                                             attempts=5, wait_initial=1.0, wait_max=30, wait_jitter=3.0):
+            with attempt:
+                return await self.storage_client.download(self.bucket_name, target_path)
 

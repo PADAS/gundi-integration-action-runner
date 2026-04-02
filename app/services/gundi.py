@@ -70,7 +70,7 @@ async def send_event_attachments_to_gundi(event_id: str, attachments: List[tuple
 
 
 @stamina.retry(on=httpx.HTTPError, wait_initial=10.0, wait_jitter=10.0, wait_max=300.0)
-async def send_observations_to_gundi(observations: List[dict], **kwargs) -> dict:
+async def send_observations_to_gundi(observations: List[dict], sensors_api_client=None, **kwargs) -> dict:
     """
     Send Observations to Gundi using the REST API v2
     :param observations: A list of observations in the following format:
@@ -90,12 +90,14 @@ async def send_observations_to_gundi(observations: List[dict], **kwargs) -> dict
         },
         ...
     ]
+    :param sensors_api_client: Optional pre-built client to avoid fetching the API key on every call
     :param kwargs: integration_id: The UUID of the related integration
     :return: A dict with the response from the API
     """
     integration_id = kwargs.get("integration_id")
     assert integration_id, "integration_id is required"
-    sensors_api_client = await _get_sensors_api_client(integration_id=str(integration_id))
+    if sensors_api_client is None:
+        sensors_api_client = await _get_sensors_api_client(integration_id=str(integration_id))
     return await sensors_api_client.post_observations(data=observations)
 
 
