@@ -456,6 +456,8 @@ async def _process_csv_file(file_storage, integration_id: str, file_name: str, i
         return telemetry_data
 
     except Exception as e:
+        if getattr(e, "status", None) == 404:
+            raise
         logger.exception(f"Error processing CSV file {file_name}: {str(e)}")
         raise OrnitelaFileProcessingError(f"Error processing CSV file {file_name}: {str(e)}")
         
