@@ -11,6 +11,7 @@ class ProcessTelemetryDataActionConfiguration(PullActionConfiguration, Executabl
     process_most_recent_first: bool = pydantic.Field(True, title="Process Most Recent First", description="Process the most recently modified files first")
     chunk_size: int = pydantic.Field(5000, title="Chunk Size", description="Number of rows per processing chunk")
     batch_size: int = pydantic.Field(500, title="Batch Size", description="Number of observations per batch when sending to Gundi")
+    include_sensor_data: bool = pydantic.Field(True, title="Include Sensor Data", description="Include sensor (SEN_*) rows as observations. Disable to send only GPS position data.")
 
     @pydantic.validator("bucket_path")
     def validate_bucket_path(cls, v):
@@ -23,6 +24,7 @@ class ProcessOrnitelaFileActionConfiguration(InternalActionConfiguration):
     historical_limit_days: int = pydantic.Field(5, title="Historical Limit Days", description="Number of days to look back for data")
     delete_after_archive_days: int = pydantic.Field(5, title="Delete After Archive Days", description="Number of days after archiving before files are deleted")
     batch_size: int = pydantic.Field(500, title="Batch Size", description="Number of observations per batch when sending to Gundi")
+    include_sensor_data: bool = pydantic.Field(True, title="Include Sensor Data", description="Include sensor (SEN_*) rows as observations. Disable to send only GPS position data.")
 
     @pydantic.validator("bucket_path")
     def validate_bucket_path(cls, v):

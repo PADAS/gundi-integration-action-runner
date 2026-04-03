@@ -135,7 +135,7 @@ async def action_process_ornitela_file(integration, action_config: ProcessOrnite
 
         logger.info(f"{tag} Starting processing for integration {integration_id}")
 
-        telemetry_data = await _process_csv_file(file_storage, integration_id, in_progress_path)
+        telemetry_data = await _process_csv_file(file_storage, integration_id, in_progress_path, action_config.include_sensor_data)
 
         transformed_data = list(generate_gundi_observations(telemetry_data, action_config.historical_limit_days))
         all_batches = list(batches_from_generator(iter(transformed_data), action_config.batch_size))
@@ -175,14 +175,18 @@ async def action_process_ornitela_file(integration, action_config: ProcessOrnite
         await log_action_activity(
             integration_id=integration_id,
             action_id="process_ornitela_file",
-            title=f"{tag} Timed out and was moved to dead_letter/",
+            title=f"{tag} Processing exceeded the 10-minute limit and was sent to the dead letter queue.",
             level=LogLevel.ERROR
         )
         raise
     except Exception as e:
-        logger.exception(f"{tag} Error: {str(e)}")
+        if getattr(e, "status", None) == 404:
+            logger.info(f"{tag} Not found in in_progress/ — already processed by a previous delivery, skipping")
+            return {"status": "skipped", "file_name": action_config.file_name, "reason": "already_processed"}
+        error_detail = str(e) or type(e).__name__
+        logger.exception(f"{tag} Error: {error_detail}")
         await _move_to_dead_letter(file_storage, integration_id, in_progress_path, action_config.file_name)
-        message = f"{tag} Error: {str(e)}"
+        message = f"{tag} Error: {error_detail}"
         await log_action_activity(
             integration_id=str(integration.id),
             action_id="process_ornitela_file",
@@ -192,7 +196,7 @@ async def action_process_ornitela_file(integration, action_config: ProcessOrnite
         return {
             "status": "error",
             "file_name": action_config.file_name,
-            "error": str(e)
+            "error": error_detail
         }
     finally:
         if file_storage:
@@ -351,6 +355,7 @@ async def action_process_new_files(integration, action_config: ProcessTelemetryD
                     historical_limit_days=action_config.historical_limit_days,
                     delete_after_archive_days=action_config.delete_after_archive_days,
                     batch_size=action_config.batch_size,
+                    include_sensor_data=action_config.include_sensor_data,
                 )
 
                 await trigger_action(
@@ -404,7 +409,7 @@ async def action_process_new_files(integration, action_config: ProcessTelemetryD
             await file_storage.close()
 
 
-async def _process_csv_file(file_storage, integration_id: str, file_name: str) -> List[Dict[str, Any]]:
+async def _process_csv_file(file_storage, integration_id: str, file_name: str, include_sensor_data: bool = True) -> List[Dict[str, Any]]:
     """
     Process CSV telemetry data. Downloads the full file into memory, then parses it.
     Each GPS row becomes one observation with its real location.
@@ -442,7 +447,7 @@ async def _process_csv_file(file_storage, integration_id: str, file_name: str) -
             try:
                 if datatype in ["GPS", "GPSS"]:
                     telemetry_data.append(_create_observation(_parse_gps_row(row_data, file_name), [], file_name))
-                elif datatype.startswith("SEN_"):
+                elif include_sensor_data and datatype.startswith("SEN_"):
                     telemetry_data.append(_parse_sensor_row_as_observation(row_data, file_name))
             except (ValueError, KeyError) as e:
                 logger.exception(f"Error parsing CSV row in {file_name}: {str(e)}")
