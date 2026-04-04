@@ -384,6 +384,22 @@ async def test_process_csv_file_gps_and_sensors():
 
 
 @pytest.mark.asyncio
+async def test_process_csv_file_sensor_data_excluded():
+    """With include_sensor_data=False, only GPS rows should be returned."""
+    mock_storage = Mock()
+
+    async def mock_download_bytes(*a, **kw):
+        return (HEADER + GPS_ROW + SEN_START + SEN_ROW + SEN_END).encode("utf-8")
+
+    mock_storage.download_bytes = Mock(side_effect=mock_download_bytes)
+
+    result = await _process_csv_file(mock_storage, "test-integration", "test.csv", include_sensor_data=False)
+
+    assert len(result) == 1
+    assert result[0]["additional"]["datatype"] == "GPSS"
+
+
+@pytest.mark.asyncio
 async def test_process_csv_file_gps_only():
     """Multiple GPS rows with no sensors should each produce one observation."""
     mock_storage = Mock()
