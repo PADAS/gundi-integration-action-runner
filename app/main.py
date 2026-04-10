@@ -2,6 +2,7 @@ import base64
 import json
 import logging
 import os
+import signal
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, status, BackgroundTasks
 from fastapi.encoders import jsonable_encoder
@@ -21,6 +22,11 @@ root_path = os.environ.get("ROOT_PATH", "")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Log SIGTERM so we can confirm when Cloud Run kills the instance mid-request
+    def _handle_sigterm(signum, frame):
+        logger.error("SIGTERM received — Cloud Run is terminating this instance; any file currently in in_progress/ will be orphaned")
+    signal.signal(signal.SIGTERM, _handle_sigterm)
+
     # Startup Hook
     if settings.REGISTER_ON_START:
         await register_integration_in_gundi(gundi_client=_portal)

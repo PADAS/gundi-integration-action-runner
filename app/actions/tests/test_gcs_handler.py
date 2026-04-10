@@ -105,11 +105,12 @@ def make_file_storage_mock(files=None, metadata=None, move_file=None):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
+@patch("app.actions.handlers.FileProcessingLockManager")
 @patch("app.actions.handlers.trigger_action")
 @patch("app.actions.handlers.CloudFileStorage")
 @patch("app.actions.handlers.IntegrationStateManager")
 async def test_process_new_files_moves_to_in_progress_before_trigger(
-    mock_state_manager, mock_file_storage_cls, mock_trigger_action, mock_integration, action_config
+    mock_state_manager, mock_file_storage_cls, mock_trigger_action, mock_lock_manager_cls, mock_integration, action_config
 ):
     """Chunk must be uploaded to in_progress/ BEFORE the sub-action is triggered."""
     call_order = []
@@ -128,6 +129,8 @@ async def test_process_new_files_moves_to_in_progress_before_trigger(
 
     mock_state_manager.return_value.get_state = AsyncMock(return_value={})
     mock_state_manager.return_value.set_state = AsyncMock()
+    mock_lock_manager_cls.return_value.acquire_lock = AsyncMock(return_value=True)
+    mock_lock_manager_cls.return_value.release_lock = AsyncMock(return_value=True)
 
     result = await action_process_new_files(mock_integration, action_config)
 
@@ -141,11 +144,12 @@ async def test_process_new_files_moves_to_in_progress_before_trigger(
 
 
 @pytest.mark.asyncio
+@patch("app.actions.handlers.FileProcessingLockManager")
 @patch("app.actions.handlers.trigger_action")
 @patch("app.actions.handlers.CloudFileStorage")
 @patch("app.actions.handlers.IntegrationStateManager")
 async def test_process_new_files_skips_in_progress_archive_and_dead_letter_folders(
-    mock_state_manager, mock_file_storage_cls, mock_trigger_action, mock_integration, action_config
+    mock_state_manager, mock_file_storage_cls, mock_trigger_action, mock_lock_manager_cls, mock_integration, action_config
 ):
     """Files in in_progress/, archive/, or dead_letter/ must not be triggered for processing."""
     storage = make_file_storage_mock(
@@ -155,6 +159,8 @@ async def test_process_new_files_skips_in_progress_archive_and_dead_letter_folde
     mock_trigger_action.side_effect = AsyncMock()
     mock_state_manager.return_value.get_state = AsyncMock(return_value={})
     mock_state_manager.return_value.set_state = AsyncMock()
+    mock_lock_manager_cls.return_value.acquire_lock = AsyncMock(return_value=True)
+    mock_lock_manager_cls.return_value.release_lock = AsyncMock(return_value=True)
 
     result = await action_process_new_files(mock_integration, action_config)
 
@@ -169,11 +175,12 @@ async def test_process_new_files_skips_in_progress_archive_and_dead_letter_folde
 
 
 @pytest.mark.asyncio
+@patch("app.actions.handlers.FileProcessingLockManager")
 @patch("app.actions.handlers.trigger_action")
 @patch("app.actions.handlers.CloudFileStorage")
 @patch("app.actions.handlers.IntegrationStateManager")
 async def test_process_new_files_deletes_old_archived_files(
-    mock_state_manager, mock_file_storage_cls, mock_trigger_action, mock_integration, action_config
+    mock_state_manager, mock_file_storage_cls, mock_trigger_action, mock_lock_manager_cls, mock_integration, action_config
 ):
     """Archived files older than delete_after_archive_days must be deleted."""
     very_old = datetime.now(timezone.utc) - timedelta(days=95)
@@ -192,6 +199,8 @@ async def test_process_new_files_deletes_old_archived_files(
     mock_trigger_action.side_effect = AsyncMock()
     mock_state_manager.return_value.get_state = AsyncMock(return_value={})
     mock_state_manager.return_value.set_state = AsyncMock()
+    mock_lock_manager_cls.return_value.acquire_lock = AsyncMock(return_value=True)
+    mock_lock_manager_cls.return_value.release_lock = AsyncMock(return_value=True)
 
     result = await action_process_new_files(mock_integration, action_config)
 
@@ -599,3 +608,87 @@ def test_process_telemetry_file_invalid_json():
     result = _process_telemetry_file("invalid json", "test_data.json")
     assert len(result) == 1
     assert "parse_error" in result[0]
+
+
+# ---------------------------------------------------------------------------
+# action chaining and locking
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+@patch("app.actions.handlers.FileProcessingLockManager")
+@patch("app.actions.handlers.trigger_action")
+@patch("app.actions.handlers.CloudFileStorage")
+@patch("app.actions.handlers.IntegrationStateManager")
+async def test_process_new_files_skips_locked_files(
+    mock_state_manager, mock_file_storage_cls, mock_trigger_action, mock_lock_manager_cls, mock_integration, action_config
+):
+    """Files locked by another process must be skipped without triggering a sub-action."""
+    storage = make_file_storage_mock(files=["bird001.csv", "bird002.csv"])
+    mock_file_storage_cls.return_value = storage
+    mock_trigger_action.side_effect = AsyncMock()
+    mock_state_manager.return_value.set_state = AsyncMock()
+
+    async def acquire(integration_id, file_name):
+        return file_name != "bird001.csv"  # bird001 is locked, bird002 is free
+
+    mock_lock_manager_cls.return_value.acquire_lock = Mock(side_effect=acquire)
+    mock_lock_manager_cls.return_value.release_lock = AsyncMock(return_value=True)
+
+    result = await action_process_new_files(mock_integration, action_config)
+
+    assert result["subactions_triggered"] == 1
+    triggered_config = mock_trigger_action.call_args[1]["config"]
+    assert "bird002" in triggered_config.file_name
+
+
+@pytest.mark.asyncio
+@patch("app.actions.handlers.FileProcessingLockManager")
+@patch("app.actions.handlers.trigger_action")
+@patch("app.actions.handlers._get_sensors_api_client", new_callable=AsyncMock)
+@patch("app.actions.handlers.send_observations_to_gundi")
+@patch("app.actions.handlers.CloudFileStorage")
+async def test_process_ornitela_file_chains_to_next_chunk(
+    mock_file_storage_cls, mock_send, mock_get_client, mock_trigger_action, mock_lock_manager_cls, mock_integration
+):
+    """After archiving, the next chunk must be triggered immediately when source_file is set."""
+    storage = make_file_storage_mock()
+    mock_file_storage_cls.return_value = storage
+    mock_send.return_value = None
+    mock_trigger_action.side_effect = AsyncMock()
+    mock_lock_manager_cls.return_value.acquire_lock = AsyncMock(return_value=True)
+    mock_lock_manager_cls.return_value.release_lock = AsyncMock(return_value=True)
+
+    config = ProcessOrnitelaFileActionConfiguration(
+        bucket_path="telemetry-data",
+        file_name="bird001_chunk_20260410_120000.csv",
+        source_file="bird001.csv",
+        chunk_size=5000,
+        delete_after_archive_days=90,
+    )
+
+    result = await action_process_ornitela_file(mock_integration, config)
+
+    assert result["status"] == "success"
+    mock_trigger_action.assert_called_once()
+    next_config = mock_trigger_action.call_args[1]["config"]
+    assert next_config.source_file == "bird001.csv"
+    assert "bird001_chunk_" in next_config.file_name
+
+
+@pytest.mark.asyncio
+@patch("app.actions.handlers._get_sensors_api_client", new_callable=AsyncMock)
+@patch("app.actions.handlers.send_observations_to_gundi")
+@patch("app.actions.handlers.CloudFileStorage")
+async def test_process_ornitela_file_no_chain_without_source_file(
+    mock_file_storage_cls, mock_send, mock_get_client, mock_integration, file_action_config
+):
+    """Without source_file set, no chaining must happen after archiving."""
+    storage = make_file_storage_mock()
+    mock_file_storage_cls.return_value = storage
+    mock_send.return_value = None
+
+    with patch("app.actions.handlers.trigger_action") as mock_trigger:
+        result = await action_process_ornitela_file(mock_integration, file_action_config)
+
+    assert result["status"] == "success"
+    mock_trigger.assert_not_called()
