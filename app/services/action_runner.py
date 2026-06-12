@@ -2,6 +2,7 @@ import asyncio
 import logging
 import time
 import traceback
+from enum import Enum
 from typing import Optional
 
 import httpx
@@ -14,15 +15,34 @@ from app import settings
 from fastapi import status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
-from gundi_core.events import IntegrationActionFailed, ActionExecutionFailed
+from gundi_core.events import IntegrationActionFailed, ActionExecutionFailed, LogLevel
 
+from app.actions.core import PullActionConfiguration
 from .config_manager import IntegrationConfigurationManager
 from .utils import find_config_for_action
-from .activity_logger import publish_event
+from .activity_logger import publish_event, log_action_activity
 
 _portal = GundiClient()
 config_manager = IntegrationConfigurationManager()
 logger = logging.getLogger(__name__)
+
+
+class ActionTrigger(str, Enum):
+    """Where an action invocation originated.
+
+    AUTO covers the portal's scheduler — and, by default, anything that
+    doesn't say otherwise. For automated pull-action runs, a missing/invalid
+    config (or a paused `run_on_schedule`) is a clean no-op, because pull
+    actions are scheduled type-wide and fire even for destination-only
+    integrations that never get a pull config.
+
+    MANUAL is an explicit, operator-initiated run. Those keep the strict
+    404/422 behavior so a real misconfiguration surfaces immediately, and they
+    ignore the `run_on_schedule` pause toggle (a manual run is not "on
+    schedule").
+    """
+    AUTO = "auto"
+    MANUAL = "manual"
 
 
 async def _handle_error(
@@ -73,9 +93,29 @@ async def _handle_error(
     )
 
 
+async def _skip_pull_action(integration_id, action_id, *, title, level, reason, data=None):
+    """Record a clean, non-error skip of a pull action.
+
+    Destination-only integrations get pull actions scheduled type-wide but
+    have no usable config. Rather than publishing an `IntegrationActionFailed`
+    error, we log the skip to the activity feed (INFO for the expected
+    "not configured as a source" cases, WARNING when a present config is
+    invalid) and return a benign result.
+    """
+    logger.info(f"{title} (integration '{integration_id}')")
+    await log_action_activity(
+        integration_id=integration_id,
+        action_id=action_id,
+        title=title,
+        level=level,
+        data=data,
+    )
+    return {"skipped": True, "reason": reason}
+
+
 async def execute_action(
         integration_id: str, action_id: Optional[str] = None, config_overrides: dict = None,
-        data: dict = None, metadata: dict = None
+        data: dict = None, metadata: dict = None, triggered_by: Optional[str] = None
 ):
     try:  # Get the integration details to pass it to the action handler
         integration = await config_manager.get_integration_details(integration_id)
@@ -110,9 +150,26 @@ async def execute_action(
 
     logger.info(f"Executing action '{action_id}' for integration '{integration_id}'...")
 
+    # Pull actions are scheduled type-wide, so the portal fires them for every
+    # integration of this type — including destination-only ones that never get
+    # a pull config. For an *automated* run, "no usable config" (or a paused
+    # toggle) means "nothing to pull" — a clean no-op rather than a failure. A
+    # *manual* run keeps the strict 404/422 behavior so misconfigurations
+    # surface immediately, and ignores the pause toggle.
+    is_pull_action = isinstance(config_model, type) and issubclass(config_model, PullActionConfiguration)
+    is_manual = triggered_by == ActionTrigger.MANUAL
+    skippable_pull = is_pull_action and not is_manual
+
     # Get the configuration needed to execute the action
     action_config = await config_manager.get_action_configuration(integration_id, action_id)
     if not action_config and not config_overrides:
+        if skippable_pull:
+            return await _skip_pull_action(
+                integration_id, action_id,
+                title=f"Skipping '{action_id}': integration is not configured for this action.",
+                level=LogLevel.INFO,
+                reason="no_configuration",
+            )
         message = f"Configuration for action '{action_id}' for integration {str(integration.id)} is missing."
         logger.error(message)
         return await _handle_error(
@@ -127,7 +184,27 @@ async def execute_action(
             config_data.update(config_overrides)
         parsed_config = config_model.parse_obj(config_data)
     except pydantic.ValidationError as e:
+        # An automated pull whose config doesn't validate has nothing it can
+        # safely pull. Skip rather than raise — but log at WARNING with the
+        # validation detail so a genuinely misconfigured source stays noticeable.
+        if skippable_pull:
+            return await _skip_pull_action(
+                integration_id, action_id,
+                title=f"Skipping '{action_id}': configuration is missing or invalid.",
+                level=LogLevel.WARNING,
+                reason="invalid_configuration",
+                data={"validation_error": str(e)},
+            )
         return await _handle_error(e, integration_id, action_id, config_data, status.HTTP_422_UNPROCESSABLE_ENTITY)
+
+    # Respect the operator's explicit pause toggle — only for scheduled runs.
+    if skippable_pull and not getattr(parsed_config, "run_on_schedule", True):
+        return await _skip_pull_action(
+            integration_id, action_id,
+            title=f"Skipping '{action_id}': 'run_on_schedule' is turned off for this integration.",
+            level=LogLevel.INFO,
+            reason="run_on_schedule_disabled",
+        )
 
     parsed_data = None
     if data and DataModel:
