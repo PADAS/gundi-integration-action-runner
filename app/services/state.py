@@ -23,8 +23,9 @@ class IntegrationStateManager:
     async def set_state(self, integration_id: str, action_id: str, state: dict, source_id: str = "no-source"):
         for attempt in stamina.retry_context(on=redis.RedisError, attempts=5, wait_initial=1.0, wait_max=30, wait_jitter=3.0):
             with attempt:
-                await self.db_client.set(
+                await self.db_client.setex(
                     f"integration_state.{integration_id}.{action_id}.{source_id}",
+                    7*86400,
                     json.dumps(state, default=str)
                 )
 
