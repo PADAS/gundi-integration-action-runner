@@ -130,12 +130,23 @@ async def _skip_invalid_config(integration_id, action_id, *, error):
         f"Skipping '{action_id}': configuration is missing or invalid "
         f"(integration '{integration_id}'): {error}"
     )
-    first_in_window = await state_manager.set_if_absent(
-        integration_id=integration_id,
-        action_id=action_id,
-        source_id="skip-invalid-config-warning",
-        ttl_seconds=SKIP_WARNING_THROTTLE_SECONDS,
-    )
+    try:
+        first_in_window = await state_manager.set_if_absent(
+            integration_id=integration_id,
+            action_id=action_id,
+            source_id="skip-invalid-config-warning",
+            ttl_seconds=SKIP_WARNING_THROTTLE_SECONDS,
+        )
+    except Exception as throttle_error:
+        # The throttle is best-effort noise control. If the state store is
+        # unavailable, don't let it crash the skip — that would turn a benign
+        # no-op into an unhandled error (500 / PubSub redelivery). Fail open:
+        # surface the misconfiguration this time rather than hiding it.
+        logger.warning(
+            f"Skip-warning throttle unavailable for '{action_id}' "
+            f"(integration '{integration_id}'): {throttle_error}. Publishing the warning."
+        )
+        first_in_window = True
     if first_in_window:
         await log_action_activity(
             integration_id=integration_id,

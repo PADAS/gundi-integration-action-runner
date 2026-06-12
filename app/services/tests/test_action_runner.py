@@ -319,6 +319,40 @@ async def test_scheduled_pull_action_invalid_config_warning_is_throttled(
 
 
 @pytest.mark.asyncio
+async def test_scheduled_pull_action_invalid_config_skip_survives_throttle_failure(
+        mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event,
+        mock_action_handlers, mock_state_manager, pubsub_message_request_headers,
+        run_pull_action_pubsub_payload,
+):
+    # If the throttle store (Redis) is unavailable, the skip must not crash the
+    # request (which would 500 / trigger PubSub redelivery). It degrades open:
+    # the WARNING is still published this time, and nothing is raised.
+    mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.action_runner.state_manager", mock_state_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+    mock_state_manager.set_if_absent.side_effect = Exception("redis unavailable")
+    bad_config = mocker.MagicMock()
+    bad_config.data = {"lookback_days": "two"}
+    mock_config_manager.get_action_configuration.return_value = async_return(bad_config)
+
+    response = api_client.post(
+        "/", headers=pubsub_message_request_headers, json=run_pull_action_pubsub_payload,
+    )
+
+    assert response.status_code == 200
+    mock_action_handler, _, _ = mock_action_handlers["pull_observations"]
+    assert not mock_action_handler.called
+    assert not _published_events_of_type(mock_publish_event, IntegrationActionFailed)
+    # Fail-open: the misconfiguration WARNING is still surfaced.
+    skip_logs = _published_events_of_type(mock_publish_event, IntegrationActionCustomLog)
+    assert len(skip_logs) == 1
+    assert skip_logs[0].payload.level == LogLevel.WARNING
+
+
+@pytest.mark.asyncio
 async def test_scheduled_pull_action_with_missing_config_is_skipped(
         mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event,
         mock_action_handlers, pubsub_message_request_headers, run_pull_action_pubsub_payload,
