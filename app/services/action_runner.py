@@ -19,12 +19,22 @@ from gundi_core.events import IntegrationActionFailed, ActionExecutionFailed, Lo
 
 from app.actions.core import PullActionConfiguration
 from .config_manager import IntegrationConfigurationManager
+from .state import IntegrationStateManager
 from .utils import find_config_for_action
 from .activity_logger import publish_event, log_action_activity
 
 _portal = GundiClient()
 config_manager = IntegrationConfigurationManager()
+state_manager = IntegrationStateManager()
 logger = logging.getLogger(__name__)
+
+# How often (seconds) to publish a portal activity-log WARNING for a pull
+# action that keeps skipping on an invalid config. Pull actions are scheduled
+# type-wide and fire on every tick; without throttling a persistently
+# misconfigured source would emit a WARNING every run. The skip itself is
+# always recorded in the local application log — this only rate-limits the
+# portal-facing activity-feed entry.
+SKIP_WARNING_THROTTLE_SECONDS = 3600
 
 
 class ActionTrigger(str, Enum):
@@ -93,24 +103,48 @@ async def _handle_error(
     )
 
 
-async def _skip_pull_action(integration_id, action_id, *, title, level, reason, data=None):
-    """Record a clean, non-error skip of a pull action.
+def _skip_quietly(integration_id, action_id, *, reason, message, log_level=logging.INFO):
+    """Record an expected pull-action skip in the local log only.
 
     Destination-only integrations get pull actions scheduled type-wide but
-    have no usable config. Rather than publishing an `IntegrationActionFailed`
-    error, we log the skip to the activity feed (INFO for the expected
-    "not configured as a source" cases, WARNING when a present config is
-    invalid) and return a benign result.
+    have no usable config, and operators may deliberately pause a pull. These
+    are expected, steady-state no-ops, so we keep them out of the portal
+    activity feed entirely (no `IntegrationActionFailed`, no custom log) to
+    avoid per-tick noise — the local application log is enough for debugging.
     """
-    logger.info(f"{title} (integration '{integration_id}')")
-    await log_action_activity(
+    logger.log(log_level, f"{message} (integration '{integration_id}')")
+    return {"skipped": True, "reason": reason}
+
+
+async def _skip_invalid_config(integration_id, action_id, *, error):
+    """Record a skip caused by a missing/invalid pull config.
+
+    Unlike the expected skips, an invalid (rather than absent) config usually
+    means a real source with a misconfiguration, so it IS worth surfacing in
+    the portal activity feed — but only at WARNING and throttled to at most
+    once per `SKIP_WARNING_THROTTLE_SECONDS`, so a persistently broken source
+    doesn't emit a WARNING on every scheduled tick. The skip is always written
+    to the local application log regardless.
+    """
+    logger.warning(
+        f"Skipping '{action_id}': configuration is missing or invalid "
+        f"(integration '{integration_id}'): {error}"
+    )
+    first_in_window = await state_manager.set_if_absent(
         integration_id=integration_id,
         action_id=action_id,
-        title=title,
-        level=level,
-        data=data,
+        source_id="skip-invalid-config-warning",
+        ttl_seconds=SKIP_WARNING_THROTTLE_SECONDS,
     )
-    return {"skipped": True, "reason": reason}
+    if first_in_window:
+        await log_action_activity(
+            integration_id=integration_id,
+            action_id=action_id,
+            title=f"Skipping '{action_id}': configuration is missing or invalid.",
+            level=LogLevel.WARNING,
+            data={"validation_error": str(error)},
+        )
+    return {"skipped": True, "reason": "invalid_configuration"}
 
 
 async def execute_action(
@@ -164,11 +198,11 @@ async def execute_action(
     action_config = await config_manager.get_action_configuration(integration_id, action_id)
     if not action_config and not config_overrides:
         if skippable_pull:
-            return await _skip_pull_action(
+            return _skip_quietly(
                 integration_id, action_id,
-                title=f"Skipping '{action_id}': integration is not configured for this action.",
-                level=LogLevel.INFO,
                 reason="no_configuration",
+                message=f"Skipping '{action_id}': integration is not configured for this action.",
+                log_level=logging.DEBUG,
             )
         message = f"Configuration for action '{action_id}' for integration {str(integration.id)} is missing."
         logger.error(message)
@@ -185,25 +219,20 @@ async def execute_action(
         parsed_config = config_model.parse_obj(config_data)
     except pydantic.ValidationError as e:
         # An automated pull whose config doesn't validate has nothing it can
-        # safely pull. Skip rather than raise — but log at WARNING with the
-        # validation detail so a genuinely misconfigured source stays noticeable.
+        # safely pull. Skip rather than raise — surfaced at WARNING in the
+        # activity feed (throttled) so a genuinely misconfigured source stays
+        # noticeable without spamming a warning on every tick.
         if skippable_pull:
-            return await _skip_pull_action(
-                integration_id, action_id,
-                title=f"Skipping '{action_id}': configuration is missing or invalid.",
-                level=LogLevel.WARNING,
-                reason="invalid_configuration",
-                data={"validation_error": str(e)},
-            )
+            return await _skip_invalid_config(integration_id, action_id, error=e)
         return await _handle_error(e, integration_id, action_id, config_data, status.HTTP_422_UNPROCESSABLE_ENTITY)
 
     # Respect the operator's explicit pause toggle — only for scheduled runs.
     if skippable_pull and not getattr(parsed_config, "run_on_schedule", True):
-        return await _skip_pull_action(
+        return _skip_quietly(
             integration_id, action_id,
-            title=f"Skipping '{action_id}': 'run_on_schedule' is turned off for this integration.",
-            level=LogLevel.INFO,
             reason="run_on_schedule_disabled",
+            message=f"Skipping '{action_id}': 'run_on_schedule' is turned off for this integration.",
+            log_level=logging.INFO,
         )
 
     parsed_data = None
