@@ -2,6 +2,7 @@ import datetime
 import json
 
 import pytest
+from app.conftest import async_return
 from app.services.state import IntegrationStateManager
 
 
@@ -78,6 +79,40 @@ async def test_delete_integration_state(mocker, mock_redis, integration_v2):
     mock_redis.Redis.return_value.delete.assert_called_once_with(
         f"integration_state.{integration_id}.pull_observations.no-source"
     )
+
+
+@pytest.mark.asyncio
+async def test_set_if_absent(mocker, mock_redis, integration_v2):
+    mocker.patch("app.services.state.redis", mock_redis)
+    state_manager = IntegrationStateManager()
+    integration_id = str(integration_v2.id)
+
+    # Redis SET ... NX EX returns a truthy value when the key was absent (set),
+    # and None when it already existed (not set / throttled).
+    mock_redis.Redis.return_value.set.return_value = async_return("OK")
+    was_set = await state_manager.set_if_absent(
+        integration_id=integration_id,
+        action_id="pull_observations",
+        source_id="skip-invalid-config-warning",
+        ttl_seconds=3600,
+    )
+    assert was_set is True
+    mock_redis.Redis.return_value.set.assert_called_once_with(
+        f"integration_state.{integration_id}.pull_observations.skip-invalid-config-warning",
+        "1",
+        ex=3600,
+        nx=True,
+    )
+
+    # Key already present within the window → Redis returns None → False.
+    mock_redis.Redis.return_value.set.return_value = async_return(None)
+    was_set = await state_manager.set_if_absent(
+        integration_id=integration_id,
+        action_id="pull_observations",
+        source_id="skip-invalid-config-warning",
+        ttl_seconds=3600,
+    )
+    assert was_set is False
 
 
 @pytest.mark.asyncio

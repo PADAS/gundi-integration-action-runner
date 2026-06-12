@@ -920,6 +920,9 @@ def mock_state_manager(mocker):
         {"last_execution": "2023-11-17T11:20:00+0200"}
     )
     mock_state_manager.set_state.return_value = async_return(None)
+    # Default: throttle window is open (first-in-window), so throttled events
+    # publish. Tests that exercise the suppressed path override this.
+    mock_state_manager.set_if_absent.return_value = async_return(True)
     return mock_state_manager
 
 

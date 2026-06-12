@@ -5,15 +5,31 @@ import pytest
 from fastapi.testclient import TestClient
 from fastapi import status
 from gundi_core.commands import RunIntegrationAction
-from gundi_core.events import IntegrationActionFailed
+from gundi_core.events import IntegrationActionFailed, IntegrationActionCustomLog, LogLevel
 from gundi_core.events.transformers import ObservationTransformedER
 
 from app import settings
-from app.conftest import MockSubActionConfiguration, MockPushActionConfiguration
+from app.conftest import MockSubActionConfiguration, MockPushActionConfiguration, async_return
 from app.main import app
 from app.services.action_scheduler import trigger_action
 
 api_client = TestClient(app)
+
+
+def _published_events_of_type(mock_publish_event, event_type):
+    """Collect events of a given type passed to a mocked publish_event.
+
+    publish_event is called as publish_event(event=..., topic_name=...) in some
+    paths and publish_event(event, topic) positionally in others, so check both.
+    """
+    events = []
+    for call in mock_publish_event.mock_calls:
+        event = call.kwargs.get("event")
+        if event is None and call.args:
+            event = call.args[0]
+        if isinstance(event, event_type):
+            events.append(event)
+    return events
 
 
 @pytest.mark.asyncio
@@ -177,10 +193,12 @@ async def test_execute_action_from_pubsub_with_config_overrides(
 
 
 @pytest.mark.asyncio
-async def test_execute_action_from_api_with_invalid_config(
+async def test_manual_pull_action_with_invalid_config_still_errors(
         mocker, mock_gundi_client_v2, integration_v2, mock_config_manager,
         mock_publish_event, mock_action_handlers,
 ):
+    # A direct /execute call is a manual run → strict: invalid config 422s so
+    # the operator sees the misconfiguration immediately.
     mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
     mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
     mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
@@ -197,6 +215,251 @@ async def test_execute_action_from_api_with_invalid_config(
     )
 
     assert response.status_code == 422
+    mock_action_handler, _, _ = mock_action_handlers["pull_observations"]
+    assert not mock_action_handler.called
+
+
+@pytest.mark.asyncio
+async def test_triggered_by_marker_is_case_insensitive(
+        mocker, mock_gundi_client_v2, integration_v2, mock_config_manager,
+        mock_publish_event, mock_action_handlers, pubsub_message_request_headers,
+):
+    # A mixed-case "MANUAL" marker must be honored as a manual run (strict), not
+    # silently fall through to the automated default. With an invalid config that
+    # means it errors (IntegrationActionFailed) rather than skipping quietly.
+    mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+    bad_config = mocker.MagicMock()
+    bad_config.data = {"lookback_days": "two"}  # should be an integer
+    mock_config_manager.get_action_configuration.return_value = async_return(bad_config)
+    encoded = base64.b64encode(json.dumps({
+        "integration_id": str(integration_v2.id),
+        "action_id": "pull_observations",
+        "triggered_by": "MANUAL",  # not the canonical lowercase "manual"
+    }).encode("utf-8")).decode("utf-8")
+
+    response = api_client.post(
+        "/", headers=pubsub_message_request_headers, json={"message": {"data": encoded}},
+    )
+
+    assert response.status_code == 200  # POST / always returns {}; behavior is observed via events
+    mock_action_handler, _, _ = mock_action_handlers["pull_observations"]
+    assert not mock_action_handler.called
+    # Treated as manual → strict → error published, NOT a quiet skip.
+    assert _published_events_of_type(mock_publish_event, IntegrationActionFailed)
+    assert not _published_events_of_type(mock_publish_event, IntegrationActionCustomLog)
+
+
+@pytest.mark.asyncio
+async def test_scheduled_pull_action_with_invalid_config_is_skipped(
+        mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event,
+        mock_action_handlers, mock_state_manager, pubsub_message_request_headers,
+        run_pull_action_pubsub_payload,
+):
+    # A scheduled (PubSub, no triggered_by → automated) pull whose stored config
+    # is invalid skips cleanly: no handler call, NO IntegrationActionFailed, and
+    # — when the throttle window is open — one WARNING activity log with detail.
+    mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.action_runner.state_manager", mock_state_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+    mock_state_manager.set_if_absent.return_value = async_return(True)  # window open
+    bad_config = mocker.MagicMock()
+    bad_config.data = {"lookback_days": "two"}  # should be an integer
+    mock_config_manager.get_action_configuration.return_value = async_return(bad_config)
+
+    response = api_client.post(
+        "/", headers=pubsub_message_request_headers, json=run_pull_action_pubsub_payload,
+    )
+
+    assert response.status_code == 200
+    mock_action_handler, _, _ = mock_action_handlers["pull_observations"]
+    assert not mock_action_handler.called
+    assert not _published_events_of_type(mock_publish_event, IntegrationActionFailed)
+    skip_logs = _published_events_of_type(mock_publish_event, IntegrationActionCustomLog)
+    assert len(skip_logs) == 1
+    assert skip_logs[0].payload.level == LogLevel.WARNING
+    assert "validation_error" in (skip_logs[0].payload.data or {})
+
+
+@pytest.mark.asyncio
+async def test_scheduled_pull_action_invalid_config_warning_is_throttled(
+        mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event,
+        mock_action_handlers, mock_state_manager, pubsub_message_request_headers,
+        run_pull_action_pubsub_payload,
+):
+    # When the throttle window is closed (set_if_absent → False), the skip is
+    # still logged locally but NO portal WARNING is published — so a
+    # persistently misconfigured source doesn't emit a warning every tick.
+    mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.action_runner.state_manager", mock_state_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+    mock_state_manager.set_if_absent.return_value = async_return(False)  # window closed
+    bad_config = mocker.MagicMock()
+    bad_config.data = {"lookback_days": "two"}
+    mock_config_manager.get_action_configuration.return_value = async_return(bad_config)
+
+    response = api_client.post(
+        "/", headers=pubsub_message_request_headers, json=run_pull_action_pubsub_payload,
+    )
+
+    assert response.status_code == 200
+    mock_action_handler, _, _ = mock_action_handlers["pull_observations"]
+    assert not mock_action_handler.called
+    assert not _published_events_of_type(mock_publish_event, IntegrationActionFailed)
+    assert not _published_events_of_type(mock_publish_event, IntegrationActionCustomLog)
+
+
+@pytest.mark.asyncio
+async def test_scheduled_pull_action_invalid_config_skip_survives_throttle_failure(
+        mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event,
+        mock_action_handlers, mock_state_manager, pubsub_message_request_headers,
+        run_pull_action_pubsub_payload,
+):
+    # If the throttle store (Redis) is unavailable, the skip must not crash the
+    # request (which would 500 / trigger PubSub redelivery). It degrades open:
+    # the WARNING is still published this time, and nothing is raised.
+    mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.action_runner.state_manager", mock_state_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+    mock_state_manager.set_if_absent.side_effect = Exception("redis unavailable")
+    bad_config = mocker.MagicMock()
+    bad_config.data = {"lookback_days": "two"}
+    mock_config_manager.get_action_configuration.return_value = async_return(bad_config)
+
+    response = api_client.post(
+        "/", headers=pubsub_message_request_headers, json=run_pull_action_pubsub_payload,
+    )
+
+    assert response.status_code == 200
+    mock_action_handler, _, _ = mock_action_handlers["pull_observations"]
+    assert not mock_action_handler.called
+    assert not _published_events_of_type(mock_publish_event, IntegrationActionFailed)
+    # Fail-open: the misconfiguration WARNING is still surfaced.
+    skip_logs = _published_events_of_type(mock_publish_event, IntegrationActionCustomLog)
+    assert len(skip_logs) == 1
+    assert skip_logs[0].payload.level == LogLevel.WARNING
+
+
+@pytest.mark.asyncio
+async def test_scheduled_pull_action_with_missing_config_is_skipped(
+        mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event,
+        mock_action_handlers, pubsub_message_request_headers, run_pull_action_pubsub_payload,
+):
+    # Destination-only integrations have pull actions scheduled type-wide but no
+    # pull config at all — an expected, quiet no-op: local log only, NO portal
+    # activity-feed event at all.
+    mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+    mock_config_manager.get_action_configuration.return_value = async_return(None)
+
+    response = api_client.post(
+        "/", headers=pubsub_message_request_headers, json=run_pull_action_pubsub_payload,
+    )
+
+    assert response.status_code == 200
+    mock_action_handler, _, _ = mock_action_handlers["pull_observations"]
+    assert not mock_action_handler.called
+    assert not _published_events_of_type(mock_publish_event, IntegrationActionFailed)
+    assert not _published_events_of_type(mock_publish_event, IntegrationActionCustomLog)
+
+
+@pytest.mark.asyncio
+async def test_scheduled_pull_action_skipped_when_run_on_schedule_disabled(
+        mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event,
+        mock_action_handlers, pubsub_message_request_headers, run_pull_action_pubsub_payload,
+):
+    # A valid config with run_on_schedule off pauses scheduled execution — also
+    # a quiet, local-log-only skip with no portal activity-feed event.
+    mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+    paused_config = mocker.MagicMock()
+    paused_config.data = {"lookback_days": 10, "run_on_schedule": False}
+    mock_config_manager.get_action_configuration.return_value = async_return(paused_config)
+
+    response = api_client.post(
+        "/", headers=pubsub_message_request_headers, json=run_pull_action_pubsub_payload,
+    )
+
+    assert response.status_code == 200
+    mock_action_handler, _, _ = mock_action_handlers["pull_observations"]
+    assert not mock_action_handler.called
+    assert not _published_events_of_type(mock_publish_event, IntegrationActionFailed)
+    assert not _published_events_of_type(mock_publish_event, IntegrationActionCustomLog)
+
+
+@pytest.mark.asyncio
+async def test_manual_pull_action_runs_even_when_run_on_schedule_disabled(
+        mocker, mock_gundi_client_v2, integration_v2, mock_config_manager,
+        mock_publish_event, mock_action_handlers,
+):
+    # The pause toggle only gates scheduled runs — a manual /execute still runs.
+    mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+    paused_config = mocker.MagicMock()
+    paused_config.data = {"lookback_days": 10, "run_on_schedule": False}
+    mock_config_manager.get_action_configuration.return_value = async_return(paused_config)
+
+    response = api_client.post(
+        "/v1/actions/execute/",
+        json={
+            "integration_id": str(integration_v2.id),
+            "action_id": "pull_observations",
+        }
+    )
+
+    assert response.status_code == 200
+    mock_action_handler, _, _ = mock_action_handlers["pull_observations"]
+    assert mock_action_handler.called
+
+
+@pytest.mark.asyncio
+async def test_non_pull_action_still_errors_on_invalid_config(
+        mocker, mock_gundi_client_v2, integration_v2, mock_config_manager,
+        mock_publish_event, mock_action_handlers,
+):
+    # The skip-on-invalid behavior is scoped to pull actions only — a non-pull
+    # (here InternalActionConfiguration) action with a bad config still 422s.
+    mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+    bad_config = mocker.MagicMock()
+    bad_config.data = {"start_datetime": "not-a-datetime", "end_datetime": "also-bad"}
+    mock_config_manager.get_action_configuration.return_value = async_return(bad_config)
+
+    response = api_client.post(
+        "/v1/actions/execute/",
+        json={
+            "integration_id": str(integration_v2.id),
+            "action_id": "pull_observations_by_date",
+        }
+    )
+
+    assert response.status_code == 422
+    mock_action_handler, _, _ = mock_action_handlers["pull_observations_by_date"]
+    assert not mock_action_handler.called
 
 
 @pytest.mark.asyncio

@@ -28,6 +28,26 @@ class IntegrationStateManager:
                     json.dumps(state, default=str)
                 )
 
+    async def set_if_absent(
+        self, integration_id: str, action_id: str, *, ttl_seconds: int, source_id: str = "no-source"
+    ) -> bool:
+        """Atomically set a key only if it does not already exist, with a TTL.
+
+        Returns True if the key was set by this call (i.e. the caller is the
+        first within the TTL window), or False if it already existed. Useful
+        for rate-limiting/throttling repeated events: the first caller in each
+        window gets True, the rest get False until the key expires.
+        """
+        for attempt in stamina.retry_context(on=redis.RedisError, attempts=5, wait_initial=1.0, wait_max=30, wait_jitter=3.0):
+            with attempt:
+                was_set = await self.db_client.set(
+                    f"integration_state.{integration_id}.{action_id}.{source_id}",
+                    "1",
+                    ex=ttl_seconds,
+                    nx=True,
+                )
+        return bool(was_set)
+
     async def delete_state(self, integration_id: str, action_id: str, source_id: str = "no-source"):
         for attempt in stamina.retry_context(on=redis.RedisError, attempts=5, wait_initial=1.0, wait_max=30, wait_jitter=3.0):
             with attempt:
