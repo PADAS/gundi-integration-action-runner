@@ -191,7 +191,9 @@ async def execute_action(
     # *manual* run keeps the strict 404/422 behavior so misconfigurations
     # surface immediately, and ignores the pause toggle.
     is_pull_action = isinstance(config_model, type) and issubclass(config_model, PullActionConfiguration)
-    is_manual = triggered_by == ActionTrigger.MANUAL
+    # Normalize the marker so casing/whitespace from the caller (e.g. the
+    # portal) doesn't silently fall through to the automated default.
+    is_manual = (triggered_by or "").strip().lower() == ActionTrigger.MANUAL.value
     skippable_pull = is_pull_action and not is_manual
 
     # Get the configuration needed to execute the action

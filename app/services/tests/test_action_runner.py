@@ -220,6 +220,40 @@ async def test_manual_pull_action_with_invalid_config_still_errors(
 
 
 @pytest.mark.asyncio
+async def test_triggered_by_marker_is_case_insensitive(
+        mocker, mock_gundi_client_v2, integration_v2, mock_config_manager,
+        mock_publish_event, mock_action_handlers, pubsub_message_request_headers,
+):
+    # A mixed-case "MANUAL" marker must be honored as a manual run (strict), not
+    # silently fall through to the automated default. With an invalid config that
+    # means it errors (IntegrationActionFailed) rather than skipping quietly.
+    mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+    bad_config = mocker.MagicMock()
+    bad_config.data = {"lookback_days": "two"}  # should be an integer
+    mock_config_manager.get_action_configuration.return_value = async_return(bad_config)
+    encoded = base64.b64encode(json.dumps({
+        "integration_id": str(integration_v2.id),
+        "action_id": "pull_observations",
+        "triggered_by": "MANUAL",  # not the canonical lowercase "manual"
+    }).encode("utf-8")).decode("utf-8")
+
+    response = api_client.post(
+        "/", headers=pubsub_message_request_headers, json={"message": {"data": encoded}},
+    )
+
+    assert response.status_code == 200  # POST / always returns {}; behavior is observed via events
+    mock_action_handler, _, _ = mock_action_handlers["pull_observations"]
+    assert not mock_action_handler.called
+    # Treated as manual → strict → error published, NOT a quiet skip.
+    assert _published_events_of_type(mock_publish_event, IntegrationActionFailed)
+    assert not _published_events_of_type(mock_publish_event, IntegrationActionCustomLog)
+
+
+@pytest.mark.asyncio
 async def test_scheduled_pull_action_with_invalid_config_is_skipped(
         mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event,
         mock_action_handlers, mock_state_manager, pubsub_message_request_headers,
