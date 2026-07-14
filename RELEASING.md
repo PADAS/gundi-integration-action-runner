@@ -19,9 +19,10 @@
 
 1. Bump `__version__` in `src/gundi_action_runner/__init__.py` (the single version source; pyproject reads it via [tool.setuptools.dynamic]) (e.g. `0.1.0.dev0` → `0.1.0`).
    The publish workflow refuses `dev` versions and mismatched tags.
-2. If this is the first non-dev release, update the README "Using as a
-   library (preview)" section: replace "(not yet on PyPI)" with the install
-   command `pip install gundi-action-runner`.
+2. If this is the first stable release: in `README-pypi.md`, remove the
+   release-candidate pin note under Install; in `README.md`'s library section, drop the
+   release-candidate phrasing (plain `pip install "gundi-action-runner[cli]"`); and in
+   `README-pypi.md`, remove "(live with the first stable release)" from the docs-site link.
 3. Commit, merge to `main`, then tag and push:
 
    ```bash

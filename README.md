@@ -21,8 +21,10 @@ Template repo for integration in Gundi v2.
 
 ## Using as a library (preview)
 
-The framework in this repo is being extracted into an installable package,
-`gundi-action-runner` (not yet on PyPI). Connectors will register handlers with
+The framework in this repo now ships as an installable package,
+[`gundi-action-runner` on PyPI](https://pypi.org/project/gundi-action-runner/)
+(currently a release candidate — install with
+`pip install "gundi-action-runner[cli]==0.1.0rc1"`). Connectors register handlers with
 decorators instead of editing template files:
 
 ```python
