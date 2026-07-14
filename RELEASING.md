@@ -54,12 +54,12 @@ from a feature branch without touching `main`:
 Pre-release behavior to know:
 
 - `pip install gundi-action-runner` ignores pre-releases — testers opt in with
-  an exact pin: `pip install "gundi-action-runner[cli]==0.1.0rc1"`. Avoid
+  an exact pin: `pip install "gundi-action-runner[cli]==0.1.0rcN" (the current rc)`. Avoid
   `--pre`: it cascades to every transitive dependency and will happily install
   pre-release versions of httpx and friends that break the client.
 - Scaffolded projects' `~=0.1` pin resolves nothing until the final `0.1.0`;
   test-drive a scaffold by installing the rc first, then the project on top:
-  `pip install "gundi-action-runner[testing]==0.1.0rc1" && pip install -e . --no-deps`.
+  `pip install "gundi-action-runner[testing]==0.1.0rcN" && pip install -e . --no-deps`.
 - The rc tag doubles as the scaffold template ref, so `gundi-runner new`'s
   default template path works as soon as the tag exists — no merge needed.
 - PyPI releases are immutable: a broken `rc1` stays visible; just cut `rc2`.
