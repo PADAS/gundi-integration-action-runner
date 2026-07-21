@@ -3,7 +3,6 @@ import datetime
 import importlib
 import ipaddress
 import logging
-import traceback
 from urllib.parse import urlparse
 import httpx
 import stamina
@@ -47,6 +46,8 @@ _BLOCKED_NETWORKS = [
     ipaddress.ip_network("100.64.0.0/10"),    # carrier-grade NAT
     ipaddress.ip_network("224.0.0.0/4"),      # multicast
     ipaddress.ip_network("240.0.0.0/4"),      # reserved
+    ipaddress.ip_network("::/128"),           # IPv6 unspecified
+    ipaddress.ip_network("ff00::/8"),         # IPv6 multicast
 ]
 
 
@@ -79,11 +80,28 @@ async def _validate_diagnostic_url(url: str) -> None:
         raise ValueError(f"Cannot resolve diagnostic URL hostname '{hostname}': {e}")
     for _, _, _, _, sockaddr in addr_infos:
         ip = ipaddress.ip_address(sockaddr[0])
+        # An IPv4-mapped IPv6 address (::ffff:a.b.c.d) parses as IPv6 and would
+        # sail past the IPv4 blocklist entries; check the embedded IPv4 instead.
+        if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+            ip = ip.ipv4_mapped
         if any(ip in net for net in _BLOCKED_NETWORKS):
             raise ValueError(
                 f"Diagnostic URL resolves to a private or reserved address ({ip}), "
                 "which is blocked to prevent SSRF."
             )
+
+
+def _redact_url(url: str) -> str:
+    """Host and path only — diagnostic URLs can carry credentials or tokens
+    in the userinfo or query string, which must not reach the logs."""
+    try:
+        parsed = urlparse(url)
+        host = parsed.hostname or "<no-host>"
+        if parsed.port:
+            host = f"{host}:{parsed.port}"
+        return f"{host}{parsed.path}"
+    except Exception:
+        return "<unparseable url>"
 
 
 async def forward_payload_to_diagnostic_url(
@@ -95,7 +113,7 @@ async def forward_payload_to_diagnostic_url(
         await _validate_diagnostic_url(destination_url)
         metadata = {
             "integration_id": integration_id,
-            "received_at": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
+            "received_at": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
         }
         if isinstance(json_content, dict):
             body = {**json_content, "__gundi_diagnostic_metadata": metadata}
@@ -104,12 +122,12 @@ async def forward_payload_to_diagnostic_url(
         response = await _get_diagnostic_client().post(destination_url, json=body)
         response.raise_for_status()
         logger.debug(
-            f"Diagnostic payload forwarded to '{destination_url}' "
+            f"Diagnostic payload forwarded to '{_redact_url(destination_url)}' "
             f"for integration '{integration_id}'. Status: {response.status_code}"
         )
     except Exception as e:
         logger.warning(
-            f"Diagnostic forwarding to '{destination_url}' failed for integration "
+            f"Diagnostic forwarding to '{_redact_url(destination_url)}' failed for integration "
             f"'{integration_id}': {type(e).__name__}: {e}"
         )
 
@@ -149,7 +167,12 @@ async def process_webhook(request: Request):
         # Try to relate the request to an integration
         integration = await get_integration(request=request)
         if not integration:
-            logger.warning(f"No integration found for webhook request: headers: {request.headers}, query_params: {request.query_params}")
+            logger.warning(
+                "No integration found for webhook request: "
+                f"consumer_username: {request.headers.get('x-consumer-username')}, "
+                f"integration_id header: {request.headers.get('x-gundi-integration-id')}, "
+                f"integration_id param: {request.query_params.get('integration_id')}"
+            )
             return {}
         # Look for the handler function in webhooks/handlers.py
         webhook_handler, payload_model, config_model = get_webhook_handler()

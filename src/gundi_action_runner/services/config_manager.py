@@ -1,10 +1,17 @@
 import json
+from typing import Optional
+
 import stamina
 import httpx
 import redis.asyncio as redis
 from gundi_core.schemas.v2 import Integration, IntegrationSummary, IntegrationActionConfiguration, WebhookConfiguration
 from gundi_client_v2 import GundiClient
 from gundi_action_runner import settings
+
+
+# Cached marker meaning "this integration has no webhook configuration", so a
+# cold cache doesn't trigger a Gundi API reload on every webhook-config lookup.
+_NO_WEBHOOK_CONFIG_SENTINEL = "null"
 
 
 class IntegrationConfigurationManager:
@@ -37,13 +44,16 @@ class IntegrationConfigurationManager:
             for config in integration_details.configurations:
                 config_key = self._get_action_config_key(integration_id, config.action.value)
                 await self.db_client.set(config_key, config.json(), ttl)
-            # Save webhook configuration if present
+            # Save the webhook configuration — or a sentinel marking its absence, so
+            # integrations without one don't reload from the Gundi API on every lookup
+            webhook_key = self._get_webhook_config_key(integration_id)
             if webhook_configuration := integration_details.webhook_configuration:
-                webhook_key = self._get_webhook_config_key(integration_id)
                 await self.db_client.set(webhook_key, webhook_configuration.json(), ttl)
+            else:
+                await self.db_client.set(webhook_key, _NO_WEBHOOK_CONFIG_SENTINEL, ttl)
             return integration_details
 
-    async def get_action_configuration(self, integration_id: str, action_id: str, ttl=None) -> IntegrationActionConfiguration:
+    async def get_action_configuration(self, integration_id: str, action_id: str, ttl=None) -> Optional[IntegrationActionConfiguration]:
         key = self._get_action_config_key(integration_id, action_id)
         for attempt in stamina.retry_context(on=redis.RedisError, attempts=5, wait_initial=1.0, wait_max=30, wait_jitter=3.0):
             with attempt:
@@ -54,12 +64,14 @@ class IntegrationConfigurationManager:
         integration_details = await self._reload_integration_from_gundi(integration_id, ttl)
         return integration_details.get_action_config(action_id)
 
-    async def get_webhook_configuration(self, integration_id: str, ttl=None) -> WebhookConfiguration:
+    async def get_webhook_configuration(self, integration_id: str, ttl=None) -> Optional[WebhookConfiguration]:
         key = self._get_webhook_config_key(integration_id)
         for attempt in stamina.retry_context(on=redis.RedisError, attempts=5, wait_initial=1.0, wait_max=30, wait_jitter=3.0):
             with attempt:
                 data = await self.db_client.get(key)
         if data:
+            if data in (_NO_WEBHOOK_CONFIG_SENTINEL, _NO_WEBHOOK_CONFIG_SENTINEL.encode()):
+                return None  # cached absence — this integration has no webhook config
             return WebhookConfiguration.parse_raw(data)
         # If not found in the redis db, try reloading data from Gundi API
         integration_details = await self._reload_integration_from_gundi(integration_id, ttl)

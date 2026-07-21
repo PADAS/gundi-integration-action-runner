@@ -1,9 +1,12 @@
 import importlib
 import inspect
+import logging
 from typing import Optional
 
 from pydantic import BaseModel, Field
 from gundi_action_runner.services.utils import UISchemaModelMixin
+
+logger = logging.getLogger(__name__)
 
 
 class ActionConfiguration(UISchemaModelMixin, BaseModel):
@@ -67,8 +70,16 @@ def discover_actions(module_name, prefix):
     # Iterate through the members and filter functions by prefix
     for name, func in all_members:
         if name.startswith(prefix) and inspect.isfunction(func):
+            if func is action_title:
+                continue  # The decorator itself, often imported alongside handlers
             signature = inspect.signature(func)
             key = name[len(prefix):]  # Remove prefix
+            if "action_config" not in signature.parameters:
+                logger.warning(
+                    f"Ignoring '{name}' in '{module_name}': functions prefixed with "
+                    f"'{prefix}' must accept an 'action_config' argument to be registered as actions."
+                )
+                continue
             if (config_annotation := signature.parameters.get("action_config").annotation) != inspect._empty:
                 config_model = config_annotation
             else:

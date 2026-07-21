@@ -1,6 +1,9 @@
+import sys
+import types
+
 import pytest
 from fastapi.testclient import TestClient
-from gundi_action_runner.actions import action_title
+from gundi_action_runner.actions import action_title, discover_actions, PullActionConfiguration
 from app.main import app
 from gundi_action_runner.services.self_registration import register_integration_in_gundi
 from gundi_action_runner.services.action_scheduler import crontab_schedule, CrontabSchedule
@@ -709,6 +712,55 @@ def test_action_title_decorator_stacks_with_crontab_schedule():
 
     assert action_pull_observations.action_title == "Fetch Collar Positions"
     assert action_pull_observations.crontab_schedule == CrontabSchedule.parse_obj_from_crontab("*/10 * * * *")
+
+
+def _discover_actions_in_fake_module(module):
+    module_name = "fake_handlers_module"
+    previous = sys.modules.get(module_name)
+    sys.modules[module_name] = module
+    try:
+        return discover_actions(module_name=module_name, prefix="action_")
+    finally:
+        if previous is not None:
+            sys.modules[module_name] = previous
+        else:
+            del sys.modules[module_name]
+
+
+def test_discover_actions_ignores_imported_action_title_decorator():
+    # Simulates handlers.py doing `from app.actions import action_title`
+    module = types.ModuleType("fake_handlers_module")
+    module.action_title = action_title
+
+    @action_title("Fetch Collar Positions")
+    async def action_pull_observations(integration, action_config: PullActionConfiguration):
+        return {"observations_extracted": 10}
+
+    module.action_pull_observations = action_pull_observations
+
+    handlers = _discover_actions_in_fake_module(module)
+
+    assert "title" not in handlers
+    assert list(handlers.keys()) == ["pull_observations"]
+    assert handlers["pull_observations"][0] is action_pull_observations
+
+
+def test_discover_actions_ignores_functions_without_action_config():
+    module = types.ModuleType("fake_handlers_module")
+
+    def action_helper(value):
+        return value
+
+    async def action_pull_observations(integration, action_config: PullActionConfiguration):
+        return {"observations_extracted": 10}
+
+    module.action_helper = action_helper
+    module.action_pull_observations = action_pull_observations
+
+    handlers = _discover_actions_in_fake_module(module)
+
+    assert "helper" not in handlers
+    assert list(handlers.keys()) == ["pull_observations"]
 
 
 @pytest.mark.asyncio

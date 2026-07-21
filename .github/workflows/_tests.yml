@@ -14,7 +14,9 @@ jobs:
       - name: Install pip
         run: python -m ensurepip --upgrade
       - name: Install pip tools
-        run: pip install pip-tools
+        # typing_extensions listed explicitly: pip-tools 7.6.0 imports it on
+        # Python 3.10 without declaring it as a dependency
+        run: pip install pip-tools typing_extensions
       - name: Install compile dependencies
         run: pip-compile --output-file=requirements.txt requirements-base.in requirements-dev.in requirements.in
       - name: Install dependencies

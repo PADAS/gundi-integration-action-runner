@@ -590,3 +590,24 @@ async def test_execute_action_with_handler_error(
     assert event.payload.server_response_status == expected_error.response.status_code
     assert event.payload.server_response_body == str(expected_error.response.text)
 
+
+
+@pytest.mark.asyncio
+async def test_push_data_acks_message_without_destination_id(
+        mocker, pubsub_message_request_headers, run_push_action_pubsub_payload
+):
+    mock_execute_action = mocker.patch("gundi_action_runner.app_factory.execute_action")
+    payload = json.loads(json.dumps(run_push_action_pubsub_payload))
+    payload["message"]["attributes"].pop("destination_id", None)
+
+    response = api_client.post(
+        "/push-data",
+        headers=pubsub_message_request_headers,
+        json=payload,
+    )
+
+    # Malformed messages are acked (2xx) so PubSub doesn't redeliver them forever,
+    # and the action runner is never invoked.
+    assert response.status_code == 200
+    assert response.json() == {}
+    assert not mock_execute_action.called

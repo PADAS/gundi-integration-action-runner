@@ -321,3 +321,40 @@ async def test_get_integration_details_with_ttl(
     for call in set_calls:
         assert call[0][2] == ttl  # TTL is the third argument
 
+
+
+@pytest.mark.asyncio
+async def test_get_webhook_configuration_caches_absence_sentinel(
+        mocker, mock_redis_empty, mock_gundi_client_v2_class, integration_v2,
+):
+    mocker.patch("gundi_action_runner.services.config_manager.redis", mock_redis_empty)
+    mocker.patch("gundi_action_runner.services.config_manager.GundiClient", mock_gundi_client_v2_class)
+    config_manager = IntegrationConfigurationManager()
+    integration_id = str(integration_v2.id)
+
+    webhook_config = await config_manager.get_webhook_configuration(integration_id)
+
+    assert webhook_config is None
+    # The absence is cached, so the next cold lookup won't reload from Gundi.
+    mock_redis_empty.Redis.return_value.set.assert_any_call(
+        f"integrationconfig.{integration_id}.webhook", "null", None
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_webhook_configuration_reads_cached_absence_sentinel(
+        mocker, mock_redis_empty, mock_gundi_client_v2_class, integration_v2,
+):
+    import asyncio as _asyncio
+    fut = _asyncio.get_running_loop().create_future()
+    fut.set_result(b"null")
+    mock_redis_empty.Redis.return_value.get.return_value = fut
+    mocker.patch("gundi_action_runner.services.config_manager.redis", mock_redis_empty)
+    mocker.patch("gundi_action_runner.services.config_manager.GundiClient", mock_gundi_client_v2_class)
+    config_manager = IntegrationConfigurationManager()
+
+    webhook_config = await config_manager.get_webhook_configuration(str(integration_v2.id))
+
+    assert webhook_config is None
+    # Sentinel hit — no reload from the Gundi API.
+    assert not mock_gundi_client_v2_class.return_value.get_integration_details.called

@@ -4,7 +4,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, status
+from fastapi import BackgroundTasks, FastAPI, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -106,10 +106,16 @@ def create_app(handlers_modules=None):
         logger.debug(f"Attributes: {attributes}")
         destination_id = attributes.get("destination_id")
         if not destination_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Missing required attribute: 'destination_id'",
+            # Ack malformed messages (2xx) — they can never succeed, so a non-2xx
+            # would only make PubSub redeliver them forever. Log attribute keys
+            # only; the values may carry sensitive data.
+            logger.error(
+                f"PubSub message missing required attribute 'destination_id'. "
+                f"Attribute keys: {sorted(attributes.keys())}"
             )
+            return {}
+        # Push data rides in the message itself, so execution errors must propagate
+        # (non-2xx) for PubSub to redeliver — acking a failed run would drop data.
         return await execute_action(
             integration_id=destination_id,
             data=json_payload,

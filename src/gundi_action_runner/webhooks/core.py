@@ -53,8 +53,7 @@ class GenericJsonTransformConfig(JQTransformConfig, DynamicSchemaConfig):
     output_type: Optional[str] = FieldWithUIOptions(
         None,
         description=(
-            "Default output type for all transformed records: 'obv' (observations) or 'ev' (events). "
-            "Individual records can override this with a '__gundi_output_type' field."
+            "Output type for all transformed records: 'obv' (observations) or 'ev' (events)."
         ),
         ui_options=UIOptions(
             widget="text",  # ToDo: Use a select or a better widget to render the output type
