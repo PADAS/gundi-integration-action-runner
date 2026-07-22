@@ -5,7 +5,8 @@ from environs import Env
 env = Env()
 env.read_env()
 
-LOGGING_LEVEL = env.str("LOGGING_LEVEL", "INFO")
+# LOGGING_LEVEL preferred; LOG_LEVEL accepted as an alias (used by existing env examples)
+LOGGING_LEVEL = env.str("LOGGING_LEVEL", env.str("LOG_LEVEL", "INFO"))
 
 DEFAULT_LOGGING = {
     "version": 1,

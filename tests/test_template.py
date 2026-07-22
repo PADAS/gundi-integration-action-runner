@@ -74,7 +74,7 @@ def test_local_dev_stack(generate_project):
     assert "local-actions-topic" in helper
 
     env_example = (dst / "local" / ".env.local.example").read_text()
-    assert "INTEGRATION_TYPE_SLUG=acme_tracker" in env_example
+    assert 'INTEGRATION_TYPE_SLUG="acme_tracker"' in env_example
     assert "PUBSUB_EMULATOR_HOST=pubsub_emulator:8085" in env_example
     assert "INTEGRATION_COMMANDS_TOPIC=local-actions-topic" in env_example
 

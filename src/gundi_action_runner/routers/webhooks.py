@@ -16,10 +16,11 @@ async def webhooks(
     request: Request,
     background_tasks: BackgroundTasks
 ):
+    # Pre-read (and thereby cache) the body so background-task processing can
+    # still access it after the response is returned. Never log its contents —
+    # webhook payloads and headers can carry credentials and PII.
     body = await request.body()
-    print(f"Message Received through Webhooks. RAW body: {body}")
-    headers = dict(request.headers)
-    print(f"Headers: {headers}")
+    logger.debug(f"Webhook request received ({len(body)} bytes).")
     if settings.PROCESS_WEBHOOKS_IN_BACKGROUND:
         background_tasks.add_task(
             process_webhook,

@@ -31,7 +31,7 @@ services:
       pubsub_emulator:
         condition: service_healthy
     entrypoint: ["sh", "-c"]
-    command: ["source /helpers/create_subscriptions.sh"]
+    command: ["sh /helpers/create_subscriptions.sh"]
     volumes:
       - ./helpers:/helpers
 

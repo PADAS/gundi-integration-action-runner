@@ -15,7 +15,8 @@ async def _get_gundi_api_key(integration_id):
 
 async def _get_sensors_api_client(integration_id):
     gundi_api_key = await _get_gundi_api_key(integration_id=integration_id)
-    assert gundi_api_key, f"Cannot get a valid API Key for integration {integration_id}"
+    if not gundi_api_key:
+        raise ValueError(f"Cannot get a valid API Key for integration {integration_id}")
     sensors_api_client = GundiDataSenderClient(
         integration_api_key=gundi_api_key
     )
@@ -46,7 +47,8 @@ async def send_events_to_gundi(events: List[dict], **kwargs) -> dict:
     :return: A dict with the response from the API
     """
     integration_id = kwargs.get("integration_id")
-    assert integration_id, "integration_id is required"
+    if not integration_id:
+        raise ValueError("integration_id is required")
     sensors_api_client = await _get_sensors_api_client(integration_id=str(integration_id))
     return await sensors_api_client.post_events(data=events)
 
@@ -64,7 +66,8 @@ async def send_event_attachments_to_gundi(event_id: str, attachments: List[tuple
     :return: A dict with the response from the API
     """
     integration_id = kwargs.get("integration_id")
-    assert integration_id, "integration_id is required"
+    if not integration_id:
+        raise ValueError("integration_id is required")
     sensors_api_client = await _get_sensors_api_client(integration_id=str(integration_id))
     return await sensors_api_client.post_event_attachments(event_id=event_id, attachments=attachments)
 
@@ -94,7 +97,8 @@ async def send_observations_to_gundi(observations: List[dict], **kwargs) -> dict
     :return: A dict with the response from the API
     """
     integration_id = kwargs.get("integration_id")
-    assert integration_id, "integration_id is required"
+    if not integration_id:
+        raise ValueError("integration_id is required")
     sensors_api_client = await _get_sensors_api_client(integration_id=str(integration_id))
     return await sensors_api_client.post_observations(data=observations)
 
@@ -132,6 +136,7 @@ async def send_messages_to_gundi(messages: List[dict], **kwargs) -> dict:
     :return: A dict with the response from the API
     """
     integration_id = kwargs.get("integration_id")
-    assert integration_id, "integration_id is required"
+    if not integration_id:
+        raise ValueError("integration_id is required")
     sensors_api_client = await _get_sensors_api_client(integration_id=str(integration_id))
     return await sensors_api_client.post_messages(data=messages)
