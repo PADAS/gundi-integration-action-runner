@@ -699,3 +699,28 @@ async def test_execute_action_keeps_generic_format_for_integration_details_failu
     error_details = json.loads(response.body)["detail"]
     assert error_details["error"].startswith("Error in action")
     assert error_details["error_type"] is None
+
+
+@pytest.mark.asyncio
+async def test_execute_action_handles_httpx_error_carrying_no_request(
+        mocker, mock_gundi_client_v2, integration_v2, mock_config_manager,
+        mock_publish_event, mock_action_handlers,
+):
+    # httpx exceptions expose .request as a property that raises RuntimeError
+    # when constructed without one; _handle_error must not propagate that.
+    mock_handler, _, _ = mock_action_handlers["pull_observations"]
+    mock_handler.side_effect = httpx.ConnectError("connection failed")
+    mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+
+    response = await execute_action(
+        integration_id=str(integration_v2.id),
+        action_id="pull_observations",
+    )
+
+    error_details = json.loads(response.body)["detail"]
+    assert error_details["error"] == "Could not reach the provider — connection failed"
+    assert error_details["error_type"] == "connectivity"

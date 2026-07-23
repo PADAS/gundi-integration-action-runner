@@ -97,8 +97,14 @@ async def _handle_error(
         "error_traceback": traceback.format_exc()
     }
 
-    # Extract additional request/response details if available
-    if (request := getattr(exc, "request", None)) is not None:
+    # Extract additional request/response details if available.
+    # httpx exceptions expose .request as a property that raises RuntimeError
+    # when the error was constructed without one — treat that as "no request".
+    try:
+        request = getattr(exc, "request", None)
+    except RuntimeError:
+        request = None
+    if request is not None:
         error_details.update({
             "request_verb": str(request.method),
             "request_url": str(request.url),

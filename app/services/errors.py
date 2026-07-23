@@ -73,7 +73,8 @@ class ClassifiedError(NamedTuple):
 
 # Exceptions that mean the provider could not be reached at all.
 CONNECTIVITY_EXCEPTIONS = (
-    asyncio.TimeoutError,
+    asyncio.TimeoutError,  # distinct from builtin TimeoutError until Python 3.11
+    TimeoutError,  # builtin: also covers socket.timeout (alias since 3.10)
     ConnectionError,  # builtin: covers ConnectionRefusedError, ConnectionResetError, etc.
     httpx.TransportError,  # covers ConnectError, ReadTimeout, and all transport failures
     aiohttp.ClientConnectionError,

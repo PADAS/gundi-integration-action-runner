@@ -160,3 +160,14 @@ def test_format_omits_http_suffix_without_status_code():
     exc = IntegrationConnectionError("DNS lookup failed")
 
     assert format_error_message(exc) == "Could not reach the provider — DNS lookup failed"
+
+
+def test_classify_builtin_timeout_as_connectivity():
+    # On Python 3.10, builtin TimeoutError (== socket.timeout) is distinct
+    # from asyncio.TimeoutError; both must classify as connectivity.
+    import socket
+
+    for exc in (TimeoutError("timed out"), socket.timeout("timed out")):
+        classified = classify_error(exc)
+        assert classified is not None
+        assert classified.error_type == "connectivity"
