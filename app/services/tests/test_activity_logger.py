@@ -12,6 +12,7 @@ from gundi_core.events import (
 )
 from app import settings
 from app.services.activity_logger import publish_event, activity_logger, webhook_activity_logger, log_activity
+from app.services.errors import IntegrationAuthError
 from app.webhooks import GenericJsonPayload, GenericJsonTransformConfig
 
 
@@ -217,4 +218,31 @@ async def test_log_activity_with_error_level(mocker, integration_v2, mock_publis
     )
     assert mock_publish_event.call_count == 1
     assert isinstance(mock_publish_event.call_args_list[0].kwargs.get("event"), IntegrationActionCustomLog)
+
+
+@pytest.mark.asyncio
+async def test_activity_logger_decorator_publishes_classified_error_text(
+        mocker, mock_publish_event, integration_v2, pull_observations_config
+):
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+
+    @activity_logger()
+    async def action_pull_observations(integration, action_config):
+        raise IntegrationAuthError("TrackIt rejected the credentials", status_code=401)
+
+    with pytest.raises(IntegrationAuthError):
+        await action_pull_observations(
+            integration=integration_v2, action_config=pull_observations_config
+        )
+
+    failed_events = [
+        call.kwargs.get("event") or call.args[0]
+        for call in mock_publish_event.mock_calls
+        if call.kwargs.get("event") is not None or call.args
+    ]
+    failed_events = [e for e in failed_events if isinstance(e, IntegrationActionFailed)]
+    assert len(failed_events) == 1
+    assert failed_events[0].payload.error == (
+        "Authentication failed — TrackIt rejected the credentials (HTTP 401)"
+    )
 
