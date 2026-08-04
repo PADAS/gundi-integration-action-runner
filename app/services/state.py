@@ -1,62 +1,11 @@
-import json
-import stamina
-import httpx
-import redis.asyncio as redis
-from app import settings
+"""Deprecated compatibility shim — this module moved to gundi_action_runner.services.state."""
+import importlib
+import sys
+import warnings
 
-
-class IntegrationStateManager:
-
-    def __init__(self, **kwargs):
-        host = kwargs.get("host", settings.REDIS_HOST)
-        port = kwargs.get("port", settings.REDIS_PORT)
-        db = kwargs.get("db", settings.REDIS_STATE_DB)
-        self.db_client = redis.Redis(host=host, port=port, db=db)
-
-    async def get_state(self, integration_id: str, action_id: str, source_id: str = "no-source") -> dict:
-        for attempt in stamina.retry_context(on=redis.RedisError, attempts=5, wait_initial=1.0, wait_max=30, wait_jitter=3.0):
-            with attempt:
-                json_value = await self.db_client.get(f"integration_state.{integration_id}.{action_id}.{source_id}")
-        value = json.loads(json_value) if json_value else {}
-        return value
-
-    async def set_state(self, integration_id: str, action_id: str, state: dict, source_id: str = "no-source"):
-        for attempt in stamina.retry_context(on=redis.RedisError, attempts=5, wait_initial=1.0, wait_max=30, wait_jitter=3.0):
-            with attempt:
-                await self.db_client.set(
-                    f"integration_state.{integration_id}.{action_id}.{source_id}",
-                    json.dumps(state, default=str)
-                )
-
-    async def set_if_absent(
-        self, integration_id: str, action_id: str, *, ttl_seconds: int, source_id: str = "no-source"
-    ) -> bool:
-        """Atomically set a key only if it does not already exist, with a TTL.
-
-        Returns True if the key was set by this call (i.e. the caller is the
-        first within the TTL window), or False if it already existed. Useful
-        for rate-limiting/throttling repeated events: the first caller in each
-        window gets True, the rest get False until the key expires.
-        """
-        for attempt in stamina.retry_context(on=redis.RedisError, attempts=5, wait_initial=1.0, wait_max=30, wait_jitter=3.0):
-            with attempt:
-                was_set = await self.db_client.set(
-                    f"integration_state.{integration_id}.{action_id}.{source_id}",
-                    "1",
-                    ex=ttl_seconds,
-                    nx=True,
-                )
-        return bool(was_set)
-
-    async def delete_state(self, integration_id: str, action_id: str, source_id: str = "no-source"):
-        for attempt in stamina.retry_context(on=redis.RedisError, attempts=5, wait_initial=1.0, wait_max=30, wait_jitter=3.0):
-            with attempt:
-                await self.db_client.delete(
-                    f"integration_state.{integration_id}.{action_id}.{source_id}"
-                )
-
-    def __str__(self):
-        return f"IntegrationStateManager(host={self.db_client.host}, port={self.db_client.port}, db={self.db_client.db})"
-
-    def __repr__(self):
-        return self.__str__()
+warnings.warn(
+    "'app.services.state' is deprecated; import 'gundi_action_runner.services.state' instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+sys.modules[__name__] = importlib.import_module("gundi_action_runner.services.state")

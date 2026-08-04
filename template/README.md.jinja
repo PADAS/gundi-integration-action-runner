@@ -1,0 +1,24 @@
+# {{ project_name }} Gundi Connector
+
+Generated with `gundi-runner new` from the
+[gundi-action-runner](https://github.com/PADAS/gundi-integration-action-runner) template.
+
+## Develop
+
+```bash
+pip install -e ".[dev]"
+pytest
+gundi-runner run --handlers {{ package_name }}.handlers
+```
+
+## Register in Gundi
+
+```bash
+gundi-runner register --slug {{ integration_type_slug }} --name "{{ display_name }}" \
+  --handlers {{ package_name }}.handlers
+```
+
+## Update the scaffold
+
+This project tracks the upstream template; pull scaffold improvements with
+`copier update`.

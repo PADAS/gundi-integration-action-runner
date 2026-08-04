@@ -1,17 +1,20 @@
-from .core import *
+"""Deprecated compatibility package — base classes and the handler registry moved
+to gundi_action_runner.actions. This package remains so forks keep their
+app/actions/handlers.py and app/actions/configurations.py files."""
+import warnings
+
+from gundi_action_runner.actions.core import *  # noqa: F401,F403
+
+warnings.warn(
+    "'app.actions' is deprecated; import 'gundi_action_runner.actions' instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 
-def setup_action_handlers():
-    return discover_actions(module_name="app.actions.handlers", prefix="action_")
-
-
-def get_action_handler_by_data_type(type_name: str):
-    for action_id, value in action_handlers.items():
-        func, config_model, data_model = value
-        if data_model and data_model.__name__ == type_name.strip():
-            return action_id, func, config_model, data_model
-    else:
-        raise ValueError(f"No action handler found for data type '{type_name}'.")
-
-
-action_handlers = setup_action_handlers()
+def __getattr__(name):
+    # PEP 562: resolve registry-level names (action_handlers, get_actions,
+    # setup_action_handlers, get_action_handler_by_data_type) lazily to avoid
+    # an import cycle with the library's eager legacy discovery.
+    import gundi_action_runner.actions as _lib
+    return getattr(_lib, name)

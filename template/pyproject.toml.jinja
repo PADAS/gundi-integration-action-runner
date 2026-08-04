@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "{{ package_name | replace('_', '-') }}"
+version = "0.1.0"
+description = "Gundi connector for {{ project_name }}"
+requires-python = ">=3.10"
+dependencies = [
+    "gundi-action-runner~=0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "gundi-action-runner[testing]~=0.1",
+]
+
+[tool.setuptools.packages.find]
+include = ["{{ package_name }}*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

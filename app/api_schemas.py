@@ -1,15 +1,11 @@
-from typing import Optional
+"""Deprecated compatibility shim — this module moved to gundi_action_runner.api_schemas."""
+import importlib
+import sys
+import warnings
 
-from pydantic import BaseModel
-
-
-class ActionRequest(BaseModel):
-    integration_id: str
-    action_id: str
-    run_in_background: bool = False
-    config_overrides: dict = None
-    # How the run was initiated. The /execute endpoint is an explicit, direct
-    # invocation, so it defaults to "manual" when unset (see the router) —
-    # keeping the strict 404/422 behavior for misconfigured pull actions.
-    triggered_by: Optional[str] = None
-
+warnings.warn(
+    "'app.api_schemas' is deprecated; import 'gundi_action_runner.api_schemas' instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+sys.modules[__name__] = importlib.import_module("gundi_action_runner.api_schemas")

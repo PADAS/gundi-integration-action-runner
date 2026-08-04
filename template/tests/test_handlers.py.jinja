@@ -1,0 +1,19 @@
+import pytest
+
+from gundi_action_runner.registry import registry
+
+import {{ package_name }}.handlers  # noqa: F401 — registers via decorators on import
+
+
+def test_actions_are_registered():
+    assert "auth" in registry.action_handlers
+{% if include_pull %}    assert "pull_observations" in registry.action_handlers
+{% endif %}
+
+@pytest.mark.asyncio
+async def test_auth_accepts_api_key(integration_v2):
+    from {{ package_name }}.configurations import AuthConfig
+    from {{ package_name }}.handlers import auth
+
+    result = await auth(integration_v2, AuthConfig(api_key="test-key"))
+    assert result == {"valid_credentials": True}

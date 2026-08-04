@@ -1,0 +1,77 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gundi-action-runner"
+dynamic = ["version"]
+description = "Framework for building Gundi integration action runners"
+readme = "README-pypi.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+dependencies = [
+    "environs~=9.5",
+    "pydantic~=1.10.15",        # v1 — gundi-client-v2 3.x requires pydantic<2
+    "fastapi~=0.115.0",
+    "uvicorn~=0.30.0",
+    "gundi-core~=1.11.1",
+    "gundi-client-v2~=3.5",
+    "stamina~=23.2.0",
+    "redis~=5.0.1",
+    "gcloud-aio-pubsub~=6.0.0",
+    # previously transitive via gcloud-aio-pubsub; services/errors.py now imports it directly
+    "aiohttp~=3.9",
+    "click~=8.1.7",
+    "pyjq~=2.6.0",
+    "python-json-logger~=2.0.7",
+    "marshmallow~=3.22.0",
+]
+
+[project.urls]
+Repository = "https://github.com/PADAS/gundi-integration-action-runner"
+Documentation = "https://padas.github.io/gundi-integration-action-runner/"
+
+[project.optional-dependencies]
+dev = [
+    "pytest~=7.4.3",
+    "pytest-asyncio~=0.21.1",
+    "pytest-mock~=3.12.0",
+    "build~=1.2",
+    # twine + modern packaging: Metadata-2.4 (License-File) aware "twine check"
+    "twine~=6.1",
+    "packaging>=24.2",
+]
+cli = [
+    # copier 8+ requires pydantic v2 (conflicts with our pydantic<2 pin);
+    # pyyaml-include 2.x removed the API copier 7 uses;
+    # plumbum>=1.10 crashes copier 7.2's CLI.
+    # All three companion pins lift together once the library moves to pydantic v2.
+    "copier~=7.2",
+    "pyyaml-include<2",
+    "plumbum<1.10",
+]
+docs = [
+    "mkdocs-material~=9.5",
+    "mkdocs-exclude~=1.0",
+]
+testing = [
+    "pytest~=7.4.3",
+    "pytest-mock~=3.12.0",
+    "pytest-asyncio~=0.21.1",
+]
+
+[project.entry-points.pytest11]
+gundi-action-runner = "gundi_action_runner.testing.fixtures"
+
+[project.scripts]
+gundi-runner = "gundi_action_runner.cli:cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.dynamic]
+version = { attr = "gundi_action_runner.__version__" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "examples", "app"]

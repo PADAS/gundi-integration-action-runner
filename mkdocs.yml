@@ -1,0 +1,42 @@
+site_name: Gundi Action Runner
+site_description: Framework for building Gundi integration action runners
+site_url: https://padas.github.io/gundi-integration-action-runner/
+repo_url: https://github.com/PADAS/gundi-integration-action-runner
+repo_name: PADAS/gundi-integration-action-runner
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - content.code.copy
+
+plugins:
+  - search
+  - exclude:
+      glob:
+        - superpowers/*
+
+nav:
+  - Home: index.md
+  - Quickstart: quickstart.md
+  - Extension API: extension-api.md
+  - Migrating a Fork: fork-migration.md
+
+markdown_extensions:
+  - admonition
+  - tables
+  - pymdownx.highlight
+  - pymdownx.superfences

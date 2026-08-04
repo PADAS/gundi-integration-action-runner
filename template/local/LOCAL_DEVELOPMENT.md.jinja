@@ -1,0 +1,31 @@
+# Running {{ project_name }} locally
+
+Run this connector with Docker Compose alongside its supporting services —
+redis (state/config cache) and a Google Pub/Sub emulator wired so sub-actions
+loop back into the runner.
+
+## Requirements
+
+- Docker + Docker Compose
+
+## Steps
+
+From this `local/` directory:
+
+1. Copy `.env.local.example` to `.env.local`.
+2. Set `GUNDI_USERNAME` / `GUNDI_PASSWORD` to your own stage Gundi login
+   (default — no client secret needed), or switch to the service-client
+   option in the file if the Gundi team issued you a client secret.
+3. `docker compose up --build`
+
+Then open http://localhost:8080/docs for the connector's browsable API.
+
+## Notes
+
+- Code changes under `{{ package_name }}/` and `main.py` hot-reload (the
+  container runs uvicorn `--reload` with your source mounted).
+- A debugpy server listens on port 5678 — attach from VS Code with a standard
+  "Python: Remote Attach" configuration (host `localhost`, port `5678`).
+- The image build installs `gundi-action-runner` from PyPI, so this stack works
+  once the library's first release is published.
+- This setup talks to https://stage.gundiservice.org for Gundi core services.

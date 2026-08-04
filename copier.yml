@@ -1,0 +1,38 @@
+# Copier template for new Gundi action-runner connectors.
+# Generated projects record this repo as their template source, so
+# `copier update` can pull scaffold improvements from future tags.
+_subdirectory: template
+_min_copier_version: "7.2.0"
+
+project_name:
+  type: str
+  help: Human-readable connector name (e.g. "Savannah Tracking")
+
+package_name:
+  type: str
+  help: Python package name for your connector code
+  default: "{{ project_name | lower | replace(' ', '_') | replace('-', '_') }}"
+  validator: >-
+    {% if not package_name.isidentifier() or package_name != package_name.lower() %}
+    package_name must be a valid lowercase Python identifier
+    {% endif %}
+
+integration_type_slug:
+  type: str
+  help: Unique slug for this integration type in Gundi
+  default: "{{ package_name }}"
+
+display_name:
+  type: str
+  help: Display name shown in the Gundi portal
+  default: "{{ project_name }}"
+
+include_pull:
+  type: bool
+  help: Include a scheduled pull action (polling connector)?
+  default: true
+
+include_webhook:
+  type: bool
+  help: Include a webhook handler (push-based connector)?
+  default: false

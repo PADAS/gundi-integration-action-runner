@@ -1,0 +1,5 @@
+prune app
+prune tests
+prune examples
+prune docs
+prune local

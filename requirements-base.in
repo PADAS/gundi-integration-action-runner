@@ -2,10 +2,10 @@
 # Use requirements.in to add integration-specific dependencies instead.
 environs~=9.5.0
 pydantic~=1.10.15
-fastapi~=0.103.2
-uvicorn~=0.23.2
+fastapi~=0.115.0
+uvicorn~=0.30.0
 gundi-core~=1.11.1
-gundi-client-v2~=2.4.0
+gundi-client-v2~=3.5
 stamina~=23.2.0
 redis~=5.0.1
 gcloud-aio-pubsub~=6.0.0

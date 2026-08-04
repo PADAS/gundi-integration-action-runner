@@ -1,0 +1,22 @@
+"""HTTP client for the {{ project_name }} API.
+
+Keep API interaction here, separate from transformation logic
+(see transformers.py). Always use httpx.AsyncClient with a timeout.
+"""
+import httpx
+
+
+class {{ package_name | replace('_', ' ') | title | replace(' ', '') }}Client:
+    def __init__(self, api_key: str, base_url: str = "https://api.example.com"):
+        self.api_key = api_key
+        self.base_url = base_url
+
+    async def fetch_observations(self, since=None):
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # Replace with the real endpoint and auth scheme:
+            # response = await client.get(f"{self.base_url}/observations",
+            #                             params={"since": since},
+            #                             headers={"Authorization": f"Bearer {self.api_key}"})
+            # response.raise_for_status()
+            # return response.json()
+            return []

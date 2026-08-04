@@ -1,32 +1,11 @@
-import logging
-from fastapi import APIRouter, BackgroundTasks, Request
-from app.services.webhooks import process_webhook
-from app import settings
+"""Deprecated compatibility shim — this module moved to gundi_action_runner.routers.webhooks."""
+import importlib
+import sys
+import warnings
 
-logger = logging.getLogger(__name__)
-
-router = APIRouter()
-
-
-@router.post(
-    "",
-    summary="Process Webhooks from third-party systems",
+warnings.warn(
+    "'app.routers.webhooks' is deprecated; import 'gundi_action_runner.routers.webhooks' instead.",
+    DeprecationWarning,
+    stacklevel=2,
 )
-async def webhooks(
-    request: Request,
-    background_tasks: BackgroundTasks
-):
-    body = await request.body()
-    print(f"Message Received through Webhooks. RAW body: {body}")
-    headers = dict(request.headers)
-    print(f"Headers: {headers}")
-    if settings.PROCESS_WEBHOOKS_IN_BACKGROUND:
-        background_tasks.add_task(
-            process_webhook,
-            request=request,
-        )
-        return {}
-    else:
-        return await process_webhook(
-            request=request,
-        )
+sys.modules[__name__] = importlib.import_module("gundi_action_runner.routers.webhooks")
