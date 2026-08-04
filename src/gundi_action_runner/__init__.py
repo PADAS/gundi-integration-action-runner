@@ -1,4 +1,4 @@
-__version__ = "0.1.0rc2"
+__version__ = "0.1.0rc3"
 
 from gundi_action_runner.decorators import action, webhook  # noqa: F401
 from gundi_action_runner.registry import RegistryError, registry  # noqa: F401

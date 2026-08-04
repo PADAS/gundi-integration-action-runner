@@ -22,7 +22,7 @@ pip install "gundi-action-runner[cli]"
 ```
 
 > The current release is a release candidate — until the first stable release,
-> pin it exactly: `pip install "gundi-action-runner[cli]==0.1.0rc2"`
+> pin it exactly: `pip install "gundi-action-runner[cli]==0.1.0rc3"`
 > (avoid `--pre`, which cascades pre-releases to all dependencies).
 
 ## What you get
@@ -42,7 +42,7 @@ pip install "gundi-action-runner[cli]"
 
 - Source, quickstart, and guides:
   https://github.com/PADAS/gundi-integration-action-runner
-- Docs site (live with the first stable release):
+- Docs site:
   https://padas.github.io/gundi-integration-action-runner/
 
 Apache-2.0. Maintained by the [Gundi](https://gundiservice.org) team at
