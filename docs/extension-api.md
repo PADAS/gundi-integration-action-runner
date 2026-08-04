@@ -81,6 +81,44 @@ template convention (`GUNDI_LEGACY_ACTIONS_MODULE` /
 | `gundi_action_runner.services.action_scheduler` | `@crontab_schedule("*/15 * * * *")` |
 | `gundi_action_runner.services.utils` | `FieldWithUIOptions`, `UIOptions`, `GlobalUISchemaOptions` |
 
+## Error reporting
+
+When a handler raises, the framework logs the failure to the portal activity
+log. Two levels of polish are available:
+
+**Automatic classification.** Failures during handler execution are
+classified heuristically: HTTP 401/403 responses render as authentication
+failures, 429 as rate limiting, 5xx as a bad provider response, and
+connection/timeout exceptions as connectivity problems. Operators see a
+short, human-first message ("Authentication failed — ... (HTTP 401)")
+instead of a raw traceback; full details are still captured alongside.
+
+**Explicit classification.** For precise control, raise one of the
+`IntegrationError` subclasses from your handler:
+
+```python
+from gundi_action_runner.services.errors import (
+    IntegrationAuthError,          # "Authentication failed"
+    IntegrationConnectionError,    # "Could not reach the provider"
+    IntegrationRateLimitError,     # "Rate limited by the provider"
+    IntegrationBadResponseError,   # "Unexpected response from the provider"
+)
+
+
+@action.pull(config=PullConfig, title="Pull Observations")
+async def pull_observations(integration, action_config):
+    response = await client.fetch(...)
+    if response.status_code == 401:
+        raise IntegrationAuthError("API key rejected", status_code=401)
+    ...
+```
+
+Explicitly raised `IntegrationError`s always win over the heuristics and
+classify in every context (the heuristics only apply to handler execution,
+so e.g. a 401 from Gundi's own portal API is never misreported as a
+provider auth failure). The same classification also flows through
+`@activity_logger()`-decorated handlers.
+
 ## Testing your connector
 
 Installing `gundi-action-runner` registers a pytest plugin exposing the

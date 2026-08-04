@@ -62,5 +62,20 @@ them all at once, or keep decorating in place.
   process import — still loudly, just later.
 - **Decorator ordering:** `@action.*`/`@webhook` must be the outermost
   decorator (see the [extension API](extension-api.md)).
+- **Legacy discovery is stricter.** `action_`-prefixed functions without an
+  `action_config` parameter are skipped with a warning instead of being
+  registered (and the `action_title` decorator itself is never mistaken for
+  a handler when imported alongside them). If an action disappears after
+  merging, check its signature.
+
+## If you customized framework files
+
+Forks that edited `app/services/*` or other framework internals will see
+merge conflicts against the shim layer (upstream replaced those files with
+one-line re-exports). Resolve them in two steps: keep the shim, then re-apply
+your customization to the corresponding `gundi_action_runner` module — or
+drop it if upstream has since absorbed the fix. Framework changes now land in
+the library, so this porting step happens once; afterwards, framework updates
+arrive via `pip install -U gundi-action-runner` with no merges at all.
 - `python -m app.register` still works; `gundi-runner register` is its
   library-native replacement.
