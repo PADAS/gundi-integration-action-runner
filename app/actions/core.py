@@ -58,6 +58,10 @@ class GenericActionConfiguration(ActionConfiguration):
     pass
 
 
+class ReferenceActionConfiguration(ActionConfiguration):
+    pass
+
+
 def discover_actions(module_name, prefix):
     action_handlers = {}
     # Import the module using importlib

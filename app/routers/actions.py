@@ -30,6 +30,8 @@ async def execute(
     # Direct /execute calls are explicit invocations → manual by default, so a
     # misconfigured pull action surfaces a 404/422 here rather than skipping.
     triggered_by = request.triggered_by or ActionTrigger.MANUAL.value
+    if request.integration_state is not None and request.run_in_background:
+        return {"message": "Ephemeral executions cannot run in background."}
     if request.run_in_background:
         background_tasks.add_task(
             execute_action,
@@ -45,4 +47,5 @@ async def execute(
             action_id=request.action_id,
             config_overrides=request.config_overrides,
             triggered_by=triggered_by,
+            integration_state=request.integration_state,
         )

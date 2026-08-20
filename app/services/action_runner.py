@@ -1,7 +1,9 @@
 import asyncio
+import contextvars
 import logging
 import time
 import traceback
+import uuid
 from enum import Enum
 from typing import Optional
 
@@ -9,6 +11,7 @@ import httpx
 import pydantic
 import stamina
 from gundi_client_v2 import GundiClient
+from gundi_core.schemas.v2 import Integration
 
 from app.actions import action_handlers, get_action_handler_by_data_type
 from app import settings
@@ -17,16 +20,19 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from gundi_core.events import IntegrationActionFailed, ActionExecutionFailed, LogLevel
 
-from app.actions.core import PullActionConfiguration
+from app.actions.core import PullActionConfiguration, ReferenceActionConfiguration
+from app.api_schemas import IntegrationState
 from .config_manager import IntegrationConfigurationManager
 from .state import IntegrationStateManager
 from .utils import find_config_for_action
-from .activity_logger import publish_event, log_action_activity
+from .activity_logger import publish_event, log_action_activity, ephemeral_run
 
 _portal = GundiClient()
 config_manager = IntegrationConfigurationManager()
 state_manager = IntegrationStateManager()
 logger = logging.getLogger(__name__)
+
+_EPHEMERAL_INTEGRATION_ID = uuid.UUID("00000000-0000-0000-0000-000000000000")
 
 # How often (seconds) to publish a portal activity-log WARNING for a pull
 # action that keeps skipping on an invalid config. Pull actions are scheduled
@@ -55,14 +61,66 @@ class ActionTrigger(str, Enum):
     MANUAL = "manual"
 
 
+def _build_synthetic_integration(state: IntegrationState) -> Integration:
+    return Integration.parse_obj({
+        "id": str(_EPHEMERAL_INTEGRATION_ID),
+        "name": "(ephemeral)",
+        "base_url": state.base_url or "",
+        "enabled": True,
+        "type": {
+            "id": str(_EPHEMERAL_INTEGRATION_ID),
+            "name": state.type_value,
+            "value": state.type_value,
+            "description": "",
+            "actions": [
+                {
+                    "id": str(_EPHEMERAL_INTEGRATION_ID),
+                    "type": "generic",
+                    "name": cfg.action_value,
+                    "value": cfg.action_value,
+                    "schema": {},
+                }
+                for cfg in state.configurations
+            ],
+        },
+        "owner": {
+            "id": str(_EPHEMERAL_INTEGRATION_ID),
+            "name": "(ephemeral)",
+            "description": "",
+        },
+        "configurations": [
+            {
+                "id": str(_EPHEMERAL_INTEGRATION_ID),
+                "integration": str(_EPHEMERAL_INTEGRATION_ID),
+                "action": {
+                    "id": str(_EPHEMERAL_INTEGRATION_ID),
+                    "type": "generic",
+                    "name": cfg.action_value,
+                    "value": cfg.action_value,
+                },
+                "data": cfg.data,
+            }
+            for cfg in state.configurations
+        ],
+        "additional": {},
+        "default_route": None,
+        "status": "healthy",
+        "status_details": "",
+    })
+
+
 async def _handle_error(
-        exc: Exception, integration_id: str, action_id: Optional[str] = None,
+        exc: Exception, integration_id: Optional[str], action_id: Optional[str] = None,
         config_data=None, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
 ):
     """
     Handles errors by logging, extracting details as available, and publishing events for activity logs.
     Returns a JSON response with error details too.
     """
+    is_ephemeral = ephemeral_run.get()
+    if is_ephemeral:
+        # Draft credentials must never surface in the error response or event.
+        config_data = None
 
     message = f"Error in action '{action_id}' for integration '{integration_id}': {type(exc).__name__}: {exc}"
     logger.exception(message)
@@ -88,13 +146,13 @@ async def _handle_error(
             "server_response_body": str(getattr(response, "text", getattr(response, "content", None)) or "")
         })
 
-    # Publish the error event
-    await publish_event(
-        event=IntegrationActionFailed(
-            payload=ActionExecutionFailed(**error_details)
-        ),
-        topic_name=settings.INTEGRATION_EVENTS_TOPIC,
-    )
+    if not is_ephemeral:
+        await publish_event(
+            event=IntegrationActionFailed(
+                payload=ActionExecutionFailed(**error_details)
+            ),
+            topic_name=settings.INTEGRATION_EVENTS_TOPIC,
+        )
 
     # Return the JSON response
     return JSONResponse(
@@ -159,13 +217,51 @@ async def _skip_invalid_config(integration_id, action_id, *, error):
 
 
 async def execute_action(
-        integration_id: str, action_id: Optional[str] = None, config_overrides: dict = None,
-        data: dict = None, metadata: dict = None, triggered_by: Optional[str] = None
+        integration_id: Optional[str], action_id: Optional[str] = None, config_overrides: dict = None,
+        data: dict = None, metadata: dict = None, triggered_by: Optional[str] = None,
+        integration_state: Optional[IntegrationState] = None,
 ):
-    try:  # Get the integration details to pass it to the action handler
-        integration = await config_manager.get_integration_details(integration_id)
-    except Exception as e:
-        return await _handle_error(e, integration_id, action_id)
+    is_ephemeral = integration_id is None and integration_state is not None
+    ephemeral_token = ephemeral_run.set(is_ephemeral)
+    try:
+        return await _execute_action_impl(
+            integration_id=integration_id,
+            action_id=action_id,
+            config_overrides=config_overrides,
+            data=data,
+            metadata=metadata,
+            triggered_by=triggered_by,
+            integration_state=integration_state,
+            is_ephemeral=is_ephemeral,
+        )
+    finally:
+        ephemeral_run.reset(ephemeral_token)
+
+
+async def _execute_action_impl(
+        integration_id: Optional[str], action_id: Optional[str], config_overrides: Optional[dict],
+        data: Optional[dict], metadata: Optional[dict], triggered_by: Optional[str],
+        integration_state: Optional[IntegrationState], is_ephemeral: bool,
+):
+    if is_ephemeral:
+        try:
+            integration = _build_synthetic_integration(integration_state)
+        except Exception as e:
+            return await _handle_error(
+                e, integration_id=None, action_id=action_id,
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+    elif integration_id is None:
+        return await _handle_error(
+            ValueError("Either integration_id or integration_state must be provided"),
+            integration_id, action_id,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+    else:
+        try:  # Get the integration details to pass it to the action handler
+            integration = await config_manager.get_integration_details(integration_id)
+        except Exception as e:
+            return await _handle_error(e, integration_id, action_id)
 
     # Find the action handler based on the action ID or data type
     if action_id:
@@ -193,7 +289,24 @@ async def execute_action(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY
         )
 
-    logger.info(f"Executing action '{action_id}' for integration '{integration_id}'...")
+    # Ephemeral execution is only safe for read-only reference actions —
+    # anything else would move data through Gundi on behalf of an integration
+    # that doesn't exist. cdip enforces the same rule independently.
+    if is_ephemeral:
+        is_reference_action = isinstance(config_model, type) and issubclass(
+            config_model, ReferenceActionConfiguration
+        )
+        if not is_reference_action:
+            return await _handle_error(
+                ValueError(
+                    f"Action '{action_id}' is not a reference action; "
+                    "ephemeral execution is only supported for reference actions."
+                ),
+                integration_id=None, action_id=action_id,
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+
+    logger.info(f"Executing action '{action_id}' for integration '{integration_id or '(ephemeral)'}'...")
 
     # Pull actions are scheduled type-wide, so the portal fires them for every
     # integration of this type — including destination-only ones that never get
@@ -208,7 +321,10 @@ async def execute_action(
     skippable_pull = is_pull_action and not is_manual
 
     # Get the configuration needed to execute the action
-    action_config = await config_manager.get_action_configuration(integration_id, action_id)
+    if is_ephemeral:
+        action_config = find_config_for_action(integration.configurations, action_id)
+    else:
+        action_config = await config_manager.get_action_configuration(integration_id, action_id)
     if not action_config and not config_overrides:
         if skippable_pull:
             return _skip_quietly(
@@ -221,7 +337,7 @@ async def execute_action(
         logger.error(message)
         return await _handle_error(
             ValueError(message), integration_id, action_id,
-            config_data={"configurations": [i.dict() for i in integration.configurations]},
+            config_data=None if is_ephemeral else {"configurations": [i.dict() for i in integration.configurations]},
             status_code=status.HTTP_404_NOT_FOUND
         )
 
@@ -237,7 +353,11 @@ async def execute_action(
         # noticeable without spamming a warning on every tick.
         if skippable_pull:
             return await _skip_invalid_config(integration_id, action_id, error=e)
-        return await _handle_error(e, integration_id, action_id, config_data, status.HTTP_422_UNPROCESSABLE_ENTITY)
+        return await _handle_error(
+            e, integration_id, action_id,
+            config_data=None if is_ephemeral else config_data,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
 
     # Respect the operator's explicit pause toggle — only for scheduled runs.
     if skippable_pull and not getattr(parsed_config, "run_on_schedule", True):
@@ -273,17 +393,19 @@ async def execute_action(
         return await _handle_error(
             asyncio.TimeoutError(f"Action '{action_id}' timed out"),
             integration_id, action_id,
-            config_data={"configurations": [c.dict() for c in integration.configurations]},
+            config_data=None if is_ephemeral else {"configurations": [c.dict() for c in integration.configurations]},
             status_code=status.HTTP_504_GATEWAY_TIMEOUT
         )
     except Exception as e:
-        return await _handle_error(e, integration_id, action_id,
-                                   config_data={"configurations": [c.dict() for c in integration.configurations]})
+        return await _handle_error(
+            e, integration_id, action_id,
+            config_data=None if is_ephemeral else {"configurations": [c.dict() for c in integration.configurations]},
+        )
 
     # Success. Log the execution time and return the result
     end_time = time.monotonic()
     execution_time = end_time - start_time
     logger.debug(
-        f"Action '{action_id}' executed successfully for integration {integration_id} in {execution_time:.2f} seconds."
+        f"Action '{action_id}' executed successfully for integration {integration_id or '(ephemeral)'} in {execution_time:.2f} seconds."
     )
     return result
