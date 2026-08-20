@@ -9,9 +9,11 @@ from gundi_core.events import IntegrationActionFailed, IntegrationActionCustomLo
 from gundi_core.events.transformers import ObservationTransformedER
 
 from app import settings
-from app.conftest import MockSubActionConfiguration, MockPushActionConfiguration, async_return
+from app.actions.core import ReferenceActionConfiguration
+from app.conftest import AsyncMock, MockSubActionConfiguration, MockPushActionConfiguration, async_return
 from app.main import app
 from app.services.action_scheduler import trigger_action
+from app.services.utils import find_config_for_action
 
 api_client = TestClient(app)
 
@@ -590,3 +592,196 @@ async def test_execute_action_with_handler_error(
     assert event.payload.server_response_status == expected_error.response.status_code
     assert event.payload.server_response_body == str(expected_error.response.text)
 
+
+_EPHEMERAL_SECRET = "ephemeral-token-abc123"
+
+
+class _MockReferenceActionConfiguration(ReferenceActionConfiguration):
+    tag_name: str = ""
+
+
+@pytest.fixture
+def mock_reference_action_handler():
+    handler = AsyncMock()
+    handler.return_value = {"options": [{"value": "elephant", "label": "Elephant"}]}
+    return handler
+
+
+@pytest.fixture
+def mock_ephemeral_action_handlers(
+        mock_reference_action_handler, mock_pull_observations_action_handler,
+):
+    return {
+        "list_species": (mock_reference_action_handler, _MockReferenceActionConfiguration, None),
+        "pull_observations": (mock_pull_observations_action_handler, MockPullActionConfiguration, None),
+    }
+
+
+def _ephemeral_body(action_id="list_species", token=_EPHEMERAL_SECRET, base_url="https://sandbox.pamdas.org"):
+    return {
+        "action_id": action_id,
+        "integration_state": {
+            "type_value": "earth_ranger",
+            "base_url": base_url,
+            "configurations": [
+                {"action_value": "auth", "data": {"token": token}},
+                {"action_value": action_id, "data": {"tag_name": "elephant"}},
+            ],
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_ephemeral_run_builds_synthetic_integration(
+        mocker, mock_gundi_client_v2, mock_config_manager,
+        mock_publish_event, mock_ephemeral_action_handlers, mock_reference_action_handler,
+):
+    mocker.patch("app.services.action_runner.action_handlers", mock_ephemeral_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+
+    response = api_client.post("/v1/actions/execute/", json=_ephemeral_body())
+
+    assert response.status_code == 200
+    assert not mock_config_manager.get_integration_details.called
+    assert not mock_config_manager.get_action_configuration.called
+    assert mock_reference_action_handler.called
+    call_kwargs = mock_reference_action_handler.call_args.kwargs
+    integration = call_kwargs["integration"]
+    assert integration.base_url == "https://sandbox.pamdas.org"
+    auth_config = find_config_for_action(integration.configurations, "auth")
+    assert auth_config is not None
+    assert auth_config.data == {"token": _EPHEMERAL_SECRET}
+
+
+@pytest.mark.asyncio
+async def test_ephemeral_run_rejects_non_reference_action(
+        mocker, mock_gundi_client_v2, mock_config_manager,
+        mock_publish_event, mock_ephemeral_action_handlers, mock_pull_observations_action_handler,
+):
+    mocker.patch("app.services.action_runner.action_handlers", mock_ephemeral_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+
+    body = _ephemeral_body(action_id="pull_observations")
+    response = api_client.post("/v1/actions/execute/", json=body)
+
+    assert response.status_code == 422
+    assert not mock_pull_observations_action_handler.called
+
+
+@pytest.mark.asyncio
+async def test_ephemeral_run_publishes_no_activity_events(
+        mocker, mock_gundi_client_v2, mock_config_manager,
+        mock_publish_event, mock_ephemeral_action_handlers,
+):
+    mocker.patch("app.services.action_runner.action_handlers", mock_ephemeral_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+
+    response = api_client.post("/v1/actions/execute/", json=_ephemeral_body())
+
+    assert response.status_code == 200
+    assert not mock_publish_event.called
+
+
+@pytest.mark.asyncio
+async def test_ephemeral_run_error_payload_scrubs_credentials(
+        mocker, mock_gundi_client_v2, mock_config_manager,
+        mock_publish_event, mock_ephemeral_action_handlers, mock_reference_action_handler,
+):
+    mock_reference_action_handler.side_effect = RuntimeError("upstream unreachable")
+    mocker.patch("app.services.action_runner.action_handlers", mock_ephemeral_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+
+    response = api_client.post("/v1/actions/execute/", json=_ephemeral_body())
+
+    assert response.status_code == 500
+    body = response.text
+    assert _EPHEMERAL_SECRET not in body
+    assert "configurations" not in response.json()["detail"] or not response.json()["detail"]["config_data"]
+    assert not mock_publish_event.called
+
+
+@pytest.mark.asyncio
+async def test_ephemeral_run_rejects_background_execution(
+        mocker, mock_gundi_client_v2, mock_config_manager,
+        mock_publish_event, mock_ephemeral_action_handlers, mock_reference_action_handler,
+):
+    mocker.patch("app.services.action_runner.action_handlers", mock_ephemeral_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+
+    body = _ephemeral_body()
+    body["run_in_background"] = True
+    response = api_client.post("/v1/actions/execute/", json=body)
+
+    assert response.status_code == 422
+    assert "background" in response.json()["detail"].lower()
+    assert not mock_reference_action_handler.called
+
+
+@pytest.mark.asyncio
+async def test_request_with_both_integration_id_and_state_is_422(
+        mocker, mock_gundi_client_v2, mock_config_manager,
+        mock_publish_event, mock_ephemeral_action_handlers, mock_reference_action_handler,
+):
+    mocker.patch("app.services.action_runner.action_handlers", mock_ephemeral_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+
+    body = _ephemeral_body()
+    body["integration_id"] = "779ff3ab-5589-4f4c-9e0a-ae8d6c9edff0"
+    response = api_client.post("/v1/actions/execute/", json=body)
+
+    assert response.status_code == 422
+    assert not mock_reference_action_handler.called
+
+
+@pytest.mark.asyncio
+async def test_ephemeral_run_returns_handler_result(
+        mocker, mock_gundi_client_v2, mock_config_manager,
+        mock_publish_event, mock_ephemeral_action_handlers, mock_reference_action_handler,
+):
+    mocker.patch("app.services.action_runner.action_handlers", mock_ephemeral_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+
+    response = api_client.post("/v1/actions/execute/", json=_ephemeral_body())
+
+    assert response.status_code == 200
+    assert response.json() == {"options": [{"value": "elephant", "label": "Elephant"}]}
+
+
+@pytest.mark.asyncio
+async def test_request_without_integration_id_or_state_is_422(
+        mocker, mock_gundi_client_v2, mock_config_manager,
+        mock_publish_event, mock_ephemeral_action_handlers,
+):
+    mocker.patch("app.services.action_runner.action_handlers", mock_ephemeral_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+
+    response = api_client.post(
+        "/v1/actions/execute/",
+        json={"action_id": "list_species"},
+    )
+
+    assert response.status_code == 422
