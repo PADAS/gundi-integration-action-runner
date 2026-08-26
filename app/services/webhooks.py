@@ -27,8 +27,25 @@ def _get_diagnostic_client() -> httpx.AsyncClient:
     return _diagnostic_client
 
 
+# asyncio keeps only a weak reference to a running task, so a fire-and-forget
+# task can be garbage-collected mid-flight and vanish without a trace. Hold a
+# strong reference until it finishes.
+_background_tasks: set[asyncio.Task] = set()
+
+
+def _spawn_background_task(coro) -> asyncio.Task:
+    task = asyncio.ensure_future(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
+
+
 async def close_diagnostic_client() -> None:
     global _diagnostic_client
+    # Drain in-flight forwards first; closing the client out from under them
+    # would fail every request still on the wire.
+    if _background_tasks:
+        await asyncio.gather(*list(_background_tasks), return_exceptions=True)
     if _diagnostic_client is not None:
         await _diagnostic_client.aclose()
         _diagnostic_client = None
@@ -185,7 +202,7 @@ async def process_webhook(request: Request):
             json_content["hex_format"] = json_content.get("hex_format", parsed_config.hex_format)
         # Forward raw payload to diagnostic URL before any transformation or validation
         if diag_url := getattr(parsed_config, "diagnostic_destination_url", None):
-            asyncio.ensure_future(
+            _spawn_background_task(
                 forward_payload_to_diagnostic_url(
                     destination_url=diag_url,
                     integration_id=str(integration.id),

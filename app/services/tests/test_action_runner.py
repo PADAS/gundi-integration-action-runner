@@ -263,6 +263,73 @@ async def test_triggered_by_marker_is_case_insensitive(
 
 
 @pytest.mark.asyncio
+async def test_triggered_by_marker_is_read_from_pubsub_attributes(
+        mocker, mock_gundi_client_v2, integration_v2, mock_config_manager,
+        mock_publish_event, mock_action_handlers, pubsub_message_request_headers,
+):
+    # gundi_core's RunIntegrationAction command has no `triggered_by` field, so a
+    # portal that publishes that model cannot put the marker in the message body.
+    # The attributes are the only channel available to it -- if they aren't read,
+    # every PubSub-delivered run is classified automated and the MANUAL branch is
+    # dead code.
+    mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+    bad_config = mocker.MagicMock()
+    bad_config.data = {"lookback_days": "two"}  # should be an integer
+    mock_config_manager.get_action_configuration.return_value = async_return(bad_config)
+    encoded = base64.b64encode(json.dumps({
+        "integration_id": str(integration_v2.id),
+        "action_id": "pull_observations",
+    }).encode("utf-8")).decode("utf-8")
+
+    response = api_client.post(
+        "/",
+        headers=pubsub_message_request_headers,
+        json={"message": {"data": encoded, "attributes": {"triggered_by": "manual"}}},
+    )
+
+    assert response.status_code == 200
+    mock_action_handler, _, _ = mock_action_handlers["pull_observations"]
+    assert not mock_action_handler.called
+    # Treated as manual -> strict -> the operator sees the validation error.
+    assert _published_events_of_type(mock_publish_event, IntegrationActionFailed)
+    assert not _published_events_of_type(mock_publish_event, IntegrationActionCustomLog)
+
+
+@pytest.mark.asyncio
+async def test_body_triggered_by_wins_over_attributes(
+        mocker, mock_gundi_client_v2, integration_v2, mock_config_manager,
+        mock_publish_event, mock_action_handlers, pubsub_message_request_headers,
+):
+    # The body stays authoritative when both carry the marker.
+    mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+    bad_config = mocker.MagicMock()
+    bad_config.data = {"lookback_days": "two"}
+    mock_config_manager.get_action_configuration.return_value = async_return(bad_config)
+    encoded = base64.b64encode(json.dumps({
+        "integration_id": str(integration_v2.id),
+        "action_id": "pull_observations",
+        "triggered_by": "manual",
+    }).encode("utf-8")).decode("utf-8")
+
+    response = api_client.post(
+        "/",
+        headers=pubsub_message_request_headers,
+        json={"message": {"data": encoded, "attributes": {"triggered_by": "auto"}}},
+    )
+
+    assert response.status_code == 200
+    assert _published_events_of_type(mock_publish_event, IntegrationActionFailed)
+
+
+@pytest.mark.asyncio
 async def test_scheduled_pull_action_with_invalid_config_is_skipped(
         mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event,
         mock_action_handlers, mock_state_manager, pubsub_message_request_headers,

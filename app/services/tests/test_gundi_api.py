@@ -151,3 +151,43 @@ async def test_gundi_helpers_block_on_ephemeral_run(fn_and_args):
             await fn(**args)
     finally:
         ephemeral_run.reset(token)
+
+
+def test_gundi_api_retry_policy_is_explicit_and_reachable():
+    """stamina combines `attempts` and `timeout` with stop_any(), so the tighter
+    one wins. Its defaults (attempts=10, timeout=45s) silently truncate a long
+    backoff: with wait_initial=10 the 45s budget is spent after ~3 attempts and
+    wait_max is never reached. Both bounds must be declared explicitly, and the
+    timeout must be wide enough for the declared wait curve to actually play out."""
+    from app.services.gundi import GUNDI_API_RETRY
+
+    attempts = GUNDI_API_RETRY["attempts"]
+    timeout = GUNDI_API_RETRY["timeout"]
+    wait_initial = GUNDI_API_RETRY["wait_initial"]
+    wait_max = GUNDI_API_RETRY["wait_max"]
+    assert attempts is not None and timeout is not None
+
+    # Worst case (no jitter contribution needed -- jitter only adds delay), how
+    # many attempts fit inside the timeout?
+    elapsed, fits = 0.0, 1
+    while fits < attempts:
+        elapsed += min(wait_initial * (2 ** (fits - 1)), wait_max)
+        if elapsed >= timeout:
+            break
+        fits += 1
+    assert fits >= 5, (
+        f"retry budget allows only {fits} attempts before the {timeout}s timeout; "
+        "the declared backoff is mostly unreachable"
+    )
+
+
+def test_all_gundi_api_calls_share_one_retry_policy():
+    """Five call sites previously repeated the same decorator by hand, which is
+    how the wait curve and the stop condition drifted apart in the first place."""
+    import re
+    from pathlib import Path
+
+    source = Path("app/services/gundi.py").read_text()
+    decorators = re.findall(r"@stamina\.retry\((.*?)\)\n", source)
+    assert decorators, "expected retry-decorated functions in app/services/gundi.py"
+    assert all(d.strip() == "**GUNDI_API_RETRY" for d in decorators), decorators

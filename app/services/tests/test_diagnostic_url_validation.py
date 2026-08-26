@@ -1,3 +1,4 @@
+import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
@@ -42,3 +43,56 @@ async def test_ipv6_multicast_is_blocked(mocker):
 async def test_public_address_is_allowed(mocker):
     _mock_resolution(mocker, "93.184.216.34")
     await _validate_diagnostic_url("https://example.com/hook")
+
+
+@pytest.mark.asyncio
+async def test_background_forward_task_is_strongly_referenced(mocker):
+    """asyncio holds only a weak reference to a running task, so a bare
+    ensure_future() can be garbage-collected mid-flight and disappear silently."""
+    import app.services.webhooks as webhooks
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _slow():
+        started.set()
+        await release.wait()
+
+    task = webhooks._spawn_background_task(_slow())
+    await started.wait()
+    assert task in webhooks._background_tasks
+
+    release.set()
+    await task
+    # The done callback must drop the reference so the set can't grow forever.
+    assert task not in webhooks._background_tasks
+
+
+@pytest.mark.asyncio
+async def test_close_diagnostic_client_drains_in_flight_forwards(mocker):
+    """Closing the shared client out from under an in-flight forward would fail
+    every request still on the wire."""
+    import app.services.webhooks as webhooks
+
+    finished = []
+    release = asyncio.Event()
+
+    async def _slow():
+        await release.wait()
+        finished.append(True)
+
+    mock_client = mocker.MagicMock()
+    mock_client.aclose = mocker.AsyncMock(
+        side_effect=lambda: finished.append("closed")
+    )
+    mocker.patch.object(webhooks, "_diagnostic_client", mock_client)
+
+    webhooks._spawn_background_task(_slow())
+    closing = asyncio.ensure_future(webhooks.close_diagnostic_client())
+    await asyncio.sleep(0)  # let close() reach the drain
+    assert not finished, "client closed before the in-flight forward finished"
+
+    release.set()
+    await closing
+    assert finished[0] is True and finished[1] == "closed"
+    assert mock_client.aclose.called
