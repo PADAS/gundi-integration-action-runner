@@ -1,5 +1,13 @@
 import pytest
-from app.services.gundi import send_events_to_gundi, send_observations_to_gundi, send_event_attachments_to_gundi
+from app.services.gundi import (
+    send_events_to_gundi,
+    send_observations_to_gundi,
+    send_event_attachments_to_gundi,
+    send_messages_to_gundi,
+    _get_gundi_api_key,
+    EphemeralWriteBlocked,
+)
+from app.services.activity_logger import ephemeral_run
 
 
 @pytest.mark.asyncio
@@ -121,3 +129,25 @@ async def test_send_observations_to_gundi(
     assert len(response) == 2
     assert mock_gundi_sensors_client_class.called
     mock_gundi_sensors_client_class.return_value.post_observations.assert_called_once_with(data=observations)
+
+
+@pytest.mark.parametrize("fn_and_args", [
+    (send_events_to_gundi, {"events": [], "integration_id": "id"}),
+    (send_observations_to_gundi, {"observations": [], "integration_id": "id"}),
+    (send_event_attachments_to_gundi, {"event_id": "e", "attachments": [], "integration_id": "id"}),
+    (send_messages_to_gundi, {"messages": [], "integration_id": "id"}),
+    (_get_gundi_api_key, {"integration_id": "id"}),
+])
+@pytest.mark.asyncio
+async def test_gundi_helpers_block_on_ephemeral_run(fn_and_args):
+    # A reference handler running against a draft integration must not be
+    # able to move data through Gundi (design invariant: reference actions
+    # are read-only). Each entry point checks the contextvar and raises
+    # before doing any I/O.
+    fn, args = fn_and_args
+    token = ephemeral_run.set(True)
+    try:
+        with pytest.raises(EphemeralWriteBlocked):
+            await fn(**args)
+    finally:
+        ephemeral_run.reset(token)

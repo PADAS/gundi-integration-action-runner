@@ -4,9 +4,28 @@ import httpx
 import stamina
 from gundi_client_v2.client import GundiClient, GundiDataSenderClient
 
+from .activity_logger import ephemeral_run
+
+
+class EphemeralWriteBlocked(RuntimeError):
+    """Raised when a reference handler running against a draft integration
+    tries to move data through Gundi. Reference actions are read-only by
+    contract — a draft-credential run must never publish or send events."""
+
+
+def _block_if_ephemeral(op: str) -> None:
+    if ephemeral_run.get():
+        raise EphemeralWriteBlocked(
+            f"{op} is not allowed on the ephemeral (draft-integration) path"
+        )
+
 
 @stamina.retry(on=httpx.HTTPError, wait_initial=10.0, wait_jitter=10.0, wait_max=300.0)
 async def _get_gundi_api_key(integration_id):
+    # An ephemeral run's synthetic integration has no persisted api key —
+    # letting this reach the portal would 404 and then stamina would retry
+    # for up to 5 minutes with the portal-facing request thread held.
+    _block_if_ephemeral("_get_gundi_api_key")
     async with GundiClient() as gundi_client:
         return await gundi_client.get_integration_api_key(
             integration_id=integration_id
@@ -24,6 +43,7 @@ async def _get_sensors_api_client(integration_id):
 
 @stamina.retry(on=httpx.HTTPError, wait_initial=10.0, wait_jitter=10.0, wait_max=300.0)
 async def send_events_to_gundi(events: List[dict], **kwargs) -> dict:
+    _block_if_ephemeral("send_events_to_gundi")
     """
     Send Events to Gundi using the REST API v2
     :param events: A list of events in the following format:
@@ -63,6 +83,7 @@ async def send_event_attachments_to_gundi(event_id: str, attachments: List[tuple
     :param kwargs: integration_id: The UUID of the related integration
     :return: A dict with the response from the API
     """
+    _block_if_ephemeral("send_event_attachments_to_gundi")
     integration_id = kwargs.get("integration_id")
     assert integration_id, "integration_id is required"
     sensors_api_client = await _get_sensors_api_client(integration_id=str(integration_id))
@@ -93,6 +114,7 @@ async def send_observations_to_gundi(observations: List[dict], **kwargs) -> dict
     :param kwargs: integration_id: The UUID of the related integration
     :return: A dict with the response from the API
     """
+    _block_if_ephemeral("send_observations_to_gundi")
     integration_id = kwargs.get("integration_id")
     assert integration_id, "integration_id is required"
     sensors_api_client = await _get_sensors_api_client(integration_id=str(integration_id))
@@ -131,6 +153,7 @@ async def send_messages_to_gundi(messages: List[dict], **kwargs) -> dict:
     :param kwargs: integration_id: The UUID of the related integration
     :return: A dict with the response from the API
     """
+    _block_if_ephemeral("send_messages_to_gundi")
     integration_id = kwargs.get("integration_id")
     assert integration_id, "integration_id is required"
     sensors_api_client = await _get_sensors_api_client(integration_id=str(integration_id))
