@@ -12,6 +12,9 @@ from app import settings
 # Cached marker meaning "this integration has no webhook configuration", so a
 # cold cache doesn't trigger a Gundi API reload on every webhook-config lookup.
 _NO_WEBHOOK_CONFIG_SENTINEL = "null"
+# How long a cached "this integration has no webhook config" marker survives
+# when the caller specified no TTL. Bounded so it self-heals -- see below.
+NO_WEBHOOK_CONFIG_TTL_SECONDS = 3600
 
 
 class IntegrationConfigurationManager:
@@ -50,7 +53,16 @@ class IntegrationConfigurationManager:
             if webhook_configuration := integration_details.webhook_configuration:
                 await self.db_client.set(webhook_key, webhook_configuration.json(), ttl)
             else:
-                await self.db_client.set(webhook_key, _NO_WEBHOOK_CONFIG_SENTINEL, ttl)
+                # The absence sentinel always expires, even when the caller asked
+                # for no TTL. There is no WebhookConfigCreated event to invalidate
+                # it on, so a permanent sentinel would keep serving "no webhook"
+                # after an operator adds one in the portal — breaking every
+                # delivery until someone deleted the key by hand.
+                await self.db_client.set(
+                    webhook_key,
+                    _NO_WEBHOOK_CONFIG_SENTINEL,
+                    ttl if ttl is not None else NO_WEBHOOK_CONFIG_TTL_SECONDS,
+                )
             return integration_details
 
     async def get_action_configuration(self, integration_id: str, action_id: str, ttl=None) -> Optional[IntegrationActionConfiguration]:
@@ -108,11 +120,20 @@ class IntegrationConfigurationManager:
             with attempt:
                 await self.db_client.set(key, integration.json(), ttl)
 
+    async def delete_webhook_configuration(self, integration_id: str):
+        key = self._get_webhook_config_key(integration_id)
+        for attempt in stamina.retry_context(on=redis.RedisError, attempts=5, wait_initial=1.0, wait_max=30, wait_jitter=3.0):
+            with attempt:
+                await self.db_client.delete(key)
+
     async def delete_integration(self, integration_id: str):
         key = self._get_integration_key(integration_id)
         for attempt in stamina.retry_context(on=redis.RedisError, attempts=5, wait_initial=1.0, wait_max=30, wait_jitter=3.0):
             with attempt:
                 await self.db_client.delete(key)
+        # The webhook key (config or absence sentinel) is addressed separately,
+        # so deleting the integration must drop it too or it outlives its owner.
+        await self.delete_webhook_configuration(integration_id)
 
     async def get_integration_details(self, integration_id: str, ttl=None) -> Integration:
         integration_summary = await self.get_integration(integration_id, ttl)

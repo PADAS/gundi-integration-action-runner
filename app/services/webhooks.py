@@ -109,14 +109,20 @@ async def _validate_diagnostic_url(url: str) -> None:
 
 
 def _redact_url(url: str) -> str:
-    """Host and path only — diagnostic URLs can carry credentials or tokens
-    in the userinfo or query string, which must not reach the logs."""
+    """Host only — diagnostic URLs can carry credentials or tokens in the
+    userinfo, the query string, or the path, none of which may reach the logs.
+
+    The path is deliberately dropped rather than kept: Slack, Discord and Teams
+    incoming webhooks all put the shared secret *in the path*
+    (https://hooks.slack.com/services/T.../B.../<secret>), so keeping it would
+    leak the very credential this function exists to protect.
+    """
     try:
         parsed = urlparse(url)
         host = parsed.hostname or "<no-host>"
         if parsed.port:
             host = f"{host}:{parsed.port}"
-        return f"{host}{parsed.path}"
+        return host
     except Exception:
         return "<unparseable url>"
 

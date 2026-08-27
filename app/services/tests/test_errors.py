@@ -1,4 +1,5 @@
 import asyncio
+from unittest.mock import MagicMock
 
 import aiohttp
 import httpx
@@ -217,3 +218,23 @@ def test_classify_error_reads_aiohttp_response_status():
     assert classified is not None
     assert classified.error_type == "rate_limit"
     assert classified.status_code == 429
+
+def _aiohttp_response_error(status: int, message: str) -> aiohttp.ClientResponseError:
+    return aiohttp.ClientResponseError(
+        request_info=MagicMock(), history=(), status=status, message=message
+    )
+
+
+@pytest.mark.parametrize(
+    "status, expected_type",
+    [(401, "auth"), (403, "auth"), (429, "rate_limit"), (503, "bad_response")],
+)
+def test_classify_aiohttp_response_error_by_status_attribute(status, expected_type):
+    """aiohttp.ClientResponseError carries the code on the exception itself as
+    `.status` and has no `.response` at all, so a `.status_code`-only lookup
+    leaves every aiohttp connector's HTTP failures unclassified."""
+    classified = classify_error(_aiohttp_response_error(status, "boom"))
+
+    assert classified is not None
+    assert classified.error_type == expected_type
+    assert classified.status_code == status

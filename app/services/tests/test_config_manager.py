@@ -1,7 +1,10 @@
 import pytest
 
 from gundi_core.schemas.v2 import IntegrationSummary, IntegrationActionConfiguration, Integration, WebhookConfiguration
-from app.services.config_manager import IntegrationConfigurationManager
+from app.services.config_manager import (
+    IntegrationConfigurationManager,
+    NO_WEBHOOK_CONFIG_TTL_SECONDS,
+)
 
 
 @pytest.mark.asyncio
@@ -335,9 +338,10 @@ async def test_get_webhook_configuration_caches_absence_sentinel(
     webhook_config = await config_manager.get_webhook_configuration(integration_id)
 
     assert webhook_config is None
-    # The absence is cached, so the next cold lookup won't reload from Gundi.
+    # The absence is cached, so the next cold lookup won't reload from Gundi --
+    # but always with an expiry, so it can't outlive a webhook config being added.
     mock_redis_empty.Redis.return_value.set.assert_any_call(
-        f"integrationconfig.{integration_id}.webhook", "null", None
+        f"integrationconfig.{integration_id}.webhook", "null", NO_WEBHOOK_CONFIG_TTL_SECONDS
     )
 
 
@@ -358,3 +362,44 @@ async def test_get_webhook_configuration_reads_cached_absence_sentinel(
     assert webhook_config is None
     # Sentinel hit — no reload from the Gundi API.
     assert not mock_gundi_client_v2_class.return_value.get_integration_details.called
+
+
+@pytest.mark.asyncio
+async def test_absence_sentinel_always_gets_a_ttl_even_when_caller_passes_none(
+        mocker, mock_redis_empty, mock_gundi_client_v2_class, integration_v2,
+):
+    """There is no WebhookConfigCreated event to invalidate the sentinel on, so a
+    permanent one would keep serving "no webhook" after an operator adds a
+    webhook config in the portal -- breaking every delivery until the key was
+    deleted by hand. execute_action reaches here with ttl=None."""
+    mocker.patch("app.services.config_manager.redis", mock_redis_empty)
+    mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
+    config_manager = IntegrationConfigurationManager()
+    integration_id = str(integration_v2.id)
+
+    await config_manager.get_webhook_configuration(integration_id, ttl=None)
+
+    mock_redis_empty.Redis.return_value.set.assert_any_call(
+        f"integrationconfig.{integration_id}.webhook",
+        "null",
+        NO_WEBHOOK_CONFIG_TTL_SECONDS,
+    )
+
+
+@pytest.mark.asyncio
+async def test_deleting_an_integration_drops_its_webhook_key(
+        mocker, mock_redis_empty, mock_gundi_client_v2_class, integration_v2,
+):
+    """The webhook key is addressed separately from the integration key, so it
+    would otherwise outlive its owner -- and a stale absence sentinel would be
+    served to whatever integration next claimed the same id."""
+    mocker.patch("app.services.config_manager.redis", mock_redis_empty)
+    mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
+    config_manager = IntegrationConfigurationManager()
+    integration_id = str(integration_v2.id)
+
+    await config_manager.delete_integration(integration_id)
+
+    deleted = [c.args[0] for c in mock_redis_empty.Redis.return_value.delete.call_args_list]
+    assert f"integration.{integration_id}" in deleted
+    assert f"integrationconfig.{integration_id}.webhook" in deleted

@@ -96,3 +96,37 @@ async def test_close_diagnostic_client_drains_in_flight_forwards(mocker):
     await closing
     assert finished[0] is True and finished[1] == "closed"
     assert mock_client.aclose.called
+
+
+@pytest.mark.parametrize(
+    "url, secret",
+    [
+        ("https://hooks.slack.com/services/T00000000/B00000000/abcdefSECRET", "abcdefSECRET"),
+        ("https://discord.com/api/webhooks/123456789/xyzSECRETtoken", "xyzSECRETtoken"),
+        ("https://user:pw@example.com/hook?token=querySECRET", "querySECRET"),
+    ],
+)
+def test_redact_url_drops_path_userinfo_and_query(url, secret):
+    """Slack, Discord and Teams incoming webhooks put the shared secret in the
+    URL *path*, so keeping the path would leak the credential this function
+    exists to protect."""
+    from app.services.webhooks import _redact_url
+
+    redacted = _redact_url(url)
+
+    assert secret not in redacted
+    assert "pw" not in redacted
+    # The host is still there, which is what makes the log line useful.
+    assert redacted in ("hooks.slack.com", "discord.com", "example.com")
+
+
+def test_redact_url_keeps_host_and_port():
+    from app.services.webhooks import _redact_url
+
+    assert _redact_url("https://example.com:8443/a/b?c=d") == "example.com:8443"
+
+
+def test_redact_url_survives_garbage():
+    from app.services.webhooks import _redact_url
+
+    assert _redact_url("not a url at all") == "<no-host>"

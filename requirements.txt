@@ -7,7 +7,9 @@
 aiohappyeyeballs==2.7.1
     # via aiohttp
 aiohttp==3.14.3
-    # via gcloud-aio-auth
+    # via
+    #   -r requirements-base.in
+    #   gcloud-aio-auth
 aiosignal==1.4.0
     # via aiohttp
 anyio==3.7.1
