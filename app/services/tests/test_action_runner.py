@@ -429,6 +429,36 @@ async def test_scheduled_pull_action_invalid_config_skip_survives_throttle_failu
 
 
 @pytest.mark.asyncio
+async def test_scheduled_pull_action_invalid_config_skip_survives_publish_failure(
+        mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event,
+        mock_action_handlers, mock_state_manager, pubsub_message_request_headers,
+        run_pull_action_pubsub_payload,
+):
+    # Same contract as the throttle above, for the event publisher: if the skip
+    # WARNING can't be published, the skip must still succeed rather than escape
+    # as a 500 / PubSub redelivery. The warning is already in the logs.
+    mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.action_runner.state_manager", mock_state_manager)
+    mocker.patch(
+        "app.services.action_runner.log_action_activity",
+        mocker.AsyncMock(side_effect=Exception("pubsub unavailable")),
+    )
+    bad_config = mocker.MagicMock()
+    bad_config.data = {"lookback_days": "two"}
+    mock_config_manager.get_action_configuration.return_value = async_return(bad_config)
+
+    response = api_client.post(
+        "/", headers=pubsub_message_request_headers, json=run_pull_action_pubsub_payload,
+    )
+
+    assert response.status_code == 200
+    mock_action_handler, _, _ = mock_action_handlers["pull_observations"]
+    assert not mock_action_handler.called
+
+
+@pytest.mark.asyncio
 async def test_scheduled_pull_action_with_missing_config_is_skipped(
         mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event,
         mock_action_handlers, pubsub_message_request_headers, run_pull_action_pubsub_payload,

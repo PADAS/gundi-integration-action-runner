@@ -335,13 +335,22 @@ async def _skip_invalid_config(integration_id, action_id, *, error):
         )
         first_in_window = True
     if first_in_window:
-        await log_action_activity(
-            integration_id=integration_id,
-            action_id=action_id,
-            title=f"Skipping '{action_id}': configuration is missing or invalid.",
-            level=LogLevel.WARNING,
-            data={"validation_error": str(error)},
-        )
+        try:
+            await log_action_activity(
+                integration_id=integration_id,
+                action_id=action_id,
+                title=f"Skipping '{action_id}': configuration is missing or invalid.",
+                level=LogLevel.WARNING,
+                data={"validation_error": str(error)},
+            )
+        except Exception as log_error:
+            # Best-effort, like the throttle above. If the event publisher is
+            # unavailable, don't turn a benign skip into an unhandled error
+            # (500 / PubSub redelivery) -- the warning is already in the logs.
+            logger.warning(
+                f"Could not publish the skip warning for '{action_id}' "
+                f"(integration '{integration_id}'): {log_error}"
+            )
     return {"skipped": True, "reason": "invalid_configuration"}
 
 
