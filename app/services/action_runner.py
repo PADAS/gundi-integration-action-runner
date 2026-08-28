@@ -336,18 +336,7 @@ async def _execute_action_impl(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY
         )
 
-    # Ephemeral execution is only safe for read-only actions — reference
-    # lookups (fetch options against source-system credentials) and auth checks
-    # (verify credentials, no writes). Pull/push/generic move data through
-    # Gundi on behalf of an integration that doesn't exist and stay rejected.
-    # cdip enforces the same rule independently.
-    #
-    # Auth handlers must be side-effect-free by contract: they GET /me,
-    # /status, or the equivalent and report back valid_credentials. A rogue
-    # integration that writes from its auth handler would leak from the
-    # ephemeral path (no ActivityLog row) — the runner's test suite is where
-    # that contract is enforced per integration (see the AuthActionConfiguration
-    # section in each integration fork's test_actions_side_effects.py).
+    # Only read-only actions allowed ephemerally. cdip enforces independently.
     if is_ephemeral:
         is_ephemerally_safe = isinstance(config_model, type) and issubclass(
             config_model, (ReferenceActionConfiguration, AuthActionConfiguration),

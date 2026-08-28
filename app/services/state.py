@@ -22,11 +22,7 @@ class IntegrationStateManager:
         return value
 
     async def set_state(self, integration_id: str, action_id: str, state: dict, source_id: str = "no-source"):
-        # Ephemeral runs synthesize a fresh integration id per call, so any
-        # state persisted here would be a permanent orphan (this key has no
-        # TTL). Silently no-op on the ephemeral path — reference and auth
-        # handlers have no legitimate reason to persist state, and if one
-        # does try, we don't want it leaking watermarks into Redis.
+        # No TTL on this key + synthetic UUID per ephemeral run = permanent orphans.
         if ephemeral_run.get():
             return
         for attempt in stamina.retry_context(on=redis.RedisError, attempts=5, wait_initial=1.0, wait_max=30, wait_jitter=3.0):
