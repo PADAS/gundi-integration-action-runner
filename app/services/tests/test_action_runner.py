@@ -1019,30 +1019,43 @@ async def test_ephemeral_run_uses_unique_integration_id_per_run(
 
 
 @pytest.mark.asyncio
-async def test_ephemeral_contextvar_or_folds_with_outer_state(mocker):
+async def test_ephemeral_contextvar_or_folds_with_outer_state(mocker, mock_publish_event):
     # If ephemeral_run is already True when execute_action starts (a nested
     # execute inside a reference handler), a saved-integration inner call
     # (is_ephemeral=False for the inner) must NOT re-enable publishing.
+    #
+    # Old form of this test only asserted "ephemeral_run.get() is True after
+    # the call returns", which passes trivially because the finally-reset
+    # restores the outer value regardless of the OR-fold. The real invariant
+    # is that publish_event stays suppressed inside — assert THAT so a
+    # regression from `is_ephemeral or ephemeral_run.get()` to just
+    # `is_ephemeral` fails the test loudly.
     from app.services.activity_logger import ephemeral_run
     mock_config_manager = mocker.MagicMock()
-    async def _crash(*a, **kw):
-        raise RuntimeError("should not reach the portal from an ephemeral outer")
-    mock_config_manager.get_integration_details = _crash
+    async def _fail(*a, **kw):
+        raise RuntimeError("config manager exploded — inner should still be ephemeral")
+    mock_config_manager.get_integration_details = _fail
     mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
 
     outer_token = ephemeral_run.set(True)
     try:
-        # Call execute_action directly with a saved integration_id (inner
-        # scenario). The or-fold should keep the contextvar True so
-        # publish_event stays suppressed inside; and the outer context is
-        # restored on return so nothing bleeds out of this test.
+        # Inner call: saved integration_id (is_ephemeral=False for the inner).
+        # The OR-fold with the outer True must keep the contextvar True so
+        # _handle_error's ephemeral branch fires and no IntegrationActionFailed
+        # event is published.
         try:
             await execute_action(integration_id="00000000-0000-0000-0000-000000000000", action_id="anything")
         except Exception:
             pass
-        # If the or-fold worked, we didn't reach _crash — but even if the
-        # code path changed, the invariant we care about is that the
-        # contextvar is still True after the nested call returns.
+        # Contract: no PubSub publish under an ephemeral outer context —
+        # regardless of the inner call's own is_ephemeral flag.
+        assert not mock_publish_event.called, (
+            "publish_event fired despite the outer ephemeral_run being True — "
+            "the OR-fold was regressed"
+        )
+        # Outer context restored on return (unchanged from earlier version).
         assert ephemeral_run.get() is True
     finally:
         ephemeral_run.reset(outer_token)

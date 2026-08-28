@@ -1,3 +1,21 @@
+"""Public helpers for talking to Gundi from an action handler.
+
+Ephemeral (draft-integration) execution runs handlers with a synthetic
+integration id and no audit trail, so every Gundi-write helper in this
+module short-circuits with `_block_if_ephemeral` when the `ephemeral_run`
+contextvar is truthy. The write-side guards here are defense-in-depth:
+`action_runner.execute_action` already whitelists reference and auth
+handlers by config-model class before the handler ever runs.
+
+**Scope of the guards**: they cover handlers that go through this module.
+A handler that constructs `GundiDataSenderClient` directly, opens its
+own `httpx.AsyncClient` to a Gundi URL, or publishes to Google Cloud
+PubSub via `gcloud.aio` is out of scope — none of those import paths
+route through `_block_if_ephemeral`. The practical risk stays low because
+those bypasses require the handler to know Gundi internals (URLs, API
+keys, GCP creds), but the module docstring is the honest place to name
+what "guard" means and what it doesn't.
+"""
 import datetime
 from typing import List
 import httpx
@@ -8,9 +26,10 @@ from .activity_logger import ephemeral_run
 
 
 class EphemeralWriteBlocked(RuntimeError):
-    """Raised when a reference handler running against a draft integration
-    tries to move data through Gundi. Reference actions are read-only by
-    contract — a draft-credential run must never publish or send events."""
+    """Raised when a reference / auth handler running against a draft
+    integration tries to move data through Gundi via a helper in this
+    module. Reference and auth actions are read-only by contract — a
+    draft-credential run must never publish or send events."""
 
 
 def _block_if_ephemeral(op: str) -> None:

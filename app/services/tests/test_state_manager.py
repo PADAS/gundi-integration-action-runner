@@ -185,3 +185,26 @@ async def test_delete_state_source_state(mocker, mock_redis, integration_v2, moc
     mock_redis.Redis.return_value.delete.assert_called_once_with(
         f"integration_state.{integration_id}.pull_observations.{source_id}"
     )
+
+
+@pytest.mark.asyncio
+async def test_set_state_noops_on_ephemeral_run(mocker, mock_redis):
+    # Ephemeral runs synthesize a fresh integration id per call. Persisting
+    # state under it would create a permanent orphan (this key carries no
+    # TTL). set_state must silently no-op so a well-meaning-but-buggy
+    # reference or auth handler can't leak watermarks into Redis.
+    from app.services.activity_logger import ephemeral_run
+    mocker.patch("app.services.state.redis", mock_redis)
+    state_manager = IntegrationStateManager()
+
+    token = ephemeral_run.set(True)
+    try:
+        await state_manager.set_state(
+            integration_id="synthetic-uuid",
+            action_id="pull_observations",
+            state={"last_execution": "irrelevant"},
+        )
+    finally:
+        ephemeral_run.reset(token)
+
+    mock_redis.Redis.return_value.set.assert_not_called()
