@@ -10,8 +10,8 @@ from gundi_core.events import IntegrationActionFailed, IntegrationActionCustomLo
 from gundi_core.events.transformers import ObservationTransformedER
 
 from app import settings
-from app.actions.core import ReferenceActionConfiguration
-from app.conftest import AsyncMock, MockSubActionConfiguration, MockPushActionConfiguration, async_return
+from app.actions.core import AuthActionConfiguration, ReferenceActionConfiguration
+from app.conftest import AsyncMock, MockSubActionConfiguration, MockPushActionConfiguration, MockPullActionConfiguration, async_return
 from app.main import app
 from app.services.action_scheduler import trigger_action
 from app.services.action_runner import execute_action
@@ -603,6 +603,10 @@ class _MockReferenceActionConfiguration(ReferenceActionConfiguration):
     tag_name: str = ""
 
 
+class _MockAuthActionConfiguration(AuthActionConfiguration):
+    token: str = ""
+
+
 @pytest.fixture
 def mock_reference_action_handler():
     handler = AsyncMock()
@@ -611,12 +615,21 @@ def mock_reference_action_handler():
 
 
 @pytest.fixture
+def mock_auth_action_handler():
+    handler = AsyncMock()
+    handler.return_value = {"valid_credentials": True}
+    return handler
+
+
+@pytest.fixture
 def mock_ephemeral_action_handlers(
         mock_reference_action_handler, mock_pull_observations_action_handler,
+        mock_auth_action_handler,
 ):
     return {
         "list_species": (mock_reference_action_handler, _MockReferenceActionConfiguration, None),
         "pull_observations": (mock_pull_observations_action_handler, MockPullActionConfiguration, None),
+        "auth": (mock_auth_action_handler, _MockAuthActionConfiguration, None),
     }
 
 
@@ -660,7 +673,7 @@ async def test_ephemeral_run_builds_synthetic_integration(
 
 
 @pytest.mark.asyncio
-async def test_ephemeral_run_rejects_non_reference_action(
+async def test_ephemeral_run_rejects_non_reference_non_auth_action(
         mocker, mock_gundi_client_v2, mock_config_manager,
         mock_publish_event, mock_ephemeral_action_handlers, mock_pull_observations_action_handler,
 ):
@@ -675,6 +688,50 @@ async def test_ephemeral_run_rejects_non_reference_action(
 
     assert response.status_code == 422
     assert not mock_pull_observations_action_handler.called
+
+
+@pytest.mark.asyncio
+async def test_ephemeral_run_allows_auth_action(
+        mocker, mock_gundi_client_v2, mock_config_manager,
+        mock_publish_event, mock_ephemeral_action_handlers, mock_auth_action_handler,
+):
+    # Auth actions verify credentials without side effects, so the ephemeral
+    # path allows them — used by the portal's "Test Connection" button in the
+    # creation wizard before an integration exists.
+    mocker.patch("app.services.action_runner.action_handlers", mock_ephemeral_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+
+    response = api_client.post("/v1/actions/execute/", json=_ephemeral_body(action_id="auth"))
+
+    assert response.status_code == 200
+    assert mock_auth_action_handler.called
+    # Handler receives the synthetic integration with auth already applied.
+    integration = mock_auth_action_handler.call_args.kwargs["integration"]
+    auth_config = find_config_for_action(integration.configurations, "auth")
+    assert auth_config.data == {"token": _EPHEMERAL_SECRET}
+
+
+@pytest.mark.asyncio
+async def test_ephemeral_auth_publishes_no_activity_events(
+        mocker, mock_gundi_client_v2, mock_config_manager,
+        mock_publish_event, mock_ephemeral_action_handlers,
+):
+    # The reference-action version of this invariant already exists; auth is
+    # covered separately because it's the newly-allowed shape and the guard
+    # relaxation must not regress the "no audit trail on ephemeral" contract.
+    mocker.patch("app.services.action_runner.action_handlers", mock_ephemeral_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+
+    response = api_client.post("/v1/actions/execute/", json=_ephemeral_body(action_id="auth"))
+
+    assert response.status_code == 200
+    assert not mock_publish_event.called
 
 
 @pytest.mark.asyncio

@@ -18,7 +18,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from gundi_core.events import IntegrationActionFailed, ActionExecutionFailed, LogLevel
 
-from app.actions.core import PullActionConfiguration, ReferenceActionConfiguration
+from app.actions.core import AuthActionConfiguration, PullActionConfiguration, ReferenceActionConfiguration
 from app.api_schemas import IntegrationState
 from .config_manager import IntegrationConfigurationManager
 from .state import IntegrationStateManager
@@ -336,18 +336,27 @@ async def _execute_action_impl(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY
         )
 
-    # Ephemeral execution is only safe for read-only reference actions —
-    # anything else would move data through Gundi on behalf of an integration
-    # that doesn't exist. cdip enforces the same rule independently.
+    # Ephemeral execution is only safe for read-only actions — reference
+    # lookups (fetch options against source-system credentials) and auth checks
+    # (verify credentials, no writes). Pull/push/generic move data through
+    # Gundi on behalf of an integration that doesn't exist and stay rejected.
+    # cdip enforces the same rule independently.
+    #
+    # Auth handlers must be side-effect-free by contract: they GET /me,
+    # /status, or the equivalent and report back valid_credentials. A rogue
+    # integration that writes from its auth handler would leak from the
+    # ephemeral path (no ActivityLog row) — the runner's test suite is where
+    # that contract is enforced per integration (see the AuthActionConfiguration
+    # section in each integration fork's test_actions_side_effects.py).
     if is_ephemeral:
-        is_reference_action = isinstance(config_model, type) and issubclass(
-            config_model, ReferenceActionConfiguration
+        is_ephemerally_safe = isinstance(config_model, type) and issubclass(
+            config_model, (ReferenceActionConfiguration, AuthActionConfiguration),
         )
-        if not is_reference_action:
+        if not is_ephemerally_safe:
             return await _handle_error(
                 ValueError(
-                    f"Action '{action_id}' is not a reference action; "
-                    "ephemeral execution is only supported for reference actions."
+                    f"Action '{action_id}' cannot be executed ephemerally; "
+                    "only reference and auth actions are supported."
                 ),
                 integration_id=None, action_id=action_id,
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
