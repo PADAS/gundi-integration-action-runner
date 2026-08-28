@@ -11,6 +11,7 @@ from gundi_core.events.transformers import ObservationTransformedER
 
 from app import settings
 from app.actions.core import AuthActionConfiguration, ReferenceActionConfiguration
+from app.actions.core import GenericActionConfiguration
 from app.conftest import AsyncMock, MockSubActionConfiguration, MockPushActionConfiguration, MockPullActionConfiguration, async_return
 from app.main import app
 from app.services.action_scheduler import trigger_action
@@ -607,6 +608,10 @@ class _MockAuthActionConfiguration(AuthActionConfiguration):
     token: str = ""
 
 
+class _MockGenericActionConfiguration(GenericActionConfiguration):
+    pass
+
+
 @pytest.fixture
 def mock_reference_action_handler():
     handler = AsyncMock()
@@ -622,14 +627,34 @@ def mock_auth_action_handler():
 
 
 @pytest.fixture
+def mock_push_action_handler():
+    handler = AsyncMock()
+    handler.return_value = {"pushed": 1}
+    return handler
+
+
+@pytest.fixture
+def mock_generic_action_handler():
+    handler = AsyncMock()
+    handler.return_value = {}
+    return handler
+
+
+@pytest.fixture
 def mock_ephemeral_action_handlers(
         mock_reference_action_handler, mock_pull_observations_action_handler,
-        mock_auth_action_handler,
+        mock_auth_action_handler, mock_push_action_handler, mock_generic_action_handler,
 ):
     return {
         "list_species": (mock_reference_action_handler, _MockReferenceActionConfiguration, None),
         "pull_observations": (mock_pull_observations_action_handler, MockPullActionConfiguration, None),
         "auth": (mock_auth_action_handler, _MockAuthActionConfiguration, None),
+        # Present so the parametrized rejection test can prove every
+        # non-safe action type is rejected — the guard uses config-model
+        # isinstance, and Generic is the fallback for handlers without an
+        # explicit annotation, so leaving it untested is the highest-risk gap.
+        "push_observations": (mock_push_action_handler, MockPushActionConfiguration, None),
+        "generic_lookup": (mock_generic_action_handler, _MockGenericActionConfiguration, None),
     }
 
 
@@ -672,22 +697,27 @@ async def test_ephemeral_run_builds_synthetic_integration(
     assert auth_config.data == {"token": _EPHEMERAL_SECRET}
 
 
+@pytest.mark.parametrize("action_id", ["pull_observations", "push_observations", "generic_lookup"])
 @pytest.mark.asyncio
 async def test_ephemeral_run_rejects_non_reference_non_auth_action(
-        mocker, mock_gundi_client_v2, mock_config_manager,
-        mock_publish_event, mock_ephemeral_action_handlers, mock_pull_observations_action_handler,
+        action_id, mocker, mock_gundi_client_v2, mock_config_manager,
+        mock_publish_event, mock_ephemeral_action_handlers,
 ):
+    # Every non-safe action type must be rejected — parametrized so nobody
+    # relaxes the guard for one type (e.g. Generic, the default fallback for
+    # handlers without an explicit config annotation) without regressing tests.
     mocker.patch("app.services.action_runner.action_handlers", mock_ephemeral_action_handlers)
     mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
     mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
     mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
     mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
 
-    body = _ephemeral_body(action_id="pull_observations")
+    handler = mock_ephemeral_action_handlers[action_id][0]
+    body = _ephemeral_body(action_id=action_id)
     response = api_client.post("/v1/actions/execute/", json=body)
 
     assert response.status_code == 422
-    assert not mock_pull_observations_action_handler.called
+    assert not handler.called
 
 
 @pytest.mark.asyncio
@@ -712,6 +742,51 @@ async def test_ephemeral_run_allows_auth_action(
     integration = mock_auth_action_handler.call_args.kwargs["integration"]
     auth_config = find_config_for_action(integration.configurations, "auth")
     assert auth_config.data == {"token": _EPHEMERAL_SECRET}
+
+
+@pytest.mark.asyncio
+async def test_ephemeral_auth_handler_write_is_blocked_end_to_end(
+        mocker, mock_gundi_client_v2, mock_config_manager,
+        mock_publish_event, mock_reference_action_handler, mock_pull_observations_action_handler,
+        mock_push_action_handler, mock_generic_action_handler,
+):
+    # Composition test: even if a buggy auth handler tries to write to Gundi
+    # from inside its own body, the write path's guard fires and the response
+    # is sanitized to the standard {action_id, error} shape. This is the
+    # defense-in-depth layer that keeps the "allow auth ephemeral" relaxation
+    # safe — the config-model guard whitelists auth; the write-path guard makes
+    # sure "auth" doesn't accidentally mean "arbitrary I/O against Gundi".
+    from app.services.gundi import send_events_to_gundi, EphemeralWriteBlocked
+
+    call_marker = {"called": False}
+    async def buggy_auth_handler(**kwargs):
+        call_marker["called"] = True
+        await send_events_to_gundi(events=[], integration_id="x")
+        return {"valid_credentials": True}
+
+    handlers = {
+        "list_species": (mock_reference_action_handler, _MockReferenceActionConfiguration, None),
+        "pull_observations": (mock_pull_observations_action_handler, MockPullActionConfiguration, None),
+        "auth": (buggy_auth_handler, _MockAuthActionConfiguration, None),
+        "push_observations": (mock_push_action_handler, MockPushActionConfiguration, None),
+        "generic_lookup": (mock_generic_action_handler, _MockGenericActionConfiguration, None),
+    }
+    mocker.patch("app.services.action_runner.action_handlers", handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+
+    response = api_client.post("/v1/actions/execute/", json=_ephemeral_body(action_id="auth"))
+
+    assert response.status_code == 500
+    # Sanitized error shape — no configurations, no request/response bodies,
+    # only the exception type name.
+    assert response.json() == {
+        "detail": {"action_id": "auth", "error": EphemeralWriteBlocked.__name__},
+    }
+    assert call_marker["called"], "buggy auth handler must have been reached"
+    assert not mock_publish_event.called
 
 
 @pytest.mark.asyncio

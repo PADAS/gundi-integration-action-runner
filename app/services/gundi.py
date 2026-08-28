@@ -43,7 +43,6 @@ async def _get_sensors_api_client(integration_id):
 
 @stamina.retry(on=httpx.HTTPError, wait_initial=10.0, wait_jitter=10.0, wait_max=300.0)
 async def send_events_to_gundi(events: List[dict], **kwargs) -> dict:
-    _block_if_ephemeral("send_events_to_gundi")
     """
     Send Events to Gundi using the REST API v2
     :param events: A list of events in the following format:
@@ -65,6 +64,7 @@ async def send_events_to_gundi(events: List[dict], **kwargs) -> dict:
     :param kwargs: integration_id: The UUID of the related integration
     :return: A dict with the response from the API
     """
+    _block_if_ephemeral("send_events_to_gundi")
     integration_id = kwargs.get("integration_id")
     assert integration_id, "integration_id is required"
     sensors_api_client = await _get_sensors_api_client(integration_id=str(integration_id))

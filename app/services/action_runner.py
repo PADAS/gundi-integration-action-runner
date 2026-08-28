@@ -401,7 +401,9 @@ async def _execute_action_impl(
         logger.error(message)
         return await _handle_error(
             ValueError(message), integration_id, action_id,
-            config_data=None if is_ephemeral else {"configurations": [i.dict() for i in integration.configurations]},
+            # Reached only for non-ephemeral runs (see the guard above), so
+            # dumping the saved integration's configurations here is safe.
+            config_data={"configurations": [i.dict() for i in integration.configurations]},
             status_code=status.HTTP_404_NOT_FOUND
         )
 
