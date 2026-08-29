@@ -6,6 +6,7 @@ import uuid
 from enum import Enum
 from typing import Optional
 
+import httpx
 import pydantic
 import stamina
 from gundi_client_v2 import GundiClient
@@ -453,15 +454,25 @@ async def _execute_action_impl(
             classify_heuristics=True,
         )
     except Exception as e:
-        # On the ephemeral path only: forward httpx.HTTPStatusError's source
-        # status so cdip's upstream_status reflects what the source returned
-        # (401/403 = bad creds vs 5xx = source-side). Saved-integration runs
-        # keep the historical 500 shape.
-        upstream_status = getattr(getattr(e, "response", None), "status_code", None)
+        # On the ephemeral path only: forward the source system's HTTP status
+        # so cdip's upstream_status reflects what the source returned. Two
+        # shapes surface it: httpx.HTTPStatusError.response.status_code (the
+        # common raise_for_status path) and IntegrationError.status_code (a
+        # handler wrapping the source error semantically). Other exception
+        # types with a stray .response.status_code attribute do NOT propagate.
+        if is_ephemeral:
+            if isinstance(e, httpx.HTTPStatusError) and e.response is not None:
+                ephemeral_status = e.response.status_code
+            elif isinstance(e, IntegrationError) and getattr(e, "status_code", None):
+                ephemeral_status = e.status_code
+            else:
+                ephemeral_status = status.HTTP_500_INTERNAL_SERVER_ERROR
+        else:
+            ephemeral_status = status.HTTP_500_INTERNAL_SERVER_ERROR
         return await _handle_error(
             e, integration_id, action_id,
             config_data=None if is_ephemeral else {"configurations": [c.dict() for c in integration.configurations]},
-            status_code=(upstream_status or status.HTTP_500_INTERNAL_SERVER_ERROR) if is_ephemeral else status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=ephemeral_status,
             classify_heuristics=True,
         )
 

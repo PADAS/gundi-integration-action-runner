@@ -744,22 +744,95 @@ async def test_ephemeral_run_allows_auth_action(
     assert auth_config.data == {"token": _EPHEMERAL_SECRET}
 
 
+@pytest.mark.parametrize("source_status", [401, 403, 500])
 @pytest.mark.asyncio
 async def test_ephemeral_handler_httpstatuserror_propagates_upstream_status(
-        mocker, mock_gundi_client_v2, mock_config_manager,
+        source_status, mocker, mock_gundi_client_v2, mock_config_manager,
         mock_publish_event, mock_reference_action_handler, mock_pull_observations_action_handler,
         mock_push_action_handler, mock_generic_action_handler,
 ):
-    # When the auth handler raises httpx.HTTPStatusError (source system said
-    # 401/403 to the credentials), the response status must reflect the source's
-    # code — cdip then surfaces it as upstream_status so the portal can classify
-    # as "invalid credentials" instead of a generic runner error.
+    # httpx.HTTPStatusError from a handler forwards the source's status.
+    # Parametrized so 401/403 (bad creds — portal classifies as invalid) and
+    # 500 (source-side bug — portal classifies as error) both propagate
+    # correctly. Ensures the check isn't 401-specific.
     import httpx
 
     async def rejecting_auth_handler(**kwargs):
         request = httpx.Request("GET", "https://source.example/status")
-        response = httpx.Response(status_code=401, request=request, json={"detail": "bad token"})
-        raise httpx.HTTPStatusError("401 Unauthorized", request=request, response=response)
+        response = httpx.Response(status_code=source_status, request=request, json={"detail": "source said no"})
+        raise httpx.HTTPStatusError(f"{source_status}", request=request, response=response)
+
+    handlers = {
+        "list_species": (mock_reference_action_handler, _MockReferenceActionConfiguration, None),
+        "pull_observations": (mock_pull_observations_action_handler, MockPullActionConfiguration, None),
+        "auth": (rejecting_auth_handler, _MockAuthActionConfiguration, None),
+        "push_observations": (mock_push_action_handler, MockPushActionConfiguration, None),
+        "generic_lookup": (mock_generic_action_handler, _MockGenericActionConfiguration, None),
+    }
+    mocker.patch("app.services.action_runner.action_handlers", handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+
+    response = api_client.post("/v1/actions/execute/", json=_ephemeral_body(action_id="auth"))
+
+    assert response.status_code == source_status
+    assert response.json() == {
+        "detail": {"action_id": "auth", "error": "HTTPStatusError"},
+    }
+    assert not mock_publish_event.called
+
+
+@pytest.mark.asyncio
+async def test_ephemeral_handler_connect_error_falls_back_to_500(
+        mocker, mock_gundi_client_v2, mock_config_manager,
+        mock_publish_event, mock_reference_action_handler, mock_pull_observations_action_handler,
+        mock_push_action_handler, mock_generic_action_handler,
+):
+    # Network-level failures don't carry a source status. Response must fall
+    # back to 500 (via the else branch of the propagation logic), not accidentally
+    # bubble up as some other status via .response access on None.
+    import httpx
+
+    async def unreachable_source_handler(**kwargs):
+        raise httpx.ConnectError("source unreachable")
+
+    handlers = {
+        "list_species": (mock_reference_action_handler, _MockReferenceActionConfiguration, None),
+        "pull_observations": (mock_pull_observations_action_handler, MockPullActionConfiguration, None),
+        "auth": (unreachable_source_handler, _MockAuthActionConfiguration, None),
+        "push_observations": (mock_push_action_handler, MockPushActionConfiguration, None),
+        "generic_lookup": (mock_generic_action_handler, _MockGenericActionConfiguration, None),
+    }
+    mocker.patch("app.services.action_runner.action_handlers", handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+
+    response = api_client.post("/v1/actions/execute/", json=_ephemeral_body(action_id="auth"))
+
+    assert response.status_code == 500
+    assert response.json() == {
+        "detail": {"action_id": "auth", "error": "ConnectError"},
+    }
+    assert not mock_publish_event.called
+
+
+@pytest.mark.asyncio
+async def test_ephemeral_handler_integration_error_propagates_status_code(
+        mocker, mock_gundi_client_v2, mock_config_manager,
+        mock_publish_event, mock_reference_action_handler, mock_pull_observations_action_handler,
+        mock_push_action_handler, mock_generic_action_handler,
+):
+    # A handler that wraps the source failure as IntegrationAuthError (401)
+    # instead of raising httpx directly must still propagate its status_code
+    # so cdip's upstream_status matches the semantic verdict.
+    from app.services.errors import IntegrationAuthError
+
+    async def rejecting_auth_handler(**kwargs):
+        raise IntegrationAuthError("bad creds", status_code=401)
 
     handlers = {
         "list_species": (mock_reference_action_handler, _MockReferenceActionConfiguration, None),
@@ -778,7 +851,7 @@ async def test_ephemeral_handler_httpstatuserror_propagates_upstream_status(
 
     assert response.status_code == 401
     assert response.json() == {
-        "detail": {"action_id": "auth", "error": "HTTPStatusError"},
+        "detail": {"action_id": "auth", "error": "IntegrationAuthError"},
     }
     assert not mock_publish_event.called
 
