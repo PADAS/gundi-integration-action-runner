@@ -745,6 +745,45 @@ async def test_ephemeral_run_allows_auth_action(
 
 
 @pytest.mark.asyncio
+async def test_ephemeral_handler_httpstatuserror_propagates_upstream_status(
+        mocker, mock_gundi_client_v2, mock_config_manager,
+        mock_publish_event, mock_reference_action_handler, mock_pull_observations_action_handler,
+        mock_push_action_handler, mock_generic_action_handler,
+):
+    # When the auth handler raises httpx.HTTPStatusError (source system said
+    # 401/403 to the credentials), the response status must reflect the source's
+    # code — cdip then surfaces it as upstream_status so the portal can classify
+    # as "invalid credentials" instead of a generic runner error.
+    import httpx
+
+    async def rejecting_auth_handler(**kwargs):
+        request = httpx.Request("GET", "https://source.example/status")
+        response = httpx.Response(status_code=401, request=request, json={"detail": "bad token"})
+        raise httpx.HTTPStatusError("401 Unauthorized", request=request, response=response)
+
+    handlers = {
+        "list_species": (mock_reference_action_handler, _MockReferenceActionConfiguration, None),
+        "pull_observations": (mock_pull_observations_action_handler, MockPullActionConfiguration, None),
+        "auth": (rejecting_auth_handler, _MockAuthActionConfiguration, None),
+        "push_observations": (mock_push_action_handler, MockPushActionConfiguration, None),
+        "generic_lookup": (mock_generic_action_handler, _MockGenericActionConfiguration, None),
+    }
+    mocker.patch("app.services.action_runner.action_handlers", handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+
+    response = api_client.post("/v1/actions/execute/", json=_ephemeral_body(action_id="auth"))
+
+    assert response.status_code == 401
+    assert response.json() == {
+        "detail": {"action_id": "auth", "error": "HTTPStatusError"},
+    }
+    assert not mock_publish_event.called
+
+
+@pytest.mark.asyncio
 async def test_ephemeral_auth_handler_write_is_blocked_end_to_end(
         mocker, mock_gundi_client_v2, mock_config_manager,
         mock_publish_event, mock_reference_action_handler, mock_pull_observations_action_handler,
@@ -873,7 +912,9 @@ async def test_ephemeral_run_error_does_not_leak_request_or_response_bodies(
 
     resp = api_client.post("/v1/actions/execute/", json=_ephemeral_body())
 
-    assert resp.status_code == 500
+    # Runner propagates HTTPStatusError.response.status_code so cdip's
+    # upstream_status matches what the source returned (401 here).
+    assert resp.status_code == 401
     body = resp.text
     assert _EPHEMERAL_SECRET not in body
     assert "authorization" not in body.lower()

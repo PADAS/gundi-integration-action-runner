@@ -453,9 +453,15 @@ async def _execute_action_impl(
             classify_heuristics=True,
         )
     except Exception as e:
+        # On the ephemeral path only: forward httpx.HTTPStatusError's source
+        # status so cdip's upstream_status reflects what the source returned
+        # (401/403 = bad creds vs 5xx = source-side). Saved-integration runs
+        # keep the historical 500 shape.
+        upstream_status = getattr(getattr(e, "response", None), "status_code", None)
         return await _handle_error(
             e, integration_id, action_id,
             config_data=None if is_ephemeral else {"configurations": [c.dict() for c in integration.configurations]},
+            status_code=(upstream_status or status.HTTP_500_INTERNAL_SERVER_ERROR) if is_ephemeral else status.HTTP_500_INTERNAL_SERVER_ERROR,
             classify_heuristics=True,
         )
 
