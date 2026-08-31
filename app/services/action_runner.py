@@ -260,10 +260,16 @@ async def execute_action(
         integration_state: Optional[IntegrationState] = None,
 ):
     if integration_id is not None and integration_state is not None:
-        return await _handle_error(
-            ValueError("Provide either integration_id or integration_state, not both"),
-            integration_id, action_id,
+        # Same reasoning as the "neither provided" branch below — request-shape
+        # error, so return a direct 422 rather than publishing an
+        # IntegrationActionFailed event against a real integration_id for what
+        # is really a malformed caller payload.
+        return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content=jsonable_encoder({"detail": {
+                "action_id": action_id,
+                "error": "Provide either integration_id or integration_state, not both",
+            }}),
         )
     is_ephemeral = integration_id is None and integration_state is not None
     # OR-fold the contextvar so a nested saved-integration call inside an
@@ -300,10 +306,16 @@ async def _execute_action_impl(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             )
     elif integration_id is None:
-        return await _handle_error(
-            ValueError("Either integration_id or integration_state must be provided"),
-            integration_id, action_id,
+        # Request-shape error, not an action failure. Return a direct 422
+        # instead of routing through _handle_error so we don't publish a
+        # phantom IntegrationActionFailed event with integration_id=None
+        # to the activity feed for what is really a malformed caller payload.
+        return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content=jsonable_encoder({"detail": {
+                "action_id": action_id,
+                "error": "Either integration_id or integration_state must be provided",
+            }}),
         )
     else:
         try:  # Get the integration details to pass it to the action handler

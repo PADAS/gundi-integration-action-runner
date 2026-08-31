@@ -15,6 +15,7 @@ from app.actions.core import GenericActionConfiguration
 from app.conftest import AsyncMock, MockSubActionConfiguration, MockPushActionConfiguration, MockPullActionConfiguration, async_return
 from app.main import app
 from app.services.action_scheduler import trigger_action
+from app.api_schemas import IntegrationState
 from app.services.action_runner import execute_action
 from app.services.errors import IntegrationAuthError
 from app.services.utils import find_config_for_action
@@ -1032,6 +1033,56 @@ async def test_request_with_both_integration_id_and_state_is_422(
 
     assert response.status_code == 422
     assert not mock_reference_action_handler.called
+    # Request-shape errors must not publish a bogus IntegrationActionFailed event
+    # (would leak a phantom activity-log entry against a real integration_id).
+    assert not _published_events_of_type(mock_publish_event, IntegrationActionFailed)
+
+
+@pytest.mark.asyncio
+async def test_execute_action_both_ids_direct_call_does_not_publish(
+        mocker, mock_publish_event,
+):
+    # The router rejects both/neither before execute_action runs, so the
+    # API-level test above doesn't actually exercise the runner-side guard.
+    # main.py's PubSub route calls execute_action() directly with the payload
+    # it decodes, so a malformed message reaches the runner branches. This
+    # test pins the fix at that entry point: request-shape errors must return
+    # 422 without publishing IntegrationActionFailed against a real integration id.
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+    state = IntegrationState(
+        type_value="earth_ranger",
+        base_url="https://sandbox.pamdas.org",
+        configurations=[],
+    )
+
+    response = await execute_action(
+        integration_id="779ff3ab-5589-4f4c-9e0a-ae8d6c9edff0",
+        integration_state=state,
+        action_id="list_species",
+    )
+
+    assert response.status_code == 422
+    assert not mock_publish_event.called
+
+
+@pytest.mark.asyncio
+async def test_execute_action_neither_id_nor_state_direct_call_does_not_publish(
+        mocker, mock_publish_event,
+):
+    # Same reasoning as the "both" companion above — bypass the router so
+    # the runner-level branch (line ~308) actually runs.
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+
+    response = await execute_action(
+        integration_id=None,
+        integration_state=None,
+        action_id="list_species",
+    )
+
+    assert response.status_code == 422
+    assert not mock_publish_event.called
 
 
 @pytest.mark.asyncio

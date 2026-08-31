@@ -16,7 +16,8 @@ class IntegrationState(BaseModel):
 
 class ActionRequest(BaseModel):
     # `integration_id` is optional: when absent, `integration_state` must be
-    # present and the action must be a reference action.
+    # present and the action must be reference or auth (the ephemerally-safe
+    # whitelist enforced in action_runner._execute_action_impl).
     integration_id: Optional[str] = None
     action_id: str
     run_in_background: bool = False
