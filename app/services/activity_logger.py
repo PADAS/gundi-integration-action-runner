@@ -33,9 +33,9 @@ from app.services.errors import format_error_message
 logger = logging.getLogger(__name__)
 
 
-# Set for the duration of an ephemeral reference run. Every publish path
-# checks it and short-circuits — no integration to log against, and draft
-# credentials must never touch PubSub.
+# Set for the duration of an ephemeral run (reference or auth). Every publish
+# path checks it and short-circuits — no integration to log against, and
+# draft credentials must never touch PubSub.
 ephemeral_run: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "ephemeral_run", default=False
 )

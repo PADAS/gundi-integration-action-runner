@@ -118,8 +118,9 @@ async def _handle_error(
         *, classify_heuristics: bool = False,
 ):
     """
-    Handles errors by logging, extracting details as available, and publishing events for activity logs.
-    Returns a JSON response with error details too.
+    Log the error and return a JSON response with details. On non-ephemeral
+    runs, also publishes an IntegrationActionFailed event for the activity
+    feed; ephemeral runs skip the publish (no integration to log against).
     """
     is_ephemeral = ephemeral_run.get()
 
