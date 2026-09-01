@@ -1012,7 +1012,8 @@ async def test_ephemeral_run_rejects_background_execution(
     response = api_client.post("/v1/actions/execute/", json=body)
 
     assert response.status_code == 422
-    assert "background" in response.json()["detail"].lower()
+    # Router 422s now match the runner-side shape: {"detail": {"action_id", "error"}}.
+    assert "background" in response.json()["detail"]["error"].lower()
     assert not mock_reference_action_handler.called
 
 

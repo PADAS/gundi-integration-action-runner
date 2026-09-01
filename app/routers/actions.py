@@ -30,20 +30,24 @@ async def execute(
     # Direct /execute calls are explicit invocations → manual by default, so a
     # misconfigured pull action surfaces a 404/422 here rather than skipping.
     triggered_by = request.triggered_by or ActionTrigger.MANUAL.value
+    # Match action_runner's error shape ({"detail": {"action_id", "error"}}) so
+    # clients see one stable schema across router-level and runner-level 422s.
+    def _shape_error(message: str) -> dict:
+        return {"action_id": request.action_id, "error": message}
     if request.integration_id is None and request.integration_state is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Provide either integration_id or integration_state.",
+            detail=_shape_error("Provide either integration_id or integration_state."),
         )
     if request.integration_id is not None and request.integration_state is not None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Provide either integration_id or integration_state, not both.",
+            detail=_shape_error("Provide either integration_id or integration_state, not both."),
         )
     if request.integration_state is not None and request.run_in_background:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Ephemeral executions cannot run in background.",
+            detail=_shape_error("Ephemeral executions cannot run in background."),
         )
     if request.run_in_background:
         background_tasks.add_task(

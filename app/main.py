@@ -146,13 +146,20 @@ app.include_router(
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-
+    # Full body — including any draft credentials on the ephemeral path — stays
+    # in the DEBUG server log (ops-controlled) but MUST NOT round-trip back to
+    # the caller in the response. Strip pydantic's `input`/`ctx` fields off
+    # each error for the same reason: pydantic v2 mirrors the offending value
+    # into `input` which would leak a bad token/password verbatim.
     logger.debug(
         "Failed handling body: %s",
         jsonable_encoder({"detail": exc.errors(), "body": exc.body}),
     )
-
+    safe_errors = [
+        {k: v for k, v in err.items() if k not in ("input", "ctx")}
+        for err in exc.errors()
+    ]
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content=jsonable_encoder({"detail": exc.errors(), "body": exc.body}),
+        content=jsonable_encoder({"detail": safe_errors}),
     )
