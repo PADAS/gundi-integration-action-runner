@@ -6,6 +6,7 @@ import uuid
 from enum import Enum
 from typing import Optional
 
+import aiohttp
 import httpx
 import pydantic
 import stamina
@@ -112,15 +113,83 @@ def _build_synthetic_integration(state: IntegrationState) -> Integration:
     })
 
 
+def _request_error_response(action_id: Optional[str], message: str,
+                            status_code: int = status.HTTP_422_UNPROCESSABLE_ENTITY) -> JSONResponse:
+    """The one error shape shared by router-level and runner-level rejections
+    that must not publish an activity event: {"detail": {"action_id", "error"}}."""
+    return JSONResponse(
+        status_code=status_code,
+        content=jsonable_encoder({"detail": {"action_id": action_id, "error": message}}),
+    )
+
+
+def _ephemeral_error_text(exc: Exception, *, expose_message: bool) -> str:
+    """Portal-facing text for a failure on the ephemeral path.
+
+    Redaction is by provenance, not by path. Runner-authored errors
+    (expose_message=True) keep their message: the runner built it, so it
+    cannot contain draft credentials. A pydantic ValidationError exposes
+    field location and message only; pydantic 1.x never echoes the offending
+    input there. Anything raised by a handler is reduced to the curated
+    classification title plus the HTTP status, never str(exc), which can
+    embed our outgoing request (auth headers) or the source's response body.
+    """
+    if isinstance(exc, pydantic.ValidationError):
+        fields = "; ".join(
+            f"{'.'.join(str(part) for part in err['loc'])}: {err['msg']}" for err in exc.errors()
+        )
+        return f"{type(exc).__name__}: {fields}" if fields else type(exc).__name__
+    if expose_message:
+        message = exc.args[0] if exc.args else str(exc)
+        return f"{type(exc).__name__}: {message}"
+    classified = classify_error(exc)
+    if classified:
+        text = classified.title
+        if classified.status_code:
+            text = f"{text} (HTTP {classified.status_code})"
+        return text
+    return type(exc).__name__
+
+
+def _ephemeral_status_for(exc: Exception) -> int:
+    """HTTP status for a handler failure on the ephemeral path.
+
+    Forward the source system's verdict so cdip's upstream_status matches it
+    and the portal can tell bad credentials from a broken source. Three
+    shapes carry it: httpx.HTTPStatusError.response.status_code,
+    aiohttp.ClientResponseError.status, and IntegrationError.status_code
+    (an auth error with no explicit code is still a 401). Statuses below 400
+    are not failures the portal can classify (a redirect surfaced by
+    raise_for_status with redirects off is the common one) and fall back to
+    500 rather than becoming the runner's own response status.
+    """
+    source_status = None
+    if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
+        source_status = exc.response.status_code
+    elif isinstance(exc, aiohttp.ClientResponseError):
+        source_status = exc.status
+    elif isinstance(exc, IntegrationError):
+        source_status = getattr(exc, "status_code", None)
+        if not source_status and exc.error_type == "auth":
+            source_status = status.HTTP_401_UNAUTHORIZED
+    if source_status is not None and source_status >= 400:
+        return source_status
+    return status.HTTP_500_INTERNAL_SERVER_ERROR
+
+
 async def _handle_error(
         exc: Exception, integration_id: Optional[str], action_id: Optional[str] = None,
         config_data=None, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        *, classify_heuristics: bool = False,
+        *, classify_heuristics: bool = False, expose_message: bool = False,
 ):
     """
     Log the error and return a JSON response with details. On non-ephemeral
     runs, also publishes an IntegrationActionFailed event for the activity
     feed; ephemeral runs skip the publish (no integration to log against).
+
+    expose_message marks an exception the runner itself constructed (unknown
+    action, whitelist rejection, ...). Only the ephemeral branch reads it:
+    saved-integration runs always report the full message.
     """
     is_ephemeral = ephemeral_run.get()
 
@@ -128,16 +197,10 @@ async def _handle_error(
     logger.exception(log_message)
 
     if is_ephemeral:
-        # Third-party exceptions may embed our outgoing request (with auth
-        # headers) or the source's response body. Return only the exception
-        # class name to the caller — full details stay in the server log
-        # above — and skip the activity-log publish entirely.
-        return JSONResponse(
-            status_code=status_code,
-            content=jsonable_encoder({"detail": {
-                "action_id": action_id,
-                "error": type(exc).__name__,
-            }}),
+        # No integration to log against, and draft credentials must not reach
+        # PubSub: skip the publish. Full details stay in the server log above.
+        return _request_error_response(
+            action_id, _ephemeral_error_text(exc, expose_message=expose_message), status_code,
         )
 
     # Classified errors (auth, connectivity, rate limit, bad response) get
@@ -332,7 +395,7 @@ async def _execute_action_impl(
             return await _handle_error(
                 KeyError(f"Action '{action_id}' is not supported"),
                 integration_id, action_id,
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, expose_message=True,
             )
     elif data and (data_type := data.get("event_type")):  # Push data actions
         try:  # Get the action handler by data type
@@ -341,13 +404,13 @@ async def _execute_action_impl(
             return await _handle_error(
                 ValueError(f"Data type '{data_type}' is not supported"),
                 integration_id, action_id,
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, expose_message=True,
             )
     else:
         return await _handle_error(
             ValueError("No action handler found by action ID or data type"),
             integration_id, action_id,
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, expose_message=True,
         )
 
     # Only read-only actions allowed ephemerally. cdip enforces independently.
@@ -362,7 +425,7 @@ async def _execute_action_impl(
                     "only reference and auth actions are supported."
                 ),
                 integration_id=None, action_id=action_id,
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, expose_message=True,
             )
 
     logger.info(f"Executing action '{action_id}' for integration '{integration_id or '(ephemeral)'}'...")
@@ -488,25 +551,12 @@ async def _execute_action_impl(
             classify_heuristics=True,
         )
     except Exception as e:
-        # On the ephemeral path only: forward the source system's HTTP status
-        # so cdip's upstream_status reflects what the source returned. Two
-        # shapes surface it: httpx.HTTPStatusError.response.status_code (the
-        # common raise_for_status path) and IntegrationError.status_code (a
-        # handler wrapping the source error semantically). Other exception
-        # types with a stray .response.status_code attribute do NOT propagate.
-        if is_ephemeral:
-            if isinstance(e, httpx.HTTPStatusError) and e.response is not None:
-                ephemeral_status = e.response.status_code
-            elif isinstance(e, IntegrationError) and getattr(e, "status_code", None):
-                ephemeral_status = e.status_code
-            else:
-                ephemeral_status = status.HTTP_500_INTERNAL_SERVER_ERROR
-        else:
-            ephemeral_status = status.HTTP_500_INTERNAL_SERVER_ERROR
+        # Saved-integration runs keep the historical 500; the ephemeral path
+        # forwards the source system's verdict (see _ephemeral_status_for).
         return await _handle_error(
             e, integration_id, action_id,
             config_data=handler_error_config_data,
-            status_code=ephemeral_status,
+            status_code=_ephemeral_status_for(e) if is_ephemeral else status.HTTP_500_INTERNAL_SERVER_ERROR,
             classify_heuristics=True,
         )
 

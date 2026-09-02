@@ -609,6 +609,19 @@ class _MockAuthActionConfiguration(AuthActionConfiguration):
     token: str = ""
 
 
+class _MockRequiredParamReferenceConfiguration(ReferenceActionConfiguration):
+    event_type: str  # required query param
+
+
+# Curated classification titles the ephemeral path returns for third-party
+# failures, in place of str(exc) which can embed our request or the source body.
+_EXPECTED_SOURCE_STATUS_TEXT = {
+    401: "Authentication failed (HTTP 401)",
+    403: "Authentication failed (HTTP 403)",
+    500: "Unexpected response from the provider (HTTP 500)",
+}
+
+
 class _MockGenericActionConfiguration(GenericActionConfiguration):
     pass
 
@@ -648,6 +661,7 @@ def mock_ephemeral_action_handlers(
 ):
     return {
         "list_species": (mock_reference_action_handler, _MockReferenceActionConfiguration, None),
+        "list_event_fields": (mock_reference_action_handler, _MockRequiredParamReferenceConfiguration, None),
         "pull_observations": (mock_pull_observations_action_handler, MockPullActionConfiguration, None),
         "auth": (mock_auth_action_handler, _MockAuthActionConfiguration, None),
         # Present so the parametrized rejection test can prove every
@@ -780,7 +794,7 @@ async def test_ephemeral_handler_httpstatuserror_propagates_upstream_status(
 
     assert response.status_code == source_status
     assert response.json() == {
-        "detail": {"action_id": "auth", "error": "HTTPStatusError"},
+        "detail": {"action_id": "auth", "error": _EXPECTED_SOURCE_STATUS_TEXT[source_status]},
     }
     assert not mock_publish_event.called
 
@@ -816,7 +830,7 @@ async def test_ephemeral_handler_connect_error_falls_back_to_500(
 
     assert response.status_code == 500
     assert response.json() == {
-        "detail": {"action_id": "auth", "error": "ConnectError"},
+        "detail": {"action_id": "auth", "error": "Could not reach the provider"},
     }
     assert not mock_publish_event.called
 
@@ -852,7 +866,7 @@ async def test_ephemeral_handler_integration_error_propagates_status_code(
 
     assert response.status_code == 401
     assert response.json() == {
-        "detail": {"action_id": "auth", "error": "IntegrationAuthError"},
+        "detail": {"action_id": "auth", "error": "Authentication failed (HTTP 401)"},
     }
     assert not mock_publish_event.called
 
@@ -1315,6 +1329,154 @@ async def test_saved_integration_reference_action_error_never_carries_stored_con
     for event in _published_events_of_type(mock_publish_event, IntegrationActionFailed):
         assert not event.payload.config_data
         assert stored_token not in event.json()
+
+
+def _patch_ephemeral_runner(mocker, handlers, mock_gundi_client_v2, mock_config_manager, mock_publish_event):
+    mocker.patch("app.services.action_runner.action_handlers", handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+
+
+@pytest.mark.asyncio
+async def test_ephemeral_whitelist_rejection_explains_itself(
+        mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event, mock_ephemeral_action_handlers,
+):
+    # Runner-authored errors carry their own text: the runner built the
+    # message, so it cannot contain draft credentials. A bare "ValueError"
+    # is what the portal used to render in the toast.
+    _patch_ephemeral_runner(mocker, mock_ephemeral_action_handlers, mock_gundi_client_v2, mock_config_manager, mock_publish_event)
+
+    response = api_client.post("/v1/actions/execute/", json=_ephemeral_body(action_id="pull_observations"))
+
+    assert response.status_code == 422
+    assert "only reference and auth actions are supported" in response.json()["detail"]["error"]
+
+
+@pytest.mark.asyncio
+async def test_ephemeral_unknown_action_explains_itself(
+        mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event, mock_ephemeral_action_handlers,
+):
+    _patch_ephemeral_runner(mocker, mock_ephemeral_action_handlers, mock_gundi_client_v2, mock_config_manager, mock_publish_event)
+
+    response = api_client.post("/v1/actions/execute/", json=_ephemeral_body(action_id="list_nothing"))
+
+    assert response.status_code == 422
+    assert "Action 'list_nothing' is not supported" in response.json()["detail"]["error"]
+
+
+@pytest.mark.asyncio
+async def test_ephemeral_missing_required_param_names_the_field(
+        mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event, mock_ephemeral_action_handlers,
+):
+    # pydantic 1.x ValidationError.errors() carries loc/msg/type and never the
+    # offending input, so naming the field is safe and is what the wizard
+    # needs to tell the user what to supply.
+    _patch_ephemeral_runner(mocker, mock_ephemeral_action_handlers, mock_gundi_client_v2, mock_config_manager, mock_publish_event)
+    body = {
+        "action_id": "list_event_fields",
+        "config_overrides": {},
+        "integration_state": {
+            "type_value": "earth_ranger",
+            "base_url": "https://sandbox.pamdas.org",
+            "configurations": [{"action_value": "auth", "data": {"token": _EPHEMERAL_SECRET}}],
+        },
+    }
+
+    response = api_client.post("/v1/actions/execute/", json=body)
+
+    assert response.status_code == 422
+    error = response.json()["detail"]["error"]
+    assert "event_type" in error and "field required" in error
+    assert _EPHEMERAL_SECRET not in response.text
+
+
+def _auth_handlers_raising(exc, mock_reference_action_handler, mock_pull_observations_action_handler,
+                           mock_push_action_handler, mock_generic_action_handler):
+    async def failing_auth_handler(**kwargs):
+        raise exc
+    return {
+        "list_species": (mock_reference_action_handler, _MockReferenceActionConfiguration, None),
+        "pull_observations": (mock_pull_observations_action_handler, MockPullActionConfiguration, None),
+        "auth": (failing_auth_handler, _MockAuthActionConfiguration, None),
+        "push_observations": (mock_push_action_handler, MockPushActionConfiguration, None),
+        "generic_lookup": (mock_generic_action_handler, _MockGenericActionConfiguration, None),
+    }
+
+
+@pytest.mark.asyncio
+async def test_ephemeral_auth_error_without_status_code_is_401(
+        mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event,
+        mock_reference_action_handler, mock_pull_observations_action_handler,
+        mock_push_action_handler, mock_generic_action_handler,
+):
+    # The idiomatic `raise IntegrationAuthError("Invalid API key")` sets no
+    # status_code. On the Test Connection path that must still read as bad
+    # credentials (401), not as an internal error (500).
+    from app.services.errors import IntegrationAuthError
+    handlers = _auth_handlers_raising(
+        IntegrationAuthError("Invalid API key"), mock_reference_action_handler,
+        mock_pull_observations_action_handler, mock_push_action_handler, mock_generic_action_handler,
+    )
+    _patch_ephemeral_runner(mocker, handlers, mock_gundi_client_v2, mock_config_manager, mock_publish_event)
+
+    response = api_client.post("/v1/actions/execute/", json=_ephemeral_body(action_id="auth"))
+
+    assert response.status_code == 401
+    assert response.json()["detail"]["error"] == "Authentication failed"
+
+
+@pytest.mark.asyncio
+async def test_ephemeral_aiohttp_response_error_propagates_status(
+        mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event,
+        mock_reference_action_handler, mock_pull_observations_action_handler,
+        mock_push_action_handler, mock_generic_action_handler,
+):
+    # aiohttp carries the source status on `.status`, not `.response.status_code`.
+    import aiohttp
+    from multidict import CIMultiDict, CIMultiDictProxy
+    from yarl import URL
+    request_info = aiohttp.RequestInfo(
+        url=URL("https://source.example/me"), method="GET",
+        headers=CIMultiDictProxy(CIMultiDict()), real_url=URL("https://source.example/me"),
+    )
+    exc = aiohttp.ClientResponseError(request_info, (), status=403, message="Forbidden")
+    handlers = _auth_handlers_raising(
+        exc, mock_reference_action_handler, mock_pull_observations_action_handler,
+        mock_push_action_handler, mock_generic_action_handler,
+    )
+    _patch_ephemeral_runner(mocker, handlers, mock_gundi_client_v2, mock_config_manager, mock_publish_event)
+
+    response = api_client.post("/v1/actions/execute/", json=_ephemeral_body(action_id="auth"))
+
+    assert response.status_code == 403
+    assert not mock_publish_event.called
+
+
+@pytest.mark.asyncio
+async def test_ephemeral_source_redirect_is_not_forwarded_as_runner_status(
+        mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event,
+        mock_reference_action_handler, mock_pull_observations_action_handler,
+        mock_push_action_handler, mock_generic_action_handler,
+):
+    # raise_for_status raises on 3xx when redirects are off. Answering 301
+    # with a JSON body and no Location header is not a response the portal
+    # can act on; only source statuses >= 400 are forwarded.
+    import httpx
+    request = httpx.Request("GET", "http://source.example/me")
+    response = httpx.Response(301, request=request, headers={"location": "https://source.example/me"})
+    exc = httpx.HTTPStatusError("301 Moved Permanently", request=request, response=response)
+    handlers = _auth_handlers_raising(
+        exc, mock_reference_action_handler, mock_pull_observations_action_handler,
+        mock_push_action_handler, mock_generic_action_handler,
+    )
+    _patch_ephemeral_runner(mocker, handlers, mock_gundi_client_v2, mock_config_manager, mock_publish_event)
+
+    resp = api_client.post("/v1/actions/execute/", json=_ephemeral_body(action_id="auth"))
+
+    assert resp.status_code == 500
+    assert "location" not in {k.lower() for k in resp.headers}
 
 
 @pytest.mark.asyncio
