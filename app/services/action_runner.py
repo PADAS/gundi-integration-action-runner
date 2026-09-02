@@ -323,18 +323,8 @@ async def execute_action(
         data: dict = None, metadata: dict = None, triggered_by: Optional[str] = None,
         integration_state: Optional[IntegrationState] = None,
 ):
-    if integration_id is not None and integration_state is not None:
-        # Same reasoning as the "neither provided" branch below — request-shape
-        # error, so return a direct 422 rather than publishing an
-        # IntegrationActionFailed event against a real integration_id for what
-        # is really a malformed caller payload.
-        return JSONResponse(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            content=jsonable_encoder({"detail": {
-                "action_id": action_id,
-                "error": "Provide either integration_id or integration_state, not both",
-            }}),
-        )
+    # The router already rejects "both provided"; no other caller passes
+    # integration_state, so a saved integration_id wins here by construction.
     is_ephemeral = integration_id is None and integration_state is not None
     # OR-fold the contextvar so a nested saved-integration call inside an
     # ephemeral outer run doesn't re-enable publishing (e.g. a reference
@@ -370,17 +360,12 @@ async def _execute_action_impl(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             )
     elif integration_id is None:
-        # Request-shape error, not an action failure. Return a direct 422
-        # instead of routing through _handle_error so we don't publish a
-        # phantom IntegrationActionFailed event with integration_id=None
-        # to the activity feed for what is really a malformed caller payload.
-        return JSONResponse(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            content=jsonable_encoder({"detail": {
-                "action_id": action_id,
-                "error": "Either integration_id or integration_state must be provided",
-            }}),
-        )
+        # Request-shape error, not an action failure: reachable from the PubSub
+        # route, which forwards whatever the message carried. Don't publish a
+        # phantom IntegrationActionFailed with integration_id=None, but do
+        # leave a trace, since main.py acks the message regardless.
+        logger.error(f"Cannot execute action '{action_id}': no integration_id or integration_state provided.")
+        return _request_error_response(action_id, "Provide either integration_id or integration_state.")
     else:
         try:  # Get the integration details to pass it to the action handler
             integration = await config_manager.get_integration_details(integration_id)
