@@ -1459,6 +1459,50 @@ async def test_ephemeral_source_redirect_is_not_forwarded_as_runner_status(
 
 
 @pytest.mark.asyncio
+async def test_trigger_action_is_blocked_on_ephemeral_run(mocker, mock_publish_event):
+    # The last unguarded outbound path from the #87 thread. Publishing a
+    # RunIntegrationAction against a synthetic id would either vanish
+    # silently (async) or run a saved-integration lookup that fails (sync);
+    # raising is the only honest answer to a reference/auth handler.
+    from app.services.activity_logger import ephemeral_run
+    from app.services.gundi import EphemeralWriteBlocked
+    mocker.patch("app.services.action_scheduler.publish_event", mock_publish_event)
+
+    token = ephemeral_run.set(True)
+    try:
+        with pytest.raises(EphemeralWriteBlocked):
+            await trigger_action(integration_id="synthetic-uuid", action_id="pull_observations")
+    finally:
+        ephemeral_run.reset(token)
+
+    assert not mock_publish_event.called
+
+
+def test_validation_error_log_does_not_carry_the_request_body(caplog):
+    # Copilot on #98: the DEBUG log of a failed body validation wrote the
+    # whole body, draft credentials included. Log access is usually broader
+    # than access to the originating request, so only the sanitized errors
+    # may be logged.
+    import logging
+    caplog.set_level(logging.DEBUG, logger="app.main")
+    body = {
+        "action_id": "auth",
+        "integration_state": {
+            "type_value": "earth_ranger",
+            # `data` missing -> RequestValidationError; the token rides along
+            # in the body that used to be logged verbatim.
+            "configurations": [{"action_value": "auth", "token": _EPHEMERAL_SECRET}],
+        },
+    }
+
+    response = api_client.post("/v1/actions/execute/", json=body)
+
+    assert response.status_code == 422
+    assert _EPHEMERAL_SECRET not in response.text
+    assert _EPHEMERAL_SECRET not in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_push_data_acks_message_without_destination_id(
         mocker, pubsub_message_request_headers, run_push_action_pubsub_payload
 ):
