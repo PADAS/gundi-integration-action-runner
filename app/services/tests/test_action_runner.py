@@ -1228,6 +1228,96 @@ async def test_ephemeral_contextvar_or_folds_with_outer_state(mocker, mock_publi
 
 
 @pytest.mark.asyncio
+async def test_saved_integration_reference_action_with_no_config_and_no_overrides_is_not_404(
+        mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event,
+        mock_ephemeral_action_handlers, mock_reference_action_handler, integration_v2,
+):
+    # Same rule the earthranger and inaturalist forks already ship: a
+    # reference action is stateless, so "no stored config row and no
+    # overrides" is a complete zero-param query on a *saved* integration too,
+    # not a missing-configuration 404. config_model.parse_obj({}) below still
+    # 422s when params are actually required.
+    mock_config_manager.get_action_configuration = AsyncMock(return_value=None)
+    mocker.patch("app.services.action_runner.action_handlers", mock_ephemeral_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+
+    response = api_client.post(
+        "/v1/actions/execute/",
+        json={"integration_id": str(integration_v2.id), "action_id": "list_species"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert mock_reference_action_handler.called
+    assert mock_reference_action_handler.call_args.kwargs["action_config"].tag_name == ""
+    # A stateless action has no row to look up, and a redis miss in
+    # get_action_configuration reloads the integration from the portal, so
+    # looking it up on every dropdown open would be a portal call each time.
+    assert not mock_config_manager.get_action_configuration.called
+
+
+@pytest.mark.asyncio
+async def test_saved_integration_generic_action_with_no_config_and_no_overrides_still_404s(
+        mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event,
+        mock_ephemeral_action_handlers, mock_generic_action_handler, integration_v2,
+):
+    # Pin: relaxing the missing-config 404 for reference actions must not
+    # loosen it for any other non-pull action type.
+    mock_config_manager.get_action_configuration = AsyncMock(return_value=None)
+    mocker.patch("app.services.action_runner.action_handlers", mock_ephemeral_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+
+    response = api_client.post(
+        "/v1/actions/execute/",
+        json={"integration_id": str(integration_v2.id), "action_id": "generic_lookup"},
+    )
+
+    assert response.status_code == 404
+    assert not mock_generic_action_handler.called
+
+
+@pytest.mark.asyncio
+async def test_saved_integration_reference_action_error_never_carries_stored_configurations(
+        mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event,
+        mock_ephemeral_action_handlers, mock_reference_action_handler, integration_v2,
+):
+    # Reference actions run at dropdown-open frequency, so a handler failure is
+    # routine, not exceptional. Like every ephemeral error, it must not carry
+    # the saved integration's configurations (raw auth secrets) into the JSON
+    # error response or the published IntegrationActionFailed event. Same rule
+    # the earthranger and inaturalist forks already ship.
+    mock_reference_action_handler.side_effect = RuntimeError("upstream unreachable")
+    mock_config_manager.get_action_configuration = AsyncMock(return_value=None)
+    mocker.patch("app.services.action_runner.action_handlers", mock_ephemeral_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+
+    response = api_client.post(
+        "/v1/actions/execute/",
+        json={"integration_id": str(integration_v2.id), "action_id": "list_species"},
+    )
+
+    assert response.status_code == 500
+    stored_token = find_config_for_action(integration_v2.configurations, "auth").data["token"]
+    assert stored_token not in response.text
+    # _handle_error normalizes a None config_data to {}; the invariant is that
+    # no configuration (and no secret) reaches the response or the event.
+    assert not response.json()["detail"]["config_data"]
+    # Whether a failing reference action publishes an activity event at all is
+    # not this test's concern; whatever is published must be redacted.
+    for event in _published_events_of_type(mock_publish_event, IntegrationActionFailed):
+        assert not event.payload.config_data
+        assert stored_token not in event.json()
+
+
+@pytest.mark.asyncio
 async def test_push_data_acks_message_without_destination_id(
         mocker, pubsub_message_request_headers, run_push_action_pubsub_payload
 ):

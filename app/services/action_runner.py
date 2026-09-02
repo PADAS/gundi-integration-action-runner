@@ -379,20 +379,31 @@ async def _execute_action_impl(
     is_manual = (triggered_by or "").strip().lower() == ActionTrigger.MANUAL.value
     skippable_pull = is_pull_action and not is_manual
 
+    # Reference actions are stateless: they never have a stored config row, and
+    # a caller sending no config_overrides (e.g. ER's zero-param
+    # list_event_types) is a legitimate, complete request — not a 404. The
+    # ephemeral path has the same property for every action: the wizard only
+    # forwards `configurations` for the sections the user edited (auth), never
+    # a row for the action being executed. Either way `config_model
+    # .parse_obj({})` below decides whether params are actually required and
+    # raises ValidationError → 422 if they are.
+    is_reference_action = isinstance(config_model, type) and issubclass(
+        config_model, ReferenceActionConfiguration
+    )
+    skip_missing_config = is_ephemeral or is_reference_action
+
     # Get the configuration needed to execute the action
     if is_ephemeral:
         action_config = find_config_for_action(integration.configurations, action_id)
+    elif is_reference_action:
+        # Stateless by contract, so there is no row to find. Looking one up
+        # anyway would miss redis every time, and get_action_configuration
+        # reloads the integration from the portal on a miss: a portal call on
+        # every dropdown open.
+        action_config = None
     else:
         action_config = await config_manager.get_action_configuration(integration_id, action_id)
-    # Ephemeral runs skip the missing-config 404 entirely: reference actions
-    # are frequently parameter-less (ER's list_event_types /
-    # list_event_categories both declare `params: {}`), and the wizard only
-    # forwards `configurations` for the sections the user edited (auth) —
-    # never a config row for the reference action itself. `config_model
-    # .parse_obj({})` below already decides whether params are required and
-    # raises ValidationError → 422 if they are, so the 404 branch was pure
-    # feature-blocking noise on this path.
-    if not is_ephemeral and not action_config and not config_overrides:
+    if not skip_missing_config and not action_config and not config_overrides:
         if skippable_pull:
             return _skip_quietly(
                 integration_id, action_id,
@@ -404,8 +415,9 @@ async def _execute_action_impl(
         logger.error(message)
         return await _handle_error(
             ValueError(message), integration_id, action_id,
-            # Reached only for non-ephemeral runs (see the guard above), so
-            # dumping the saved integration's configurations here is safe.
+            # Reached only for non-ephemeral, non-reference runs (see the
+            # guard above). Those keep the pre-existing activity-log contract
+            # of attaching the saved configurations to the failure event.
             config_data={"configurations": [i.dict() for i in integration.configurations]},
             status_code=status.HTTP_404_NOT_FOUND
         )
@@ -444,6 +456,15 @@ async def _execute_action_impl(
         except pydantic.ValidationError as e:
             return await _handle_error(e, integration_id, action_id, data, status.HTTP_422_UNPROCESSABLE_ENTITY)
 
+    # Reference actions are portal-invoked at interactive-fetch frequency (every
+    # dropdown open), so a handler failure is routine rather than exceptional.
+    # Like every ephemeral error, theirs must not carry the integration's
+    # configurations — which include raw auth secrets — into the published
+    # IntegrationActionFailed event or the JSON error response.
+    handler_error_config_data = None if (is_ephemeral or is_reference_action) else {
+        "configurations": [c.dict() for c in integration.configurations]
+    }
+
     try:  # Execute the action handler with a timeout
         start_time = time.monotonic()
         handler_kwargs = {
@@ -462,7 +483,7 @@ async def _execute_action_impl(
         return await _handle_error(
             asyncio.TimeoutError(f"Action '{action_id}' timed out"),
             integration_id, action_id,
-            config_data=None if is_ephemeral else {"configurations": [c.dict() for c in integration.configurations]},
+            config_data=handler_error_config_data,
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             classify_heuristics=True,
         )
@@ -484,7 +505,7 @@ async def _execute_action_impl(
             ephemeral_status = status.HTTP_500_INTERNAL_SERVER_ERROR
         return await _handle_error(
             e, integration_id, action_id,
-            config_data=None if is_ephemeral else {"configurations": [c.dict() for c in integration.configurations]},
+            config_data=handler_error_config_data,
             status_code=ephemeral_status,
             classify_heuristics=True,
         )
