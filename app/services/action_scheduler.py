@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional, Union, List, Annotated
 from gundi_core.commands import RunIntegrationAction
 from app import settings
 from .activity_logger import publish_event
+from .gundi import _block_if_ephemeral
 
 
 async def trigger_action(integration_id: str, action_id: str, config=None):
@@ -17,6 +18,10 @@ async def trigger_action(integration_id: str, action_id: str, config=None):
     :param config: configuration model
     :return:
     """
+    # A reference/auth handler on the ephemeral path has no saved integration
+    # to trigger against: async mode would drop the command silently and sync
+    # mode would run a portal lookup that fails. Raise instead.
+    _block_if_ephemeral("trigger_action")
     run_action_command = RunIntegrationAction(
         integration_id=integration_id,
         action_id=action_id,

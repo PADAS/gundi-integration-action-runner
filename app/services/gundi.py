@@ -1,10 +1,11 @@
 """Public helpers for talking to Gundi from an action handler.
 
-Every write helper here short-circuits with `_block_if_ephemeral` on the
-ephemeral path (defense in depth on top of the config-model whitelist in
-`action_runner.execute_action`). Guards only cover code that routes through
-this module — handlers that construct `GundiDataSenderClient`, an
-`httpx.AsyncClient`, or a PubSub publisher directly are out of scope.
+Every write helper here, and `action_scheduler.trigger_action`, short-circuits
+with `_block_if_ephemeral` on the ephemeral path (defense in depth on top of
+the config-model whitelist in `action_runner.execute_action`). Guards only
+cover code that routes through these helpers — handlers that construct
+`GundiDataSenderClient`, an `httpx.AsyncClient`, or a PubSub publisher
+directly are out of scope.
 """
 import datetime
 from typing import List
