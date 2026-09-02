@@ -627,6 +627,23 @@ class _MockEchoingValidatorAuthConfiguration(AuthActionConfiguration):
         return value
 
 
+class _TokenFormatError(pydantic.PydanticValueError):
+    # Produces the dotted type "value_error.invalid_token", indistinguishable
+    # by shape from pydantic's own errors, with a template that echoes input.
+    code = "invalid_token"
+    msg_template = "invalid token {value}"
+
+
+class _MockPydanticErrorAuthConfiguration(AuthActionConfiguration):
+    token: str = ""
+
+    @pydantic.validator("token")
+    def _token_must_be_hex(cls, value):
+        if value and not all(c in "0123456789abcdef" for c in value):
+            raise _TokenFormatError(value=value)
+        return value
+
+
 # Curated classification titles the ephemeral path returns for third-party
 # failures, in place of str(exc) which can embed our request or the source body.
 _EXPECTED_SOURCE_STATUS_TEXT = {
@@ -677,6 +694,7 @@ def mock_ephemeral_action_handlers(
         "list_species": (mock_reference_action_handler, _MockReferenceActionConfiguration, None),
         "list_event_fields": (mock_reference_action_handler, _MockRequiredParamReferenceConfiguration, None),
         "auth_echoing": (mock_auth_action_handler, _MockEchoingValidatorAuthConfiguration, None),
+        "auth_pydantic_error": (mock_auth_action_handler, _MockPydanticErrorAuthConfiguration, None),
         "pull_observations": (mock_pull_observations_action_handler, MockPullActionConfiguration, None),
         "auth": (mock_auth_action_handler, _MockAuthActionConfiguration, None),
         # Present so the parametrized rejection test can prove every
@@ -1599,6 +1617,32 @@ async def test_ephemeral_handler_error_is_not_logged_verbatim(
     assert _EPHEMERAL_SECRET not in caplog.text
     # Still enough to debug: the action, the exception type, and the frames.
     assert "list_species" in caplog.text and "HTTPStatusError" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_ephemeral_validation_error_from_custom_pydantic_error_does_not_echo_the_value(
+        mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event, mock_ephemeral_action_handlers,
+):
+    # A dotted error type does not prove pydantic authored the message: a
+    # connector's PydanticValueError subclass gets one too, and its template
+    # can interpolate the submitted value. Only an explicit allowlist of
+    # server-owned text may pass through.
+    _patch_ephemeral_runner(mocker, mock_ephemeral_action_handlers, mock_gundi_client_v2, mock_config_manager, mock_publish_event)
+    body = {
+        "action_id": "auth_pydantic_error",
+        "integration_state": {
+            "type_value": "earth_ranger",
+            "base_url": "https://sandbox.pamdas.org",
+            "configurations": [{"action_value": "auth_pydantic_error", "data": {"token": _EPHEMERAL_SECRET}}],
+        },
+    }
+
+    response = api_client.post("/v1/actions/execute/", json=body)
+
+    assert response.status_code == 422
+    error = response.json()["detail"]["error"]
+    assert _EPHEMERAL_SECRET not in response.text
+    assert "token" in error and "invalid value" in error
 
 
 @pytest.mark.asyncio

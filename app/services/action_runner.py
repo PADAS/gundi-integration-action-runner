@@ -123,23 +123,33 @@ def _request_error_response(action_id: Optional[str], message: str,
     )
 
 
+# Server-owned text per pydantic error type, the only validation messages the
+# ephemeral path forwards. A dotted type does not prove pydantic authored the
+# message: a connector's PydanticValueError subclass gets one too
+# (value_error.<code>) and its msg_template can interpolate the submitted
+# value. Everything outside this allowlist reads "invalid value".
+_SAFE_VALIDATION_MESSAGES = {
+    "value_error.missing": "field required",
+    "value_error.extra": "extra fields not permitted",
+}
+
+
 def _ephemeral_error_text(exc: Exception, *, expose_message: bool) -> str:
     """Portal-facing text for a failure on the ephemeral path.
 
     Redaction is by provenance, not by path. Runner-authored errors
     (expose_message=True) keep their message: the runner built it, so it
     cannot contain draft credentials. A pydantic ValidationError exposes
-    field locations, and the message only for pydantic's own errors
-    (dotted types such as value_error.missing, whose templates never embed
-    the input); a connector validator's ValueError text is arbitrary and is
-    replaced. Anything raised by a handler is reduced to the curated
+    field locations plus server-owned text from _SAFE_VALIDATION_MESSAGES;
+    any other message, connector-authored or not, is replaced, since
+    validators run on draft credentials. Anything raised by a handler is reduced to the curated
     classification title plus the HTTP status, never str(exc), which can
     embed our outgoing request (auth headers) or the source's response body.
     """
     if isinstance(exc, pydantic.ValidationError):
         fields = "; ".join(
             f"{'.'.join(str(part) for part in err['loc'])}: "
-            f"{err['msg'] if '.' in err.get('type', '') else 'invalid value'}"
+            f"{_SAFE_VALIDATION_MESSAGES.get(err.get('type', ''), 'invalid value')}"
             for err in exc.errors()
         )
         return f"{type(exc).__name__}: {fields}" if fields else type(exc).__name__
