@@ -129,14 +129,18 @@ def _ephemeral_error_text(exc: Exception, *, expose_message: bool) -> str:
     Redaction is by provenance, not by path. Runner-authored errors
     (expose_message=True) keep their message: the runner built it, so it
     cannot contain draft credentials. A pydantic ValidationError exposes
-    field location and message only; pydantic 1.x never echoes the offending
-    input there. Anything raised by a handler is reduced to the curated
+    field locations, and the message only for pydantic's own errors
+    (dotted types such as value_error.missing, whose templates never embed
+    the input); a connector validator's ValueError text is arbitrary and is
+    replaced. Anything raised by a handler is reduced to the curated
     classification title plus the HTTP status, never str(exc), which can
     embed our outgoing request (auth headers) or the source's response body.
     """
     if isinstance(exc, pydantic.ValidationError):
         fields = "; ".join(
-            f"{'.'.join(str(part) for part in err['loc'])}: {err['msg']}" for err in exc.errors()
+            f"{'.'.join(str(part) for part in err['loc'])}: "
+            f"{err['msg'] if '.' in err.get('type', '') else 'invalid value'}"
+            for err in exc.errors()
         )
         return f"{type(exc).__name__}: {fields}" if fields else type(exc).__name__
     if expose_message:
@@ -193,15 +197,20 @@ async def _handle_error(
     """
     is_ephemeral = ephemeral_run.get()
 
+    if is_ephemeral:
+        # Draft credentials must reach neither PubSub nor the application log,
+        # which outlives and outreaches the request. Log the same redacted
+        # text the caller gets plus the traceback frames (source locations,
+        # no values); str(exc) and the traceback's final line stay out.
+        safe_text = _ephemeral_error_text(exc, expose_message=expose_message)
+        frames = "".join(traceback.format_tb(exc.__traceback__)) if exc.__traceback__ else ""
+        logger.error(
+            f"Error in ephemeral action '{action_id}': {type(exc).__name__}: {safe_text}\n{frames}".rstrip()
+        )
+        return _request_error_response(action_id, safe_text, status_code)
+
     log_message = f"Error in action '{action_id}' for integration '{integration_id}': {type(exc).__name__}: {exc}"
     logger.exception(log_message)
-
-    if is_ephemeral:
-        # No integration to log against, and draft credentials must not reach
-        # PubSub: skip the publish. Full details stay in the server log above.
-        return _request_error_response(
-            action_id, _ephemeral_error_text(exc, expose_message=expose_message), status_code,
-        )
 
     # Classified errors (auth, connectivity, rate limit, bad response) get
     # short human-first text — the portal prepends "Error running action

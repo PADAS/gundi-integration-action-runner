@@ -10,6 +10,8 @@ from gundi_core.events import IntegrationActionFailed, IntegrationActionCustomLo
 from gundi_core.events.transformers import ObservationTransformedER
 
 from app import settings
+import pydantic
+
 from app.actions.core import AuthActionConfiguration, ReferenceActionConfiguration
 from app.actions.core import GenericActionConfiguration
 from app.conftest import AsyncMock, MockSubActionConfiguration, MockPushActionConfiguration, MockPullActionConfiguration, async_return
@@ -613,6 +615,18 @@ class _MockRequiredParamReferenceConfiguration(ReferenceActionConfiguration):
     event_type: str  # required query param
 
 
+class _MockEchoingValidatorAuthConfiguration(AuthActionConfiguration):
+    # Connector-defined validators are free to put the offending value in the
+    # message; the ephemeral path must not forward it.
+    token: str = ""
+
+    @pydantic.validator("token")
+    def _token_must_be_hex(cls, value):
+        if value and not all(c in "0123456789abcdef" for c in value):
+            raise ValueError(f"invalid token {value}")
+        return value
+
+
 # Curated classification titles the ephemeral path returns for third-party
 # failures, in place of str(exc) which can embed our request or the source body.
 _EXPECTED_SOURCE_STATUS_TEXT = {
@@ -662,6 +676,7 @@ def mock_ephemeral_action_handlers(
     return {
         "list_species": (mock_reference_action_handler, _MockReferenceActionConfiguration, None),
         "list_event_fields": (mock_reference_action_handler, _MockRequiredParamReferenceConfiguration, None),
+        "auth_echoing": (mock_auth_action_handler, _MockEchoingValidatorAuthConfiguration, None),
         "pull_observations": (mock_pull_observations_action_handler, MockPullActionConfiguration, None),
         "auth": (mock_auth_action_handler, _MockAuthActionConfiguration, None),
         # Present so the parametrized rejection test can prove every
@@ -1530,6 +1545,60 @@ async def test_nested_saved_integration_call_under_ephemeral_context_keeps_the_w
     assert "only reference and auth actions are supported" in response.body.decode()
     assert not mock_push_action_handler.called
     assert not mock_publish_event.called
+
+
+@pytest.mark.asyncio
+async def test_ephemeral_validation_error_from_custom_validator_does_not_echo_the_value(
+        mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event, mock_ephemeral_action_handlers,
+):
+    # pydantic's own messages ("field required", "value is not a valid
+    # integer") never contain the input, but a connector validator's
+    # ValueError text is arbitrary. Keep the field location; replace the
+    # message unless it is one of pydantic's built-in (dotted-type) errors.
+    _patch_ephemeral_runner(mocker, mock_ephemeral_action_handlers, mock_gundi_client_v2, mock_config_manager, mock_publish_event)
+    body = {
+        "action_id": "auth_echoing",
+        "integration_state": {
+            "type_value": "earth_ranger",
+            "base_url": "https://sandbox.pamdas.org",
+            "configurations": [{"action_value": "auth_echoing", "data": {"token": _EPHEMERAL_SECRET}}],
+        },
+    }
+
+    response = api_client.post("/v1/actions/execute/", json=body)
+
+    assert response.status_code == 422
+    error = response.json()["detail"]["error"]
+    assert _EPHEMERAL_SECRET not in response.text
+    assert "token" in error and "invalid value" in error
+
+
+@pytest.mark.asyncio
+async def test_ephemeral_handler_error_is_not_logged_verbatim(
+        mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event,
+        mock_ephemeral_action_handlers, mock_reference_action_handler, caplog,
+):
+    # The same untrusted exception text the response scrubs (our outgoing
+    # request with its auth header, the source's response body) must not
+    # reach the application log either; logs outlive and outreach the request.
+    import httpx
+    import logging
+    outgoing_body = f'{{"authorization": "Bearer {_EPHEMERAL_SECRET}"}}'
+    source_body = f'{{"error": "invalid credential {_EPHEMERAL_SECRET}"}}'
+    request = httpx.Request("POST", f"https://sandbox.pamdas.org/events/?token={_EPHEMERAL_SECRET}", content=outgoing_body)
+    response = httpx.Response(401, text=source_body, request=request)
+    mock_reference_action_handler.side_effect = httpx.HTTPStatusError(
+        f"401 Unauthorized for url with {_EPHEMERAL_SECRET}", request=request, response=response,
+    )
+    _patch_ephemeral_runner(mocker, mock_ephemeral_action_handlers, mock_gundi_client_v2, mock_config_manager, mock_publish_event)
+    caplog.set_level(logging.DEBUG, logger="app.services.action_runner")
+
+    resp = api_client.post("/v1/actions/execute/", json=_ephemeral_body())
+
+    assert resp.status_code == 401
+    assert _EPHEMERAL_SECRET not in caplog.text
+    # Still enough to debug: the action, the exception type, and the frames.
+    assert "list_species" in caplog.text and "HTTPStatusError" in caplog.text
 
 
 @pytest.mark.asyncio
