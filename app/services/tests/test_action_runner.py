@@ -1228,6 +1228,56 @@ async def test_ephemeral_contextvar_or_folds_with_outer_state(mocker, mock_publi
 
 
 @pytest.mark.asyncio
+async def test_saved_integration_reference_action_with_no_config_and_no_overrides_is_not_404(
+        mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event,
+        mock_ephemeral_action_handlers, mock_reference_action_handler, integration_v2,
+):
+    # Same rule the earthranger and inaturalist forks already ship: a
+    # reference action is stateless, so "no stored config row and no
+    # overrides" is a complete zero-param query on a *saved* integration too,
+    # not a missing-configuration 404. config_model.parse_obj({}) below still
+    # 422s when params are actually required.
+    mock_config_manager.get_action_configuration = AsyncMock(return_value=None)
+    mocker.patch("app.services.action_runner.action_handlers", mock_ephemeral_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+
+    response = api_client.post(
+        "/v1/actions/execute/",
+        json={"integration_id": str(integration_v2.id), "action_id": "list_species"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert mock_reference_action_handler.called
+    assert mock_reference_action_handler.call_args.kwargs["action_config"].tag_name == ""
+
+
+@pytest.mark.asyncio
+async def test_saved_integration_generic_action_with_no_config_and_no_overrides_still_404s(
+        mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event,
+        mock_ephemeral_action_handlers, mock_generic_action_handler, integration_v2,
+):
+    # Pin: relaxing the missing-config 404 for reference actions must not
+    # loosen it for any other non-pull action type.
+    mock_config_manager.get_action_configuration = AsyncMock(return_value=None)
+    mocker.patch("app.services.action_runner.action_handlers", mock_ephemeral_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+
+    response = api_client.post(
+        "/v1/actions/execute/",
+        json={"integration_id": str(integration_v2.id), "action_id": "generic_lookup"},
+    )
+
+    assert response.status_code == 404
+    assert not mock_generic_action_handler.called
+
+
+@pytest.mark.asyncio
 async def test_push_data_acks_message_without_destination_id(
         mocker, pubsub_message_request_headers, run_push_action_pubsub_payload
 ):
