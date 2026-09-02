@@ -97,8 +97,11 @@ def classify_error(exc: Exception) -> Optional[ClassifiedError]:
             status_code=getattr(exc, "status_code", None),
         )
 
-    # getattr chain: non-HTTP exceptions have no .response attribute.
+    # getattr chain: non-HTTP exceptions have no .response attribute. aiohttp
+    # carries the status on the exception itself (.status), not on a response.
     status_code = getattr(getattr(exc, "response", None), "status_code", None)
+    if status_code is None and isinstance(exc, aiohttp.ClientResponseError):
+        status_code = exc.status
     # httpx.HTTPStatusError from raise_for_status() stringifies to multi-line
     # text (URL plus a "For more information check: ..." line) — only the
     # first line is useful as a short, human-first message.

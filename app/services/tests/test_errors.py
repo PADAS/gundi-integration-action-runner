@@ -171,3 +171,24 @@ def test_classify_builtin_timeout_as_connectivity():
         classified = classify_error(exc)
         assert classified is not None
         assert classified.error_type == "connectivity"
+
+
+def test_classify_error_reads_aiohttp_response_status():
+    # aiohttp carries the status on .status, not .response.status_code; the
+    # classifier must give its 401/403/429/5xx the same verdict httpx gets.
+    import aiohttp
+    from multidict import CIMultiDict, CIMultiDictProxy
+    from yarl import URL
+    from app.services.errors import classify_error
+
+    request_info = aiohttp.RequestInfo(
+        url=URL("https://source.example/me"), method="GET",
+        headers=CIMultiDictProxy(CIMultiDict()), real_url=URL("https://source.example/me"),
+    )
+    exc = aiohttp.ClientResponseError(request_info, (), status=429, message="Too Many Requests")
+
+    classified = classify_error(exc)
+
+    assert classified is not None
+    assert classified.error_type == "rate_limit"
+    assert classified.status_code == 429

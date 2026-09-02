@@ -398,10 +398,14 @@ async def _execute_action_impl(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, expose_message=True,
         )
 
-    # Only read-only actions run ephemerally. This is the runner's own check;
-    # cdip can enforce it too once reference actions register with the
-    # "reference" type (see self_registration and REGISTER_REFERENCE_ACTIONS).
-    if is_ephemeral:
+    # Only read-only actions run under an ephemeral context. Key on the
+    # effective (OR-folded) contextvar, not this call's own flag: a reference
+    # or auth handler that calls execute_action(integration_id=...) for a push
+    # action gets a nested run whose is_ephemeral is False, and the whitelist
+    # must still apply to it. This is the runner's own check; cdip can enforce
+    # it too once reference actions register with the "reference" type (see
+    # self_registration and REGISTER_REFERENCE_ACTIONS).
+    if ephemeral_run.get():
         is_ephemerally_safe = isinstance(config_model, type) and issubclass(
             config_model, (ReferenceActionConfiguration, AuthActionConfiguration),
         )
@@ -411,7 +415,7 @@ async def _execute_action_impl(
                     f"Action '{action_id}' cannot be executed ephemerally; "
                     "only reference and auth actions are supported."
                 ),
-                integration_id=None, action_id=action_id,
+                integration_id, action_id,
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, expose_message=True,
             )
 

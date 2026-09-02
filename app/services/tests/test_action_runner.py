@@ -1430,6 +1430,9 @@ async def test_ephemeral_aiohttp_response_error_propagates_status(
     response = api_client.post("/v1/actions/execute/", json=_ephemeral_body(action_id="auth"))
 
     assert response.status_code == 403
+    # Same curated text an httpx 403 gets; a bare "ClientResponseError" is
+    # what the shared classifier produced before it learned aiohttp's .status.
+    assert response.json()["detail"]["error"] == "Authentication failed (HTTP 403)"
     assert not mock_publish_event.called
 
 
@@ -1500,6 +1503,33 @@ def test_validation_error_log_does_not_carry_the_request_body(caplog):
     assert response.status_code == 422
     assert _EPHEMERAL_SECRET not in response.text
     assert _EPHEMERAL_SECRET not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_nested_saved_integration_call_under_ephemeral_context_keeps_the_whitelist(
+        mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event,
+        mock_ephemeral_action_handlers, mock_push_action_handler, integration_v2,
+):
+    # A reference/auth handler that calls execute_action(integration_id=...)
+    # for a push action gets a nested run whose own is_ephemeral is False.
+    # The read-only whitelist must key on the effective (OR-folded) context,
+    # or the nested push runs against a saved integration with no activity
+    # log and only the Gundi helpers standing in the way.
+    from app.services.activity_logger import ephemeral_run
+    _patch_ephemeral_runner(mocker, mock_ephemeral_action_handlers, mock_gundi_client_v2, mock_config_manager, mock_publish_event)
+
+    token = ephemeral_run.set(True)
+    try:
+        response = await execute_action(
+            integration_id=str(integration_v2.id), action_id="push_observations",
+        )
+    finally:
+        ephemeral_run.reset(token)
+
+    assert response.status_code == 422
+    assert "only reference and auth actions are supported" in response.body.decode()
+    assert not mock_push_action_handler.called
+    assert not mock_publish_event.called
 
 
 @pytest.mark.asyncio
