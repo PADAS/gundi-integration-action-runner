@@ -784,3 +784,57 @@ async def test_crontab_schedule_decorator(
         tz_offset=0
     )
     assert action_pull_observations.crontab_schedule == expected_schedule
+
+
+def test_action_type_enum_has_reference():
+    from app.services.core import ActionTypeEnum
+
+    assert ActionTypeEnum.REFERENCE.value == "reference"
+
+
+def _dummy_reference_handlers():
+    from app.actions.core import ReferenceActionConfiguration
+
+    class DummyQuery(ReferenceActionConfiguration):
+        pass
+
+    async def action_list_dummy(integration, action_config: DummyQuery):
+        return {"options": []}
+
+    return {"list_dummy": (action_list_dummy, DummyQuery, None)}
+
+
+@pytest.mark.asyncio
+async def test_reference_actions_skipped_from_registration_by_default(mocker):
+    # Same gate the earthranger and inaturalist forks ship: until the platform
+    # accepts the "reference" action type, reference actions stay out of the
+    # registered type so they never land as "generic".
+    from unittest.mock import AsyncMock, MagicMock
+    from app.services import self_registration
+
+    mocker.patch.object(self_registration, "action_handlers", _dummy_reference_handlers())
+    gundi_client = MagicMock()
+    gundi_client.register_integration_type = AsyncMock(return_value={})
+
+    await self_registration.register_integration_in_gundi(gundi_client, type_slug="my_tracker")
+
+    data = gundi_client.register_integration_type.call_args.args[0]
+    assert data["actions"] == []
+
+
+@pytest.mark.asyncio
+async def test_reference_actions_registered_with_reference_type_when_enabled(mocker):
+    from unittest.mock import AsyncMock, MagicMock
+    from app.services import self_registration
+
+    mocker.patch.object(self_registration, "action_handlers", _dummy_reference_handlers())
+    mocker.patch.object(self_registration, "REGISTER_REFERENCE_ACTIONS", True)
+    gundi_client = MagicMock()
+    gundi_client.register_integration_type = AsyncMock(return_value={})
+
+    await self_registration.register_integration_in_gundi(gundi_client, type_slug="my_tracker")
+
+    data = gundi_client.register_integration_type.call_args.args[0]
+    assert [a["value"] for a in data["actions"]] == ["list_dummy"]
+    assert data["actions"][0]["type"] == "reference"
+    assert data["actions"][0]["is_periodic_action"] is False

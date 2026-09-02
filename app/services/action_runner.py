@@ -398,7 +398,9 @@ async def _execute_action_impl(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, expose_message=True,
         )
 
-    # Only read-only actions allowed ephemerally. cdip enforces independently.
+    # Only read-only actions run ephemerally. This is the runner's own check;
+    # cdip can enforce it too once reference actions register with the
+    # "reference" type (see self_registration and REGISTER_REFERENCE_ACTIONS).
     if is_ephemeral:
         is_ephemerally_safe = isinstance(config_model, type) and issubclass(
             config_model, (ReferenceActionConfiguration, AuthActionConfiguration),
