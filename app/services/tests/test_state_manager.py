@@ -208,3 +208,61 @@ async def test_set_state_noops_on_ephemeral_run(mocker, mock_redis):
         ephemeral_run.reset(token)
 
     mock_redis.Redis.return_value.set.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_set_if_absent_noops_on_ephemeral_run(mocker, mock_redis):
+    # Same invariant as set_state: no Redis writes under a synthetic
+    # integration id. Returns False ("not set by this call") so a throttle
+    # caller treats the window as already taken and stays quiet.
+    from app.services.activity_logger import ephemeral_run
+    mocker.patch("app.services.state.redis", mock_redis)
+    state_manager = IntegrationStateManager()
+
+    token = ephemeral_run.set(True)
+    try:
+        was_set = await state_manager.set_if_absent(
+            integration_id="synthetic-uuid", action_id="pull_observations", ttl_seconds=60,
+        )
+    finally:
+        ephemeral_run.reset(token)
+
+    assert was_set is False
+    mock_redis.Redis.return_value.set.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_delete_state_noops_on_ephemeral_run(mocker, mock_redis):
+    from app.services.activity_logger import ephemeral_run
+    mocker.patch("app.services.state.redis", mock_redis)
+    state_manager = IntegrationStateManager()
+
+    token = ephemeral_run.set(True)
+    try:
+        await state_manager.delete_state(integration_id="synthetic-uuid", action_id="pull_observations")
+    finally:
+        ephemeral_run.reset(token)
+
+    mock_redis.Redis.return_value.delete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_ephemeral_state_noops_leave_a_debug_trace(mocker, mock_redis, caplog):
+    # A handler that writes then reads state in the same ephemeral run gets
+    # {} back and fails in a way that looks unrelated; the log line is the
+    # only clue that the write was suppressed.
+    import logging
+    from app.services.activity_logger import ephemeral_run
+    mocker.patch("app.services.state.redis", mock_redis)
+    state_manager = IntegrationStateManager()
+    caplog.set_level(logging.DEBUG, logger="app.services.state")
+
+    token = ephemeral_run.set(True)
+    try:
+        await state_manager.set_state(
+            integration_id="synthetic-uuid", action_id="auth", state={"token": "t"},
+        )
+    finally:
+        ephemeral_run.reset(token)
+
+    assert any("ephemeral" in r.getMessage().lower() for r in caplog.records)
