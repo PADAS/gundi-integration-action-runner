@@ -395,6 +395,12 @@ async def _execute_action_impl(
     # Get the configuration needed to execute the action
     if is_ephemeral:
         action_config = find_config_for_action(integration.configurations, action_id)
+    elif is_reference_action:
+        # Stateless by contract, so there is no row to find. Looking one up
+        # anyway would miss redis every time, and get_action_configuration
+        # reloads the integration from the portal on a miss: a portal call on
+        # every dropdown open.
+        action_config = None
     else:
         action_config = await config_manager.get_action_configuration(integration_id, action_id)
     if not skip_missing_config and not action_config and not config_overrides:
@@ -410,8 +416,8 @@ async def _execute_action_impl(
         return await _handle_error(
             ValueError(message), integration_id, action_id,
             # Reached only for non-ephemeral, non-reference runs (see the
-            # guard above), so dumping the saved integration's configurations
-            # here is safe.
+            # guard above). Those keep the pre-existing activity-log contract
+            # of attaching the saved configurations to the failure event.
             config_data={"configurations": [i.dict() for i in integration.configurations]},
             status_code=status.HTTP_404_NOT_FOUND
         )

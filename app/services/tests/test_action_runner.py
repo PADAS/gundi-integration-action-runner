@@ -1252,6 +1252,10 @@ async def test_saved_integration_reference_action_with_no_config_and_no_override
     assert response.status_code == 200, response.text
     assert mock_reference_action_handler.called
     assert mock_reference_action_handler.call_args.kwargs["action_config"].tag_name == ""
+    # A stateless action has no row to look up, and a redis miss in
+    # get_action_configuration reloads the integration from the portal, so
+    # looking it up on every dropdown open would be a portal call each time.
+    assert not mock_config_manager.get_action_configuration.called
 
 
 @pytest.mark.asyncio
