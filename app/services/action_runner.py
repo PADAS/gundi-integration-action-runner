@@ -450,6 +450,15 @@ async def _execute_action_impl(
         except pydantic.ValidationError as e:
             return await _handle_error(e, integration_id, action_id, data, status.HTTP_422_UNPROCESSABLE_ENTITY)
 
+    # Reference actions are portal-invoked at interactive-fetch frequency (every
+    # dropdown open), so a handler failure is routine rather than exceptional.
+    # Like every ephemeral error, theirs must not carry the integration's
+    # configurations — which include raw auth secrets — into the published
+    # IntegrationActionFailed event or the JSON error response.
+    handler_error_config_data = None if (is_ephemeral or is_reference_action) else {
+        "configurations": [c.dict() for c in integration.configurations]
+    }
+
     try:  # Execute the action handler with a timeout
         start_time = time.monotonic()
         handler_kwargs = {
@@ -468,7 +477,7 @@ async def _execute_action_impl(
         return await _handle_error(
             asyncio.TimeoutError(f"Action '{action_id}' timed out"),
             integration_id, action_id,
-            config_data=None if is_ephemeral else {"configurations": [c.dict() for c in integration.configurations]},
+            config_data=handler_error_config_data,
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             classify_heuristics=True,
         )
@@ -490,7 +499,7 @@ async def _execute_action_impl(
             ephemeral_status = status.HTTP_500_INTERNAL_SERVER_ERROR
         return await _handle_error(
             e, integration_id, action_id,
-            config_data=None if is_ephemeral else {"configurations": [c.dict() for c in integration.configurations]},
+            config_data=handler_error_config_data,
             status_code=ephemeral_status,
             classify_heuristics=True,
         )

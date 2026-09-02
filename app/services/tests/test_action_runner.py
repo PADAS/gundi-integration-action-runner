@@ -1278,6 +1278,41 @@ async def test_saved_integration_generic_action_with_no_config_and_no_overrides_
 
 
 @pytest.mark.asyncio
+async def test_saved_integration_reference_action_error_never_carries_stored_configurations(
+        mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event,
+        mock_ephemeral_action_handlers, mock_reference_action_handler, integration_v2,
+):
+    # Reference actions run at dropdown-open frequency, so a handler failure is
+    # routine, not exceptional. Like every ephemeral error, it must not carry
+    # the saved integration's configurations (raw auth secrets) into the JSON
+    # error response or the published IntegrationActionFailed event. Same rule
+    # the earthranger and inaturalist forks already ship.
+    mock_reference_action_handler.side_effect = RuntimeError("upstream unreachable")
+    mock_config_manager.get_action_configuration = AsyncMock(return_value=None)
+    mocker.patch("app.services.action_runner.action_handlers", mock_ephemeral_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+
+    response = api_client.post(
+        "/v1/actions/execute/",
+        json={"integration_id": str(integration_v2.id), "action_id": "list_species"},
+    )
+
+    assert response.status_code == 500
+    stored_token = find_config_for_action(integration_v2.configurations, "auth").data["token"]
+    assert stored_token not in response.text
+    # _handle_error normalizes a None config_data to {}; the invariant is that
+    # no configuration (and no secret) reaches the response or the event.
+    assert not response.json()["detail"]["config_data"]
+    events = _published_events_of_type(mock_publish_event, IntegrationActionFailed)
+    assert len(events) == 1
+    assert not events[0].payload.config_data
+    assert stored_token not in events[0].json()
+
+
+@pytest.mark.asyncio
 async def test_push_data_acks_message_without_destination_id(
         mocker, pubsub_message_request_headers, run_push_action_pubsub_payload
 ):
