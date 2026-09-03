@@ -18,7 +18,6 @@ from app.settings import (
     INTEGRATION_TYPE_SLUG,
     INTEGRATION_TYPE_NAME,
     INTEGRATION_SERVICE_URL,
-    REGISTER_REFERENCE_ACTIONS,
 )
 from .core import ActionTypeEnum
 from app.webhooks.core import get_webhook_handler, GenericJsonTransformConfig
@@ -54,16 +53,13 @@ async def register_integration_in_gundi(gundi_client, type_slug=None, type_name=
         if issubclass(config_model, InternalActionConfiguration):
             logger.info(f"Skipping internal action '{action_id}'.")
             continue  # Internal actions are not registered in Gundi
-        if issubclass(config_model, ReferenceActionConfiguration) and not REGISTER_REFERENCE_ACTIONS:
-            logger.info(
-                f"Skipping reference action '{action_id}' "
-                "(REGISTER_REFERENCE_ACTIONS is off until the platform supports the 'reference' type)."
-            )
-            continue
         action_name = getattr(func, "action_title", None) or action_id.replace("_", " ").title()
         action_schema = json.loads(config_model.schema_json())
         action_ui_schema = config_model.ui_schema()
         if issubclass(config_model, ReferenceActionConfiguration):
+            # Registered with their own type so the platform can tell the
+            # read-only lookups apart from generic actions (and enforce the
+            # ephemeral whitelist on its side too).
             action_type = ActionTypeEnum.REFERENCE.value
         elif issubclass(config_model, AuthActionConfiguration):
             action_type = ActionTypeEnum.AUTHENTICATION.value
