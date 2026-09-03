@@ -404,7 +404,11 @@ async def _execute_action_impl(
         return _request_error_response(action_id, "Provide either integration_id or integration_state.")
     else:
         try:  # Get the integration details to pass it to the action handler
-            integration = await config_manager.get_integration_details(integration_id)
+            # Actions never read the webhook config; skipping it keeps a warm
+            # action run off the portal (see get_integration_details).
+            integration = await config_manager.get_integration_details(
+                integration_id, include_webhook_config=False,
+            )
         except Exception as e:
             return await _handle_error(e, integration_id, action_id)
 

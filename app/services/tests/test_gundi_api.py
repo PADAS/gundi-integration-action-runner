@@ -186,17 +186,18 @@ def test_gundi_api_retry_policy_reaches_every_declared_attempt():
     assert waits[-1] == GUNDI_API_RETRY["wait_max"]
 
 
-def test_gundi_api_retry_worst_case_fits_inside_one_request():
+def test_gundi_api_retry_loop_overhead_is_bounded():
     """tenacity's stop_after_delay is checked after a failed attempt and then the
-    full wait is slept, so one failing call can hold its caller for up to
-    timeout + wait_max, plus the request itself. PubSub messages are processed
-    inline in the push request by default (PROCESS_PUBSUB_MESSAGES_IN_BACKGROUND
-    is False), so that ceiling has to leave room under the push ack deadline
-    and Cloud Run's default 300 s request timeout for the handler's own work."""
+    full wait is slept, so the retry loop's own overhead for one failing call is
+    bounded by timeout + wait_max. This does not include the requests: the
+    sensors client's httpx timeout is 120 s per attempt, so a hanging API adds
+    up to that per attempt on top. PubSub messages are processed inline in the
+    push request by default (PROCESS_PUBSUB_MESSAGES_IN_BACKGROUND is False),
+    so the loop's share of the budget has to stay small."""
     from app.services.gundi import GUNDI_API_RETRY
 
-    ceiling = GUNDI_API_RETRY["timeout"] + GUNDI_API_RETRY["wait_max"]
-    assert ceiling <= 150, f"a single failing Gundi call may hold a request for {ceiling}s"
+    overhead = GUNDI_API_RETRY["timeout"] + GUNDI_API_RETRY["wait_max"]
+    assert overhead <= 150, f"the retry loop alone may hold a request for {overhead}s before any request time"
 
 
 _SERVICES_DIR = Path(__file__).resolve().parents[1]

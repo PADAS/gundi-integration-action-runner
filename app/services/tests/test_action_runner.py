@@ -65,7 +65,7 @@ async def test_execute_pull_action_from_pubsub(
     integration_id = payload_dict.get("integration_id")
     action_id = payload_dict.get("action_id")
     assert mock_config_manager.get_integration_details.called
-    mock_config_manager.get_integration_details.assert_called_with(integration_id)
+    mock_config_manager.get_integration_details.assert_called_with(integration_id, include_webhook_config=False)
     mock_action_handler, mock_config, mock_datamodel = mock_action_handlers[action_id]
     assert mock_action_handler.called
 
@@ -95,7 +95,7 @@ async def test_execute_push_action_from_pubsub(
     # Check that the action config is retrieved for the integration
     integration_id = attributes.get("destination_id")
     assert mock_config_manager.get_integration_details.called
-    mock_config_manager.get_integration_details.assert_called_with(integration_id)
+    mock_config_manager.get_integration_details.assert_called_with(integration_id, include_webhook_config=False)
     # Check that the right handler is called, with config and data
     assert mock_push_observations_handler.call_count == 1
     mock_call = mock_push_observations_handler.mock_calls[0]
@@ -135,7 +135,7 @@ async def test_execute_action_from_api(
     assert response.status_code == 200
     assert not mock_gundi_client_v2.get_integration_details.called
     assert mock_config_manager.get_integration_details.called
-    mock_config_manager.get_integration_details.assert_called_with(integration_id)
+    mock_config_manager.get_integration_details.assert_called_with(integration_id, include_webhook_config=False)
     mock_action_handler, mock_config, mock_datamodel = mock_action_handlers[action_id]
     assert mock_action_handler.called
 
@@ -1899,6 +1899,26 @@ async def test_ephemeral_error_log_names_the_exception_type_once(
     assert response.status_code == 422
     assert "ValidationError: event_type: field required" in caplog.text
     assert "ValidationError: ValidationError" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_action_run_loads_the_integration_without_the_webhook_config(
+        mocker, mock_gundi_client_v2, integration_v2, mock_config_manager, mock_publish_event, mock_action_handlers,
+):
+    # The webhook key is the one cache entry with a TTL nothing invalidates, so
+    # loading it would send every warm action run back to the portal once per
+    # TTL and let a portal outage fail actions whose configs are cached.
+    mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+
+    await execute_action(integration_id=str(integration_v2.id), action_id="pull_observations")
+
+    mock_config_manager.get_integration_details.assert_called_once_with(
+        str(integration_v2.id), include_webhook_config=False,
+    )
 
 
 @pytest.mark.asyncio

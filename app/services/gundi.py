@@ -39,12 +39,14 @@ def _block_if_ephemeral(op: str) -> None:
 # n = 0..4, i.e. 2-7, 4-9, 8-13, 16-21 and 30 s: 60-80 s of waiting in total
 # for six attempts, inside the 120 s budget whenever the calls themselves are
 # quick. tenacity checks the stop after a failed attempt and then sleeps the
-# full wait, so the hard ceiling for one failing call is timeout + wait_max
-# plus one request, about 2.5 minutes. Gundi sends run inline in the PubSub
-# push request by default (PROCESS_PUBSUB_MESSAGES_IN_BACKGROUND=False), so
-# that ceiling must stay well under the push ack deadline and the platform's
-# request timeout (Cloud Run defaults to 300 s); see the tests in
-# test_gundi_api.py that pin both properties.
+# full wait, so the loop's own overhead for one failing call is bounded by
+# timeout + wait_max = 150 s. The requests themselves come on top of that:
+# GundiDataSenderClient posts with an httpx timeout of 120 s, so a Sensors
+# API that hangs rather than fails can hold one send for roughly four and a
+# half minutes. Gundi sends run inline in the PubSub push request by default
+# (PROCESS_PUBSUB_MESSAGES_IN_BACKGROUND=False), so deployments that expect
+# hangs should turn background processing on or shorten this policy; the
+# tests in test_gundi_api.py pin the loop-overhead bound.
 GUNDI_API_RETRY = dict(
     on=httpx.HTTPError,
     attempts=6,
