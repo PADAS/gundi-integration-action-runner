@@ -176,9 +176,18 @@ async def forward_payload_to_diagnostic_url(
             f"for integration '{integration_id}'. Status: {response.status_code}"
         )
     except Exception as e:
+        # Never str(e) for transport/status errors: httpx embeds the request URL
+        # in its messages, path secret included, which would undo _redact_url.
+        # ValueError is ours (the SSRF/allowlist checks) and names only the host.
+        if isinstance(e, httpx.HTTPStatusError):
+            detail = f"HTTPStatusError: HTTP {e.response.status_code}"
+        elif isinstance(e, ValueError):
+            detail = f"ValueError: {e}"
+        else:
+            detail = type(e).__name__
         logger.warning(
             f"Diagnostic forwarding to '{_redact_url(destination_url)}' failed for integration "
-            f"'{integration_id}': {type(e).__name__}: {e}"
+            f"'{integration_id}': {detail}"
         )
 
 

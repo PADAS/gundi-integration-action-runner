@@ -214,6 +214,16 @@ def test_all_gundi_api_helpers_share_one_retry_policy():
     assert all(d == "**GUNDI_API_RETRY" for d in decorators), decorators
 
 
+def test_api_key_lookup_is_not_retried_on_its_own():
+    """_get_gundi_api_key runs inside the send helpers' retry; a decorator of
+    its own would nest a second GUNDI_API_RETRY inside the first and restart
+    the inner attempts on every outer one, so a failing portal would cost up to
+    36 calls instead of 6 and blow the loop-overhead bound the tests above pin."""
+    assert not hasattr(_get_gundi_api_key, "__wrapped__")
+    for helper in (send_events_to_gundi, send_observations_to_gundi, send_event_attachments_to_gundi, send_messages_to_gundi):
+        assert hasattr(helper, "__wrapped__"), helper.__name__
+
+
 @pytest.mark.asyncio
 async def test_config_manager_reload_uses_the_shared_gundi_retry_policy(
         mocker, mock_redis_empty, mock_gundi_client_v2_class, integration_v2,

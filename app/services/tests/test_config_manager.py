@@ -511,3 +511,80 @@ async def test_deleting_an_integration_survives_a_failed_summary_read(
     assert set(delete.call_args.args) == {
         f"integration.{integration_id}", f"integrationconfig.{integration_id}.webhook",
     }
+
+
+@pytest.mark.asyncio
+async def test_webhook_key_miss_refreshes_only_the_webhook_key(
+        mocker, mock_redis_empty, mock_gundi_client_v2_class, integration_v2_with_webhook,
+):
+    """The webhook key expires on its own; refreshing it through the full reload
+    would rewrite the summary and action keys with the webhook path's ttl=60,
+    downgrading the action path's permanent keys and sending the next action
+    run back to the portal."""
+    mocker.patch("app.services.config_manager.redis", mock_redis_empty)
+    mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
+    mock_gundi_client_v2_class.return_value.get_integration_details = mocker.AsyncMock(return_value=integration_v2_with_webhook)
+    config_manager = IntegrationConfigurationManager()
+    integration_id = str(integration_v2_with_webhook.id)
+
+    await config_manager.get_webhook_configuration(integration_id, ttl=60)
+
+    written = [c.args[0] for c in mock_redis_empty.Redis.return_value.set.call_args_list]
+    assert written == [f"integrationconfig.{integration_id}.webhook"]
+
+
+@pytest.mark.asyncio
+async def test_reload_writes_absence_sentinels_for_unconfigured_actions(
+        mocker, mock_redis_empty, mock_gundi_client_v2_class, integration_v2,
+):
+    """An integration configured for only some of its type's actions must not
+    reload from the Gundi API on every run because the others keep missing."""
+    mocker.patch("app.services.config_manager.redis", mock_redis_empty)
+    mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
+    config_manager = IntegrationConfigurationManager()
+    integration_id = str(integration_v2.id)
+    configured = {c.action.value for c in integration_v2.configurations}
+    unconfigured = {a.value for a in integration_v2.type.actions} - configured
+    assert unconfigured, "fixture must declare an action without a configuration"
+
+    await config_manager.get_integration(integration_id)
+
+    set_calls = {c.args[0]: c.args[1] for c in mock_redis_empty.Redis.return_value.set.call_args_list}
+    for action_id in unconfigured:
+        assert set_calls[f"integrationconfig.{integration_id}.{action_id}"] == "null"
+    for action_id in configured:
+        assert set_calls[f"integrationconfig.{integration_id}.{action_id}"] != "null"
+
+
+@pytest.mark.asyncio
+async def test_cached_action_absence_returns_none_without_reloading(
+        mocker, mock_redis_empty, mock_gundi_client_v2_class, integration_v2,
+):
+    mock_redis_empty.Redis.return_value.get.return_value = async_return(b"null")
+    mocker.patch("app.services.config_manager.redis", mock_redis_empty)
+    mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
+    config_manager = IntegrationConfigurationManager()
+
+    config = await config_manager.get_action_configuration(str(integration_v2.id), "pull_events")
+
+    assert config is None
+    assert not mock_gundi_client_v2_class.return_value.get_integration_details.called
+
+
+@pytest.mark.asyncio
+async def test_deleting_an_action_configuration_records_its_absence(
+        mocker, mock_redis_empty, mock_gundi_client_v2_class, integration_v2,
+):
+    """A dropped key would miss on the next lookup and reload the whole
+    integration from the Gundi API, which would then report the same absence."""
+    mocker.patch("app.services.config_manager.redis", mock_redis_empty)
+    mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
+    config_manager = IntegrationConfigurationManager()
+    integration_id = str(integration_v2.id)
+
+    await config_manager.delete_action_configuration(integration_id, "pull_events")
+
+    mock_redis_empty.Redis.return_value.set.assert_called_once_with(
+        f"integrationconfig.{integration_id}.pull_events", "null"
+    )
+    assert not mock_redis_empty.Redis.return_value.delete.called

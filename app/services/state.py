@@ -1,10 +1,10 @@
 import json
 import logging
 import stamina
-import httpx
 import redis.asyncio as redis
 from app import settings
 from .activity_logger import ephemeral_run
+from .retry_policies import REDIS_RETRY
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ class IntegrationStateManager:
         self.db_client = redis.Redis(host=host, port=port, db=db)
 
     async def get_state(self, integration_id: str, action_id: str, source_id: str = "no-source") -> dict:
-        for attempt in stamina.retry_context(on=redis.RedisError, attempts=5, wait_initial=1.0, wait_max=30, wait_jitter=3.0):
+        async for attempt in stamina.retry_context(**REDIS_RETRY):
             with attempt:
                 json_value = await self.db_client.get(f"integration_state.{integration_id}.{action_id}.{source_id}")
         value = json.loads(json_value) if json_value else {}
@@ -41,7 +41,7 @@ class IntegrationStateManager:
     async def set_state(self, integration_id: str, action_id: str, state: dict, source_id: str = "no-source"):
         if _skip_on_ephemeral_run("set_state", integration_id, action_id):
             return
-        for attempt in stamina.retry_context(on=redis.RedisError, attempts=5, wait_initial=1.0, wait_max=30, wait_jitter=3.0):
+        async for attempt in stamina.retry_context(**REDIS_RETRY):
             with attempt:
                 await self.db_client.set(
                     f"integration_state.{integration_id}.{action_id}.{source_id}",
@@ -62,7 +62,7 @@ class IntegrationStateManager:
         """
         if _skip_on_ephemeral_run("set_if_absent", integration_id, action_id):
             return False
-        for attempt in stamina.retry_context(on=redis.RedisError, attempts=5, wait_initial=1.0, wait_max=30, wait_jitter=3.0):
+        async for attempt in stamina.retry_context(**REDIS_RETRY):
             with attempt:
                 was_set = await self.db_client.set(
                     f"integration_state.{integration_id}.{action_id}.{source_id}",
@@ -75,7 +75,7 @@ class IntegrationStateManager:
     async def delete_state(self, integration_id: str, action_id: str, source_id: str = "no-source"):
         if _skip_on_ephemeral_run("delete_state", integration_id, action_id):
             return
-        for attempt in stamina.retry_context(on=redis.RedisError, attempts=5, wait_initial=1.0, wait_max=30, wait_jitter=3.0):
+        async for attempt in stamina.retry_context(**REDIS_RETRY):
             with attempt:
                 await self.db_client.delete(
                     f"integration_state.{integration_id}.{action_id}.{source_id}"

@@ -171,3 +171,27 @@ def test_redact_url_survives_garbage():
     from app.services.webhooks import _redact_url
 
     assert _redact_url("not a url at all") == "<no-host>"
+
+
+@pytest.mark.asyncio
+async def test_forward_failure_log_does_not_carry_the_url_secret(mocker, caplog):
+    """httpx embeds the request URL in its error text; logging str(e) would put
+    the path secret _redact_url hides straight back into the WARNING."""
+    import logging
+    import httpx
+    import app.services.webhooks as webhooks
+
+    secret_url = "https://hooks.slack.com/services/T000/B000/XXXXSECRET"
+    _mock_resolution(mocker, "93.184.216.34")
+    request = httpx.Request("POST", secret_url)
+    client = mocker.MagicMock()
+    client.post = AsyncMock(side_effect=httpx.HTTPStatusError(
+        f"Client error '404 Not Found' for url '{secret_url}'", request=request, response=httpx.Response(404, request=request),
+    ))
+    mocker.patch.object(webhooks, "_get_diagnostic_client", return_value=client)
+    caplog.set_level(logging.WARNING, logger="app.services.webhooks")
+
+    await webhooks.forward_payload_to_diagnostic_url(destination_url=secret_url, integration_id="abc", json_content={"a": 1})
+
+    assert "XXXXSECRET" not in caplog.text
+    assert "hooks.slack.com" in caplog.text and "HTTP 404" in caplog.text
