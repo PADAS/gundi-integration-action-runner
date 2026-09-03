@@ -3,13 +3,21 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 
 
+# Same constraints gundi_core puts on IntegrationType.value and
+# IntegrationAction.value. Enforcing them here means a bad natural key is a
+# request-validation 422 that names `integration_state.type_value`, instead of
+# surfacing later from Integration.parse_obj against synthesized fields such
+# as `type.actions.0.value` that never appeared in the request.
+_NATURAL_KEY = dict(min_length=2, max_length=200, regex=r"^[a-z0-9_]+$")
+
+
 class DraftActionConfig(BaseModel):
-    action_value: str
+    action_value: str = Field(..., **_NATURAL_KEY)
     data: dict
 
 
 class IntegrationState(BaseModel):
-    type_value: str
+    type_value: str = Field(..., **_NATURAL_KEY)
     base_url: Optional[str] = None
     configurations: List[DraftActionConfig] = Field(default_factory=list)
 

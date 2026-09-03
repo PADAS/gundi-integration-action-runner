@@ -940,10 +940,14 @@ async def test_ephemeral_auth_handler_write_is_blocked_end_to_end(
     response = api_client.post("/v1/actions/execute/", json=_ephemeral_body(action_id="auth"))
 
     assert response.status_code == 500
-    # Sanitized error shape — no configurations, no request/response bodies,
-    # only the exception type name.
+    # Sanitized error shape — no configurations, no request/response bodies.
+    # The exception is runner-authored (it names only the blocked operation),
+    # so its message survives: the wizard can say which write was refused.
     assert response.json() == {
-        "detail": {"action_id": "auth", "error": EphemeralWriteBlocked.__name__},
+        "detail": {
+            "action_id": "auth",
+            "error": "EphemeralWriteBlocked: send_events_to_gundi is not allowed on the ephemeral (draft-integration) path",
+        },
     }
     assert call_marker["called"], "buggy auth handler must have been reached"
     assert not mock_publish_event.called
@@ -1643,6 +1647,161 @@ async def test_ephemeral_validation_error_from_custom_pydantic_error_does_not_ec
     error = response.json()["detail"]["error"]
     assert _EPHEMERAL_SECRET not in response.text
     assert "token" in error and "invalid value" in error
+
+
+@pytest.mark.asyncio
+async def test_nested_portal_failure_under_ephemeral_context_is_not_classified_as_provider_auth(
+        mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event,
+        mock_ephemeral_action_handlers, integration_v2,
+):
+    # A reference handler that calls execute_action(integration_id=...) under
+    # the ephemeral context gets the ephemeral error branch for a failure in
+    # get_integration_details too. A 401 from the Gundi portal there is a
+    # portal auth problem, and must not render as the provider wording the
+    # handler-failure path uses ("Authentication failed"), which would point
+    # the operator at the wrong system. Same scoping the saved path enforces.
+    from app.services.activity_logger import ephemeral_run
+    request = httpx.Request("GET", "https://gundi.example/integrations/x")
+    mock_config_manager.get_integration_details.side_effect = httpx.HTTPStatusError(
+        "401 from the portal", request=request, response=httpx.Response(401, request=request),
+    )
+    _patch_ephemeral_runner(mocker, mock_ephemeral_action_handlers, mock_gundi_client_v2, mock_config_manager, mock_publish_event)
+
+    token = ephemeral_run.set(True)
+    try:
+        response = await execute_action(integration_id=str(integration_v2.id), action_id="list_species")
+    finally:
+        ephemeral_run.reset(token)
+
+    assert response.status_code == 500
+    assert json.loads(response.body)["detail"]["error"] == "HTTPStatusError"
+    assert not mock_publish_event.called
+
+
+@pytest.mark.asyncio
+async def test_ephemeral_duck_typed_response_status_gives_matching_text_and_status(
+        mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event,
+        mock_reference_action_handler, mock_pull_observations_action_handler,
+        mock_push_action_handler, mock_generic_action_handler,
+):
+    # requests.HTTPError and friends carry `.response.status_code` without
+    # being httpx types. The classifier already duck-types that; the response
+    # status must come from the same reading, or the body says
+    # "Authentication failed (HTTP 401)" while the status says 500.
+    class FakeResponse:
+        status_code = 401
+
+    class OtherClientHTTPError(Exception):
+        response = FakeResponse()
+
+    handlers = _auth_handlers_raising(
+        OtherClientHTTPError("401 Client Error"), mock_reference_action_handler,
+        mock_pull_observations_action_handler, mock_push_action_handler, mock_generic_action_handler,
+    )
+    _patch_ephemeral_runner(mocker, handlers, mock_gundi_client_v2, mock_config_manager, mock_publish_event)
+
+    response = api_client.post("/v1/actions/execute/", json=_ephemeral_body(action_id="auth"))
+
+    assert response.status_code == 401
+    assert response.json()["detail"]["error"] == "Authentication failed (HTTP 401)"
+
+
+@pytest.mark.parametrize(
+    "preset_status_code,expected_status,expected_error",
+    [
+        # A connector hierarchy that stores the status as text: not a status
+        # the runner can forward, but still an auth failure, so 401 — and no
+        # TypeError inside the except block, which would have logged the raw
+        # exception text and answered with the unredacted 500.
+        ("401", 401, "Authentication failed"),
+        # Out of the HTTP range: a connector bug, never handed to the response.
+        (999, 500, "Unexpected response from the provider (HTTP 999)"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_ephemeral_untrusted_status_code_on_connector_exception(
+        preset_status_code, expected_status, expected_error,
+        mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event,
+        mock_reference_action_handler, mock_pull_observations_action_handler,
+        mock_push_action_handler, mock_generic_action_handler, caplog,
+):
+    from app.services.errors import IntegrationAuthError, IntegrationBadResponseError
+    import logging
+
+    class ClientBase(Exception):
+        def __init__(self, message, status_code=None):
+            self.status_code = status_code
+            self.message = message
+            super().__init__(message)
+
+    base = IntegrationAuthError if preset_status_code == "401" else IntegrationBadResponseError
+
+    class ClientError(ClientBase, base):
+        pass
+
+    exc = ClientError(f"provider said no to {_EPHEMERAL_SECRET}", status_code=preset_status_code)
+    handlers = _auth_handlers_raising(
+        exc, mock_reference_action_handler,
+        mock_pull_observations_action_handler, mock_push_action_handler, mock_generic_action_handler,
+    )
+    _patch_ephemeral_runner(mocker, handlers, mock_gundi_client_v2, mock_config_manager, mock_publish_event)
+    caplog.set_level(logging.DEBUG, logger="app.services.action_runner")
+
+    response = api_client.post("/v1/actions/execute/", json=_ephemeral_body(action_id="auth"))
+
+    assert response.status_code == expected_status
+    assert response.json()["detail"]["error"] == expected_error
+    assert _EPHEMERAL_SECRET not in response.text
+    assert _EPHEMERAL_SECRET not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "field_path,bad_value",
+    [
+        (("type_value",), "Earth Ranger"),
+        (("configurations", 0, "action_value"), "Auth-Token"),
+    ],
+)
+def test_ephemeral_natural_keys_are_validated_on_the_request_model(field_path, bad_value):
+    # gundi_core constrains IntegrationType.value / IntegrationAction.value to
+    # ^[a-z0-9_]+$. Mirrored on the request model, a bad key is a request
+    # 422 that names the field the caller sent, not one synthesized inside
+    # Integration.parse_obj such as `type.actions.0.value`.
+    body = _ephemeral_body(action_id="auth")
+    target = body["integration_state"]
+    for part in field_path[:-1]:
+        target = target[part]
+    target[field_path[-1]] = bad_value
+
+    response = api_client.post("/v1/actions/execute/", json=body)
+
+    assert response.status_code == 422
+    locs = [tuple(err["loc"]) for err in response.json()["detail"]]
+    assert ("body", "integration_state", *field_path) in locs
+    assert "type.actions" not in response.text
+    assert _EPHEMERAL_SECRET not in response.text
+
+
+@pytest.mark.asyncio
+async def test_ephemeral_error_log_names_the_exception_type_once(
+        mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event, mock_ephemeral_action_handlers, caplog,
+):
+    import logging
+    _patch_ephemeral_runner(mocker, mock_ephemeral_action_handlers, mock_gundi_client_v2, mock_config_manager, mock_publish_event)
+    caplog.set_level(logging.ERROR, logger="app.services.action_runner")
+    body = {
+        "action_id": "list_event_fields",
+        "integration_state": {
+            "type_value": "earth_ranger",
+            "configurations": [{"action_value": "auth", "data": {"token": _EPHEMERAL_SECRET}}],
+        },
+    }
+
+    response = api_client.post("/v1/actions/execute/", json=body)
+
+    assert response.status_code == 422
+    assert "ValidationError: event_type: field required" in caplog.text
+    assert "ValidationError: ValidationError" not in caplog.text
 
 
 @pytest.mark.asyncio

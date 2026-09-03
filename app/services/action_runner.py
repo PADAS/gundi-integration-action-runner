@@ -6,8 +6,6 @@ import uuid
 from enum import Enum
 from typing import Optional
 
-import aiohttp
-import httpx
 import pydantic
 import stamina
 from gundi_client_v2 import GundiClient
@@ -26,7 +24,8 @@ from .config_manager import IntegrationConfigurationManager
 from .state import IntegrationStateManager
 from .utils import find_config_for_action
 from .activity_logger import publish_event, log_action_activity, ephemeral_run
-from .errors import classify_error, format_classified_error, IntegrationError
+from .errors import classify_error, format_classified_error, source_status_code, IntegrationError
+from .gundi import EphemeralWriteBlocked
 
 _portal = GundiClient()
 config_manager = IntegrationConfigurationManager()
@@ -134,17 +133,22 @@ _SAFE_VALIDATION_MESSAGES = {
 }
 
 
-def _ephemeral_error_text(exc: Exception, *, expose_message: bool) -> str:
+def _ephemeral_error_text(exc: Exception, *, classified, expose_message: bool) -> str:
     """Portal-facing text for a failure on the ephemeral path.
 
-    Redaction is by provenance, not by path. Runner-authored errors
-    (expose_message=True) keep their message: the runner built it, so it
-    cannot contain draft credentials. A pydantic ValidationError exposes
-    field locations plus server-owned text from _SAFE_VALIDATION_MESSAGES;
-    any other message, connector-authored or not, is replaced, since
-    validators run on draft credentials. Anything raised by a handler is reduced to the curated
-    classification title plus the HTTP status, never str(exc), which can
-    embed our outgoing request (auth headers) or the source's response body.
+    Redaction is by provenance, not by path. Runner-authored errors keep
+    their message: the runner built it, so it cannot contain draft
+    credentials. That covers expose_message=True (unknown action, whitelist
+    rejection, ...) and EphemeralWriteBlocked, which is raised inside the
+    handler frame but names only the blocked operation. A pydantic
+    ValidationError exposes field locations plus server-owned text from
+    _SAFE_VALIDATION_MESSAGES; any other message, connector-authored or
+    not, is replaced, since validators run on draft credentials. Anything
+    else raised by a handler is reduced to the curated classification
+    title plus the HTTP status, never str(exc), which can embed our
+    outgoing request (auth headers) or the source's response body.
+    `classified` is the caller's classify_error verdict, or None when the
+    failure is not the handler's (see _handle_error).
     """
     if isinstance(exc, pydantic.ValidationError):
         fields = "; ".join(
@@ -153,10 +157,9 @@ def _ephemeral_error_text(exc: Exception, *, expose_message: bool) -> str:
             for err in exc.errors()
         )
         return f"{type(exc).__name__}: {fields}" if fields else type(exc).__name__
-    if expose_message:
+    if expose_message or isinstance(exc, EphemeralWriteBlocked):
         message = exc.args[0] if exc.args else str(exc)
         return f"{type(exc).__name__}: {message}"
-    classified = classify_error(exc)
     if classified:
         text = classified.title
         if classified.status_code:
@@ -165,30 +168,26 @@ def _ephemeral_error_text(exc: Exception, *, expose_message: bool) -> str:
     return type(exc).__name__
 
 
-def _ephemeral_status_for(exc: Exception) -> int:
+def _ephemeral_status_for(exc: Exception, fallback: int) -> int:
     """HTTP status for a handler failure on the ephemeral path.
 
     Forward the source system's verdict so cdip's upstream_status matches it
-    and the portal can tell bad credentials from a broken source. Three
-    shapes carry it: httpx.HTTPStatusError.response.status_code,
-    aiohttp.ClientResponseError.status, and IntegrationError.status_code
-    (an auth error with no explicit code is still a 401). Statuses below 400
-    are not failures the portal can classify (a redirect surfaced by
-    raise_for_status with redirects off is the common one) and fall back to
-    500 rather than becoming the runner's own response status.
+    and the portal can tell bad credentials from a broken source. The status
+    is read by errors.source_status_code, the same reader the classifier
+    uses, so the body text and the response status always agree; an
+    IntegrationAuthError with no explicit code is still a 401. Only 4xx/5xx
+    are forwarded: statuses below 400 are not failures the portal can
+    classify (a redirect surfaced by raise_for_status with redirects off is
+    the common one), and anything outside the HTTP range is a connector bug,
+    not a status the runner should answer with. Everything else keeps the
+    caller's `fallback` (500 for a handler exception, 504 for a timeout).
     """
-    source_status = None
-    if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
-        source_status = exc.response.status_code
-    elif isinstance(exc, aiohttp.ClientResponseError):
-        source_status = exc.status
-    elif isinstance(exc, IntegrationError):
-        source_status = getattr(exc, "status_code", None)
-        if not source_status and exc.error_type == "auth":
-            source_status = status.HTTP_401_UNAUTHORIZED
-    if source_status is not None and source_status >= 400:
+    source_status = source_status_code(exc)
+    if source_status is None and isinstance(exc, IntegrationError) and exc.error_type == "auth":
+        return status.HTTP_401_UNAUTHORIZED
+    if source_status is not None and 400 <= source_status <= 599:
         return source_status
-    return status.HTTP_500_INTERNAL_SERVER_ERROR
+    return fallback
 
 
 async def _handle_error(
@@ -207,16 +206,35 @@ async def _handle_error(
     """
     is_ephemeral = ephemeral_run.get()
 
+    # Explicit IntegrationError subclasses classify everywhere — they're
+    # unambiguous. Heuristic classification (status codes / connection
+    # exception types) is scoped to action-handler execution failures only
+    # (classify_heuristics=True), because the same signals mean something
+    # different elsewhere — e.g. a 401 from the Gundi portal's own
+    # get_integration_details call is a portal auth problem, not a
+    # third-party provider one, and must not render as "Authentication
+    # failed" (which would misdirect operators at the provider). The same
+    # scoping applies on both branches below: a nested saved-integration
+    # call under an ephemeral context reaches the ephemeral branch with
+    # classify_heuristics=False and must not get the provider wording either.
+    classified = classify_error(exc) if (classify_heuristics or isinstance(exc, IntegrationError)) else None
+
     if is_ephemeral:
         # Draft credentials must reach neither PubSub nor the application log,
         # which outlives and outreaches the request. Log the same redacted
         # text the caller gets plus the traceback frames (source locations,
         # no values); str(exc) and the traceback's final line stay out.
-        safe_text = _ephemeral_error_text(exc, expose_message=expose_message)
+        # config_data is dropped here regardless of what the caller passed.
+        safe_text = _ephemeral_error_text(exc, classified=classified, expose_message=expose_message)
+        if classify_heuristics:
+            # A handler failure: forward the source system's verdict instead
+            # of the caller's generic status.
+            status_code = _ephemeral_status_for(exc, fallback=status_code)
+        type_name = type(exc).__name__
+        # Runner-authored and validation texts already lead with the type name.
+        logged = safe_text if safe_text.startswith(type_name) else f"{type_name}: {safe_text}"
         frames = "".join(traceback.format_tb(exc.__traceback__)) if exc.__traceback__ else ""
-        logger.error(
-            f"Error in ephemeral action '{action_id}': {type(exc).__name__}: {safe_text}\n{frames}".rstrip()
-        )
+        logger.error(f"Error in ephemeral action '{action_id}': {logged}\n{frames}".rstrip())
         return _request_error_response(action_id, safe_text, status_code)
 
     log_message = f"Error in action '{action_id}' for integration '{integration_id}': {type(exc).__name__}: {exc}"
@@ -227,16 +245,6 @@ async def _handle_error(
     # '<id>': " and truncates, so the useful part must come first. Anything
     # unclassified keeps the verbose format. Full details always remain in
     # error_traceback and the request/response fields below.
-    #
-    # Explicit IntegrationError subclasses classify everywhere — they're
-    # unambiguous. Heuristic classification (status codes / connection
-    # exception types) is scoped to action-handler execution failures only
-    # (classify_heuristics=True), because the same signals mean something
-    # different elsewhere — e.g. a 401 from the Gundi portal's own
-    # get_integration_details call is a portal auth problem, not a
-    # third-party provider one, and must not render as "Authentication
-    # failed" (which would misdirect operators at the provider).
-    classified = classify_error(exc) if (classify_heuristics or isinstance(exc, IntegrationError)) else None
     message = format_classified_error(classified) if classified else log_message
 
     error_details = {
@@ -507,9 +515,10 @@ async def _execute_action_impl(
         # noticeable without spamming a warning on every tick.
         if skippable_pull:
             return await _skip_invalid_config(integration_id, action_id, error=e)
+        # _handle_error drops config_data on the ephemeral path itself.
         return await _handle_error(
             e, integration_id, action_id,
-            config_data=None if is_ephemeral else config_data,
+            config_data=config_data,
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         )
 
@@ -529,14 +538,18 @@ async def _execute_action_impl(
         except pydantic.ValidationError as e:
             return await _handle_error(e, integration_id, action_id, data, status.HTTP_422_UNPROCESSABLE_ENTITY)
 
-    # Reference actions are portal-invoked at interactive-fetch frequency (every
-    # dropdown open), so a handler failure is routine rather than exceptional.
-    # Like every ephemeral error, theirs must not carry the integration's
-    # configurations — which include raw auth secrets — into the published
-    # IntegrationActionFailed event or the JSON error response.
-    handler_error_config_data = None if (is_ephemeral or is_reference_action) else {
-        "configurations": [c.dict() for c in integration.configurations]
-    }
+    def handler_error_config_data():
+        # Built only on failure: serializing every configuration row on each
+        # successful run would be wasted work on the hot path. Reference
+        # actions are portal-invoked at interactive-fetch frequency (every
+        # dropdown open), so a handler failure is routine rather than
+        # exceptional, and like every ephemeral error theirs must not carry
+        # the integration's configurations — which include raw auth secrets —
+        # into the published IntegrationActionFailed event or the JSON error
+        # response. (_handle_error drops config_data on the ephemeral path.)
+        if is_reference_action:
+            return None
+        return {"configurations": [c.dict() for c in integration.configurations]}
 
     try:  # Execute the action handler with a timeout
         start_time = time.monotonic()
@@ -556,17 +569,18 @@ async def _execute_action_impl(
         return await _handle_error(
             asyncio.TimeoutError(f"Action '{action_id}' timed out"),
             integration_id, action_id,
-            config_data=handler_error_config_data,
+            config_data=handler_error_config_data(),
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             classify_heuristics=True,
         )
     except Exception as e:
         # Saved-integration runs keep the historical 500; the ephemeral path
-        # forwards the source system's verdict (see _ephemeral_status_for).
+        # forwards the source system's verdict instead (_handle_error applies
+        # _ephemeral_status_for to handler failures).
         return await _handle_error(
             e, integration_id, action_id,
-            config_data=handler_error_config_data,
-            status_code=_ephemeral_status_for(e) if is_ephemeral else status.HTTP_500_INTERNAL_SERVER_ERROR,
+            config_data=handler_error_config_data(),
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             classify_heuristics=True,
         )
 
