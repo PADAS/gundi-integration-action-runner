@@ -81,6 +81,33 @@ CONNECTIVITY_EXCEPTIONS = (
 )
 
 
+def source_status_code(exc: Exception) -> Optional[int]:
+    """The HTTP status the third party answered with, if the exception carries one.
+
+    Three shapes carry it: `IntegrationError.status_code`, aiohttp's
+    `ClientResponseError.status`, and the duck-typed `.response.status_code`
+    (httpx.HTTPStatusError, requests.HTTPError, and anything else that keeps
+    the response on the exception). This is the single reader shared by the
+    classifier and the ephemeral status forwarding, so the text and the HTTP
+    status the runner returns can never disagree about which status they saw.
+
+    Connectors are free to pre-set `status_code` on their own exception
+    hierarchies, so it is not trusted to be an int: anything else (a "401"
+    string, a bool) reads as unknown rather than raising inside an except
+    block, which would replace the redacted error with the raw one.
+    """
+    if isinstance(exc, IntegrationError):
+        code = getattr(exc, "status_code", None)
+    elif isinstance(exc, aiohttp.ClientResponseError):
+        code = exc.status
+    else:
+        # getattr chain: non-HTTP exceptions have no .response attribute.
+        code = getattr(getattr(exc, "response", None), "status_code", None)
+    if isinstance(code, bool) or not isinstance(code, int):
+        return None
+    return code
+
+
 def classify_error(exc: Exception) -> Optional[ClassifiedError]:
     """Classify a third-party failure for consistent activity-log reporting.
 
@@ -89,16 +116,15 @@ def classify_error(exc: Exception) -> Optional[ClassifiedError]:
     (`exc.response.status_code`, exception type). Returns None when the error
     can't be classified — callers keep the generic format.
     """
+    status_code = source_status_code(exc)
     if isinstance(exc, IntegrationError):
         return ClassifiedError(
             error_type=exc.error_type,
             title=exc.default_title,
             message=getattr(exc, "message", None) or "",
-            status_code=getattr(exc, "status_code", None),
+            status_code=status_code,
         )
 
-    # getattr chain: non-HTTP exceptions have no .response attribute.
-    status_code = getattr(getattr(exc, "response", None), "status_code", None)
     # httpx.HTTPStatusError from raise_for_status() stringifies to multi-line
     # text (URL plus a "For more information check: ..." line) — only the
     # first line is useful as a short, human-first message.

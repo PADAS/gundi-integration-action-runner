@@ -6,3 +6,4 @@ class ActionTypeEnum(str, Enum):
     PULL_DATA = "pull"
     PUSH_DATA = "push"
     GENERIC = "generic"
+    REFERENCE = "reference"

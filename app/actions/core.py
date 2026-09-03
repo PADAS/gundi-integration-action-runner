@@ -61,6 +61,17 @@ class GenericActionConfiguration(ActionConfiguration):
     pass
 
 
+class ReferenceActionConfiguration(ActionConfiguration):
+    """Marker base for reference-data actions: the config model IS the query.
+
+    Reference actions are stateless — they read the integration's auth config
+    but store no configuration of their own; callers (the Gundi portal)
+    supply query params via config_overrides. The runner therefore executes
+    them without a stored config row, and they are one of the two action
+    types (with auth) allowed to run ephemerally against a draft integration.
+    """
+
+
 def discover_actions(module_name, prefix):
     action_handlers = {}
     # Import the module using importlib
