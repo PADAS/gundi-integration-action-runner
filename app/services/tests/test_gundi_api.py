@@ -1,3 +1,7 @@
+from unittest.mock import AsyncMock
+import httpx
+from pathlib import Path
+import re
 import pytest
 from app.services.gundi import (
     send_events_to_gundi,
@@ -153,48 +157,106 @@ async def test_gundi_helpers_block_on_ephemeral_run(fn_and_args):
         ephemeral_run.reset(token)
 
 
-def test_gundi_api_retry_policy_is_explicit_and_reachable():
+def _worst_case_waits(policy: dict) -> list:
+    """The sleeps tenacity performs between attempts when every jitter draw is
+    maximal: min(initial * 2**n + jitter, max) for n = 0 .. attempts-2."""
+    return [
+        min(policy["wait_initial"] * 2 ** n + policy["wait_jitter"], policy["wait_max"])
+        for n in range(policy["attempts"] - 1)
+    ]
+
+
+def test_gundi_api_retry_policy_reaches_every_declared_attempt():
     """stamina combines `attempts` and `timeout` with stop_any(), so the tighter
-    one wins. Its defaults (attempts=10, timeout=45s) silently truncate a long
-    backoff: with wait_initial=10 the 45s budget is spent after ~3 attempts and
-    wait_max is never reached. Both bounds must be declared explicitly, and the
-    timeout must be wide enough for the declared wait curve to actually play out."""
+    one wins. A policy whose waits add up to more than its timeout declares
+    attempts (and a wait_max) it can never reach; the effective policy is then
+    whatever the timeout happens to allow, which is how the old 10-20-40 s
+    curve silently ran three attempts under stamina's default 45 s budget."""
     from app.services.gundi import GUNDI_API_RETRY
 
-    attempts = GUNDI_API_RETRY["attempts"]
-    timeout = GUNDI_API_RETRY["timeout"]
-    wait_initial = GUNDI_API_RETRY["wait_initial"]
-    wait_max = GUNDI_API_RETRY["wait_max"]
-    assert attempts is not None and timeout is not None
+    assert GUNDI_API_RETRY["attempts"] and GUNDI_API_RETRY["timeout"], "both stops must be explicit"
+    waits = _worst_case_waits(GUNDI_API_RETRY)
 
-    # Worst case (no jitter contribution needed -- jitter only adds delay), how
-    # many attempts fit inside the timeout?
-    elapsed, fits = 0.0, 1
-    while fits < attempts:
-        elapsed += min(wait_initial * (2 ** (fits - 1)), wait_max)
-        if elapsed >= timeout:
-            break
-        fits += 1
-    assert fits >= 5, (
-        f"retry budget allows only {fits} attempts before the {timeout}s timeout; "
-        "the declared backoff is mostly unreachable"
+    # Even with maximal jitter and instant calls, every declared attempt runs.
+    assert sum(waits) <= GUNDI_API_RETRY["timeout"], (
+        f"waits total {sum(waits)}s, more than the {GUNDI_API_RETRY['timeout']}s budget: "
+        f"only part of the declared {GUNDI_API_RETRY['attempts']} attempts can ever run"
     )
+    # wait_max is a real cap on the curve, not a decorative number.
+    assert waits[-1] == GUNDI_API_RETRY["wait_max"]
 
 
-def test_all_gundi_api_calls_share_one_retry_policy():
-    """Six call sites previously repeated the same decorator by hand, which is
-    how the wait curve and the stop condition drifted apart in the first place.
-    Five are the helpers in gundi.py; the sixth is the webhook path's
-    integration lookup, which retries the same Gundi API inline."""
-    import re
-    from pathlib import Path
+def test_gundi_api_retry_worst_case_fits_inside_one_request():
+    """tenacity's stop_after_delay is checked after a failed attempt and then the
+    full wait is slept, so one failing call can hold its caller for up to
+    timeout + wait_max, plus the request itself. PubSub messages are processed
+    inline in the push request by default (PROCESS_PUBSUB_MESSAGES_IN_BACKGROUND
+    is False), so that ceiling has to leave room under the push ack deadline
+    and Cloud Run's default 300 s request timeout for the handler's own work."""
+    from app.services.gundi import GUNDI_API_RETRY
 
-    source = Path("app/services/gundi.py").read_text()
-    decorators = re.findall(r"@stamina\.retry\((.*?)\)\n", source)
-    assert decorators, "expected retry-decorated functions in app/services/gundi.py"
-    assert all(d.strip() == "**GUNDI_API_RETRY" for d in decorators), decorators
+    ceiling = GUNDI_API_RETRY["timeout"] + GUNDI_API_RETRY["wait_max"]
+    assert ceiling <= 150, f"a single failing Gundi call may hold a request for {ceiling}s"
 
-    webhooks_source = Path("app/services/webhooks.py").read_text()
-    contexts = re.findall(r"stamina\.retry_context\((.*?)\)", webhooks_source)
-    assert contexts, "expected a retry_context in app/services/webhooks.py"
-    assert all(c.strip() == "**GUNDI_API_RETRY" for c in contexts), contexts
+
+_SERVICES_DIR = Path(__file__).resolve().parents[1]
+
+
+def test_all_gundi_api_helpers_share_one_retry_policy():
+    """The helpers used to repeat the same decorator by hand, which is how the
+    wait curve and the stop condition drifted apart in the first place. Source
+    inspection is the only way to check decorators applied at import time; the
+    config-manager reload is checked behaviourally below."""
+    source = (_SERVICES_DIR / "gundi.py").read_text()
+    decorators = re.findall(r"@stamina\.retry\(\s*([^)]*?)\s*\)", source)
+    assert decorators, "expected retry-decorated functions in gundi.py"
+    assert all(d == "**GUNDI_API_RETRY" for d in decorators), decorators
+
+
+@pytest.mark.asyncio
+async def test_config_manager_reload_uses_the_shared_gundi_retry_policy(
+        mocker, mock_redis_empty, mock_gundi_client_v2_class, integration_v2,
+):
+    """_reload_integration_from_gundi is a Gundi API call like the helpers; its
+    retry must be the same policy, checked by spying on the call rather than
+    grepping source."""
+    import stamina
+    from app.services.config_manager import IntegrationConfigurationManager
+    from app.services.gundi import GUNDI_API_RETRY
+
+    mocker.patch("app.services.config_manager.redis", mock_redis_empty)
+    mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
+    spy = mocker.spy(stamina, "retry_context")
+
+    await IntegrationConfigurationManager().get_integration(str(integration_v2.id))
+
+    http_policies = [c.kwargs for c in spy.call_args_list if c.kwargs.get("on") is httpx.HTTPError]
+    assert http_policies, "expected the reload to retry on httpx.HTTPError"
+    assert all(kw == GUNDI_API_RETRY for kw in http_policies), http_policies
+
+
+@pytest.mark.asyncio
+async def test_webhook_integration_lookup_does_not_add_its_own_retry_loop(mocker):
+    """get_integration used to wrap get_integration_details in a second retry
+    loop. The reload inside already retries the same call, so the two nested
+    multiplicatively; worse, the outer loop iterated stamina synchronously
+    inside a coroutine, sleeping the whole event loop between attempts. One
+    call to get_integration_details per lookup, and the failure is reported."""
+    from unittest.mock import MagicMock
+    import app.services.webhooks as webhooks
+    from gundi_core.events import IntegrationWebhookFailed
+
+    lookup = mocker.patch.object(
+        webhooks.config_manager, "get_integration_details",
+        AsyncMock(side_effect=httpx.ConnectError("portal unreachable")),
+    )
+    publish = mocker.patch.object(webhooks, "publish_event", AsyncMock())
+    request = MagicMock()
+    request.headers = {"x-gundi-integration-id": "abc-123"}
+    request.query_params = {}
+
+    integration = await webhooks.get_integration(request)
+
+    assert integration is None
+    assert lookup.await_count == 1
+    assert isinstance(publish.call_args.kwargs["event"], IntegrationWebhookFailed)

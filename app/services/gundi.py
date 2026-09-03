@@ -27,21 +27,31 @@ def _block_if_ephemeral(op: str) -> None:
         )
 
 
-# One retry policy for every Gundi API call, defined once so the wait curve and
-# the stop condition can't drift apart.
+# One retry policy for every Gundi API call (the helpers below and the
+# config manager's reload), defined once so the wait curve and the stop
+# condition can't drift apart.
 #
-# `attempts` and `timeout` are both spelled out on purpose: stamina combines
-# them with stop_any(), so the tighter one wins, and its defaults are
-# attempts=10 / timeout=45s. With the waits below (10-20s, then 20-30s, ...)
-# the default 45s budget expires after ~3 attempts and wait_max=300 is never
-# reachable -- the declared backoff would silently not be the real one.
+# stamina combines `attempts` and `timeout` with stop_any(), so the tighter
+# one wins, and its defaults (attempts=10 / timeout=45 s) silently truncate a
+# long curve: the hand-copied 10-20-40 s decorators this replaced ran three
+# attempts, not ten. Both stops are spelled out here and sized so every
+# declared attempt is reachable. The waits are min(2 * 2**n + jitter, 30) for
+# n = 0..4, i.e. 2-7, 4-9, 8-13, 16-21 and 30 s: 60-80 s of waiting in total
+# for six attempts, inside the 120 s budget whenever the calls themselves are
+# quick. tenacity checks the stop after a failed attempt and then sleeps the
+# full wait, so the hard ceiling for one failing call is timeout + wait_max
+# plus one request, about 2.5 minutes. Gundi sends run inline in the PubSub
+# push request by default (PROCESS_PUBSUB_MESSAGES_IN_BACKGROUND=False), so
+# that ceiling must stay well under the push ack deadline and the platform's
+# request timeout (Cloud Run defaults to 300 s); see the tests in
+# test_gundi_api.py that pin both properties.
 GUNDI_API_RETRY = dict(
     on=httpx.HTTPError,
-    attempts=10,
-    timeout=180.0,
-    wait_initial=10.0,
-    wait_jitter=10.0,
-    wait_max=300.0,
+    attempts=6,
+    timeout=120.0,
+    wait_initial=2.0,
+    wait_jitter=5.0,
+    wait_max=30.0,
 )
 
 

@@ -1,4 +1,5 @@
 import json
+import logging
 from typing import Optional
 
 import stamina
@@ -7,14 +8,23 @@ import redis.asyncio as redis
 from gundi_core.schemas.v2 import Integration, IntegrationSummary, IntegrationActionConfiguration, WebhookConfiguration
 from gundi_client_v2 import GundiClient
 from app import settings
+from .gundi import GUNDI_API_RETRY
+
+logger = logging.getLogger(__name__)
 
 
 # Cached marker meaning "this integration has no webhook configuration", so a
 # cold cache doesn't trigger a Gundi API reload on every webhook-config lookup.
 _NO_WEBHOOK_CONFIG_SENTINEL = "null"
-# How long a cached "this integration has no webhook config" marker survives
-# when the caller specified no TTL. Bounded so it self-heals -- see below.
-NO_WEBHOOK_CONFIG_TTL_SECONDS = 3600
+# Default expiry for the webhook key (the config itself or the absence
+# sentinel) when the caller asks for no TTL, which the action path does. There
+# is no WebhookConfig* event to invalidate that key on, no consumer handler
+# touches it, and a cache hit never refreshes it, so a permanent entry would
+# serve a stale or missing webhook config until someone deleted it by hand.
+# Bounded so it self-heals; five minutes is the longest an operator's webhook
+# config change can take to reach a connector that is not also receiving
+# webhooks (the webhook path caches for 60 s on its own).
+WEBHOOK_CONFIG_DEFAULT_TTL_SECONDS = 300
 
 
 class IntegrationConfigurationManager:
@@ -38,7 +48,7 @@ class IntegrationConfigurationManager:
     async def _reload_integration_from_gundi(self, integration_id: str, ttl=None) -> Integration:
         key = self._get_integration_key(integration_id)
         async with GundiClient() as gundi:
-            async for attempt in stamina.retry_context(on=httpx.HTTPError, wait_initial=1.0, wait_jitter=5.0,  wait_max=32.0):
+            async for attempt in stamina.retry_context(**GUNDI_API_RETRY):
                 with attempt:
                     integration_details = await gundi.get_integration_details(integration_id)
             integration = IntegrationSummary.from_integration(integration_details)
@@ -49,20 +59,16 @@ class IntegrationConfigurationManager:
                 await self.db_client.set(config_key, config.json(), ttl)
             # Save the webhook configuration — or a sentinel marking its absence, so
             # integrations without one don't reload from the Gundi API on every lookup
+            # Both the config and the sentinel always expire, even when the
+            # caller asked for no TTL (see WEBHOOK_CONFIG_DEFAULT_TTL_SECONDS).
+            # A plain SET also clears any TTL the webhook path had put on the
+            # same key, so an unbounded write here would undo its 60 s cache.
             webhook_key = self._get_webhook_config_key(integration_id)
+            webhook_ttl = ttl if ttl is not None else WEBHOOK_CONFIG_DEFAULT_TTL_SECONDS
             if webhook_configuration := integration_details.webhook_configuration:
-                await self.db_client.set(webhook_key, webhook_configuration.json(), ttl)
+                await self.db_client.set(webhook_key, webhook_configuration.json(), webhook_ttl)
             else:
-                # The absence sentinel always expires, even when the caller asked
-                # for no TTL. There is no WebhookConfigCreated event to invalidate
-                # it on, so a permanent sentinel would keep serving "no webhook"
-                # after an operator adds one in the portal — breaking every
-                # delivery until someone deleted the key by hand.
-                await self.db_client.set(
-                    webhook_key,
-                    _NO_WEBHOOK_CONFIG_SENTINEL,
-                    ttl if ttl is not None else NO_WEBHOOK_CONFIG_TTL_SECONDS,
-                )
+                await self.db_client.set(webhook_key, _NO_WEBHOOK_CONFIG_SENTINEL, webhook_ttl)
             return integration_details
 
     async def get_action_configuration(self, integration_id: str, action_id: str, ttl=None) -> Optional[IntegrationActionConfiguration]:
@@ -120,20 +126,28 @@ class IntegrationConfigurationManager:
             with attempt:
                 await self.db_client.set(key, integration.json(), ttl)
 
-    async def delete_webhook_configuration(self, integration_id: str):
-        key = self._get_webhook_config_key(integration_id)
-        for attempt in stamina.retry_context(on=redis.RedisError, attempts=5, wait_initial=1.0, wait_max=30, wait_jitter=3.0):
-            with attempt:
-                await self.db_client.delete(key)
-
     async def delete_integration(self, integration_id: str):
-        key = self._get_integration_key(integration_id)
+        # Every key derived from this integration goes in one variadic DEL: the
+        # webhook key (config or absence sentinel) and the per-action config
+        # keys are addressed separately, so leaving them behind lets them
+        # outlive their owner, and a single round-trip has no partial-failure
+        # window between the keys. The action list lives in the summary that is
+        # about to go, so read it first; if it is gone or unreadable, the two
+        # keys we can name still get deleted.
+        integration_key = self._get_integration_key(integration_id)
+        keys = [integration_key, self._get_webhook_config_key(integration_id)]
         for attempt in stamina.retry_context(on=redis.RedisError, attempts=5, wait_initial=1.0, wait_max=30, wait_jitter=3.0):
             with attempt:
-                await self.db_client.delete(key)
-        # The webhook key (config or absence sentinel) is addressed separately,
-        # so deleting the integration must drop it too or it outlives its owner.
-        await self.delete_webhook_configuration(integration_id)
+                summary_data = await self.db_client.get(integration_key)
+        if summary_data:
+            try:
+                summary = IntegrationSummary.parse_raw(summary_data)
+                keys += [self._get_action_config_key(integration_id, a.value) for a in summary.type.actions]
+            except Exception as e:
+                logger.warning(f"Could not read cached summary for integration '{integration_id}' to drop its action keys: {e}")
+        for attempt in stamina.retry_context(on=redis.RedisError, attempts=5, wait_initial=1.0, wait_max=30, wait_jitter=3.0):
+            with attempt:
+                await self.db_client.delete(*keys)
 
     async def get_integration_details(self, integration_id: str, ttl=None) -> Integration:
         integration_summary = await self.get_integration(integration_id, ttl)
