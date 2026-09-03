@@ -14,6 +14,7 @@ from gundi_core.events import IntegrationWebhookFailed, WebhookExecutionFailed
 from app.services.utils import DyntamicFactory
 from app.webhooks.core import get_webhook_handler, DynamicSchemaConfig, HexStringConfig, GenericJsonPayload
 from app.services.config_manager import IntegrationConfigurationManager
+from app.services.gundi import GUNDI_API_RETRY
 
 config_manager = IntegrationConfigurationManager()
 logger = logging.getLogger(__name__)
@@ -163,7 +164,10 @@ async def get_integration(request):
     if integration_id:
         try:
             # Retry on httpx.HTTPError (StatusError, Timeout, ConnectError, etc.)
-            for attempt in stamina.retry_context(on=httpx.HTTPError, wait_initial=10.0, wait_jitter=10.0, wait_max=300.0):
+            # with the same explicit policy as the Gundi API helpers: this is
+            # a Gundi API call too, and the hand-copied decorator it replaces
+            # had the same unreachable backoff (see GUNDI_API_RETRY).
+            for attempt in stamina.retry_context(**GUNDI_API_RETRY):
                 with attempt:
                     # Cache the integration details and webhook config for 60 seconds. 
                     # ToDo: Refactor to event-driven webhook config updates (as in actions)

@@ -182,8 +182,10 @@ def test_gundi_api_retry_policy_is_explicit_and_reachable():
 
 
 def test_all_gundi_api_calls_share_one_retry_policy():
-    """Five call sites previously repeated the same decorator by hand, which is
-    how the wait curve and the stop condition drifted apart in the first place."""
+    """Six call sites previously repeated the same decorator by hand, which is
+    how the wait curve and the stop condition drifted apart in the first place.
+    Five are the helpers in gundi.py; the sixth is the webhook path's
+    integration lookup, which retries the same Gundi API inline."""
     import re
     from pathlib import Path
 
@@ -191,3 +193,8 @@ def test_all_gundi_api_calls_share_one_retry_policy():
     decorators = re.findall(r"@stamina\.retry\((.*?)\)\n", source)
     assert decorators, "expected retry-decorated functions in app/services/gundi.py"
     assert all(d.strip() == "**GUNDI_API_RETRY" for d in decorators), decorators
+
+    webhooks_source = Path("app/services/webhooks.py").read_text()
+    contexts = re.findall(r"stamina\.retry_context\((.*?)\)", webhooks_source)
+    assert contexts, "expected a retry_context in app/services/webhooks.py"
+    assert all(c.strip() == "**GUNDI_API_RETRY" for c in contexts), contexts
