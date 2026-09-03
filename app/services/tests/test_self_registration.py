@@ -805,30 +805,14 @@ def _dummy_reference_handlers():
 
 
 @pytest.mark.asyncio
-async def test_reference_actions_skipped_from_registration_by_default(mocker):
-    # Same gate the earthranger and inaturalist forks ship: until the platform
-    # accepts the "reference" action type, reference actions stay out of the
-    # registered type so they never land as "generic".
+async def test_reference_actions_are_registered_with_the_reference_type(mocker):
+    # The platform accepts the "reference" action type, so reference actions
+    # always register, and with their own type rather than "generic" (which
+    # the runner's ephemeral whitelist would otherwise be the only guard for).
     from unittest.mock import AsyncMock, MagicMock
     from app.services import self_registration
 
     mocker.patch.object(self_registration, "action_handlers", _dummy_reference_handlers())
-    gundi_client = MagicMock()
-    gundi_client.register_integration_type = AsyncMock(return_value={})
-
-    await self_registration.register_integration_in_gundi(gundi_client, type_slug="my_tracker")
-
-    data = gundi_client.register_integration_type.call_args.args[0]
-    assert data["actions"] == []
-
-
-@pytest.mark.asyncio
-async def test_reference_actions_registered_with_reference_type_when_enabled(mocker):
-    from unittest.mock import AsyncMock, MagicMock
-    from app.services import self_registration
-
-    mocker.patch.object(self_registration, "action_handlers", _dummy_reference_handlers())
-    mocker.patch.object(self_registration, "REGISTER_REFERENCE_ACTIONS", True)
     gundi_client = MagicMock()
     gundi_client.register_integration_type = AsyncMock(return_value={})
 

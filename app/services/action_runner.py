@@ -430,8 +430,8 @@ async def _execute_action_impl(
     # or auth handler that calls execute_action(integration_id=...) for a push
     # action gets a nested run whose is_ephemeral is False, and the whitelist
     # must still apply to it. This is the runner's own check; cdip can enforce
-    # it too once reference actions register with the "reference" type (see
-    # self_registration and REGISTER_REFERENCE_ACTIONS).
+    # it too, since reference actions register with the "reference" type (see
+    # self_registration).
     if ephemeral_run.get():
         is_ephemerally_safe = isinstance(config_model, type) and issubclass(
             config_model, (ReferenceActionConfiguration, AuthActionConfiguration),
