@@ -83,20 +83,28 @@ async def execute(
     # scheduled tick vs an operator's "Run now"). Absent the marker we default
     # to automated, so scheduled pulls on destination-only integrations skip
     # quietly instead of erroring.
+    #
+    # It is read from the PubSub message attributes as well as the body:
+    # gundi_core's RunIntegrationAction command has no `triggered_by` field, so
+    # a portal that serializes that model cannot put the marker in the payload
+    # and the MANUAL branch would never be reachable over PubSub.
+    triggered_by = json_payload.get("triggered_by") or (
+        json_data["message"].get("attributes") or {}
+    ).get("triggered_by")
     if settings.PROCESS_PUBSUB_MESSAGES_IN_BACKGROUND:
         background_tasks.add_task(
             execute_action,
             integration_id=json_payload.get("integration_id"),
             action_id=json_payload.get("action_id"),
             config_overrides=json_payload.get("config_overrides"),
-            triggered_by=json_payload.get("triggered_by"),
+            triggered_by=triggered_by,
         )
     else:
         await execute_action(
             integration_id=json_payload.get("integration_id"),
             action_id=json_payload.get("action_id"),
             config_overrides=json_payload.get("config_overrides"),
-            triggered_by=json_payload.get("triggered_by"),
+            triggered_by=triggered_by,
         )
     return {}
 

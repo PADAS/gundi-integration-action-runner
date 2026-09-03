@@ -1,5 +1,7 @@
 # Base dependencies. Don't edit or override this file.
 # Use requirements.in to add integration-specific dependencies instead.
+# imported directly by app/services/errors.py for exception classification
+aiohttp
 environs~=9.5.0
 pydantic~=1.10.15
 fastapi~=0.103.2

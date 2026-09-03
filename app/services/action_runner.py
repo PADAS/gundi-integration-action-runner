@@ -335,13 +335,22 @@ async def _skip_invalid_config(integration_id, action_id, *, error):
         )
         first_in_window = True
     if first_in_window:
-        await log_action_activity(
-            integration_id=integration_id,
-            action_id=action_id,
-            title=f"Skipping '{action_id}': configuration is missing or invalid.",
-            level=LogLevel.WARNING,
-            data={"validation_error": str(error)},
-        )
+        try:
+            await log_action_activity(
+                integration_id=integration_id,
+                action_id=action_id,
+                title=f"Skipping '{action_id}': configuration is missing or invalid.",
+                level=LogLevel.WARNING,
+                data={"validation_error": str(error)},
+            )
+        except Exception as log_error:
+            # Best-effort, like the throttle above. If the event publisher is
+            # unavailable, don't turn a benign skip into an unhandled error
+            # (500 / PubSub redelivery) -- the warning is already in the logs.
+            logger.warning(
+                f"Could not publish the skip warning for '{action_id}' "
+                f"(integration '{integration_id}'): {log_error}"
+            )
     return {"skipped": True, "reason": "invalid_configuration"}
 
 
@@ -395,7 +404,11 @@ async def _execute_action_impl(
         return _request_error_response(action_id, "Provide either integration_id or integration_state.")
     else:
         try:  # Get the integration details to pass it to the action handler
-            integration = await config_manager.get_integration_details(integration_id)
+            # Actions never read the webhook config; skipping it keeps a warm
+            # action run off the portal (see get_integration_details).
+            integration = await config_manager.get_integration_details(
+                integration_id, include_webhook_config=False,
+            )
         except Exception as e:
             return await _handle_error(e, integration_id, action_id)
 

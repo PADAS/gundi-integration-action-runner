@@ -27,7 +27,37 @@ def _block_if_ephemeral(op: str) -> None:
         )
 
 
-@stamina.retry(on=httpx.HTTPError, wait_initial=10.0, wait_jitter=10.0, wait_max=300.0)
+# One retry policy for every Gundi API call (the helpers below and the
+# config manager's reload), defined once so the wait curve and the stop
+# condition can't drift apart.
+#
+# stamina combines `attempts` and `timeout` with stop_any(), so the tighter
+# one wins, and its defaults (attempts=10 / timeout=45 s) silently truncate a
+# long curve: the hand-copied 10-20-40 s decorators this replaced ran three
+# attempts, not ten. Both stops are spelled out here and sized so every
+# declared attempt is reachable. The waits are min(2 * 2**n + jitter, 30) for
+# n = 0..4, i.e. 2-7, 4-9, 8-13, 16-21 and 30 s: 60-80 s of waiting in total
+# for six attempts, inside the 120 s budget whenever the calls themselves are
+# quick. tenacity checks the stop after a failed attempt and then sleeps the
+# full wait, so the loop's own overhead for one failing call is bounded by
+# timeout + wait_max = 150 s. The requests themselves come on top of that:
+# GundiDataSenderClient posts with an httpx timeout of 120 s, so a Sensors
+# API that hangs rather than fails can hold one send for roughly four and a
+# half minutes. Gundi sends run inline in the PubSub push request by default
+# (PROCESS_PUBSUB_MESSAGES_IN_BACKGROUND=False), so deployments that expect
+# hangs should turn background processing on or shorten this policy; the
+# tests in test_gundi_api.py pin the loop-overhead bound.
+GUNDI_API_RETRY = dict(
+    on=httpx.HTTPError,
+    attempts=6,
+    timeout=120.0,
+    wait_initial=2.0,
+    wait_jitter=5.0,
+    wait_max=30.0,
+)
+
+
+@stamina.retry(**GUNDI_API_RETRY)
 async def _get_gundi_api_key(integration_id):
     # An ephemeral run's synthetic integration has no persisted api key —
     # letting this reach the portal would 404 and then stamina would retry
@@ -48,7 +78,7 @@ async def _get_sensors_api_client(integration_id):
     return sensors_api_client
 
 
-@stamina.retry(on=httpx.HTTPError, wait_initial=10.0, wait_jitter=10.0, wait_max=300.0)
+@stamina.retry(**GUNDI_API_RETRY)
 async def send_events_to_gundi(events: List[dict], **kwargs) -> dict:
     """
     Send Events to Gundi using the REST API v2
@@ -78,7 +108,7 @@ async def send_events_to_gundi(events: List[dict], **kwargs) -> dict:
     return await sensors_api_client.post_events(data=events)
 
 
-@stamina.retry(on=httpx.HTTPError, wait_initial=10.0, wait_jitter=10.0, wait_max=300.0)
+@stamina.retry(**GUNDI_API_RETRY)
 async def send_event_attachments_to_gundi(event_id: str, attachments: List[tuple], **kwargs) -> dict:
     """
     Send Event Attachments to Gundi using the REST API v2
@@ -97,7 +127,7 @@ async def send_event_attachments_to_gundi(event_id: str, attachments: List[tuple
     return await sensors_api_client.post_event_attachments(event_id=event_id, attachments=attachments)
 
 
-@stamina.retry(on=httpx.HTTPError, wait_initial=10.0, wait_jitter=10.0, wait_max=300.0)
+@stamina.retry(**GUNDI_API_RETRY)
 async def send_observations_to_gundi(observations: List[dict], **kwargs) -> dict:
     """
     Send Observations to Gundi using the REST API v2
@@ -128,7 +158,7 @@ async def send_observations_to_gundi(observations: List[dict], **kwargs) -> dict
     return await sensors_api_client.post_observations(data=observations)
 
 
-@stamina.retry(on=httpx.HTTPError, wait_initial=10.0, wait_jitter=10.0, wait_max=300.0)
+@stamina.retry(**GUNDI_API_RETRY)
 async def send_messages_to_gundi(messages: List[dict], **kwargs) -> dict:
     """
     Send Messages to Gundi using the REST API v2

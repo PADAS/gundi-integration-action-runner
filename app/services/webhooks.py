@@ -5,7 +5,6 @@ import ipaddress
 import logging
 from urllib.parse import urlparse
 import httpx
-import stamina
 from fastapi import Request
 from app import settings
 from app.services.activity_logger import log_activity, publish_event
@@ -27,8 +26,46 @@ def _get_diagnostic_client() -> httpx.AsyncClient:
     return _diagnostic_client
 
 
+# asyncio keeps only a weak reference to a running task, so a fire-and-forget
+# task can be garbage-collected mid-flight and vanish without a trace. Hold a
+# strong reference until it finishes.
+_background_tasks: set[asyncio.Task] = set()
+
+
+def _spawn_background_task(coro) -> asyncio.Task:
+    task = asyncio.ensure_future(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
+
+
+# How long lifespan shutdown waits for in-flight diagnostic forwards before
+# cancelling them. Must stay well inside the platform's termination grace
+# period (Cloud Run and Kubernetes default to 10 s, then SIGKILL), or the
+# aclose() the drain protects never runs at all.
+_SHUTDOWN_DRAIN_TIMEOUT_SECONDS = 5.0
+# Bound on the resolver call in _validate_diagnostic_url. httpx's timeout=10.0
+# is per phase of its own request and does not cover getaddrinfo, which runs
+# in the default executor with no deadline of its own.
+_DNS_RESOLUTION_TIMEOUT_SECONDS = 5.0
+
+
 async def close_diagnostic_client() -> None:
     global _diagnostic_client
+    # Drain in-flight forwards first; closing the client out from under them
+    # would fail every request still on the wire. Bounded: a hung resolver or
+    # an unresponsive diagnostic endpoint must not hold shutdown open.
+    pending = list(_background_tasks)
+    if pending:
+        _, still_pending = await asyncio.wait(pending, timeout=_SHUTDOWN_DRAIN_TIMEOUT_SECONDS)
+        if still_pending:
+            logger.warning(
+                f"Cancelling {len(still_pending)} diagnostic forward(s) still in flight "
+                f"{_SHUTDOWN_DRAIN_TIMEOUT_SECONDS:g}s into shutdown."
+            )
+            for task in still_pending:
+                task.cancel()
+            await asyncio.gather(*still_pending, return_exceptions=True)
     if _diagnostic_client is not None:
         await _diagnostic_client.aclose()
         _diagnostic_client = None
@@ -75,7 +112,14 @@ async def _validate_diagnostic_url(url: str) -> None:
         )
     loop = asyncio.get_running_loop()
     try:
-        addr_infos = await loop.getaddrinfo(hostname, None)
+        addr_infos = await asyncio.wait_for(
+            loop.getaddrinfo(hostname, None), timeout=_DNS_RESOLUTION_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        raise ValueError(
+            f"Timed out resolving diagnostic URL hostname '{hostname}' "
+            f"after {_DNS_RESOLUTION_TIMEOUT_SECONDS:g}s."
+        )
     except OSError as e:
         raise ValueError(f"Cannot resolve diagnostic URL hostname '{hostname}': {e}")
     for _, _, _, _, sockaddr in addr_infos:
@@ -92,14 +136,20 @@ async def _validate_diagnostic_url(url: str) -> None:
 
 
 def _redact_url(url: str) -> str:
-    """Host and path only — diagnostic URLs can carry credentials or tokens
-    in the userinfo or query string, which must not reach the logs."""
+    """Host only — diagnostic URLs can carry credentials or tokens in the
+    userinfo, the query string, or the path, none of which may reach the logs.
+
+    The path is deliberately dropped rather than kept: Slack, Discord and Teams
+    incoming webhooks all put the shared secret *in the path*
+    (https://hooks.slack.com/services/T.../B.../<secret>), so keeping it would
+    leak the very credential this function exists to protect.
+    """
     try:
         parsed = urlparse(url)
         host = parsed.hostname or "<no-host>"
         if parsed.port:
             host = f"{host}:{parsed.port}"
-        return f"{host}{parsed.path}"
+        return host
     except Exception:
         return "<unparseable url>"
 
@@ -139,12 +189,14 @@ async def get_integration(request):
     integration_id = consumer_integration or request.headers.get("x-gundi-integration-id") or request.query_params.get("integration_id")
     if integration_id:
         try:
-            # Retry on httpx.HTTPError (StatusError, Timeout, ConnectError, etc.)
-            for attempt in stamina.retry_context(on=httpx.HTTPError, wait_initial=10.0, wait_jitter=10.0, wait_max=300.0):
-                with attempt:
-                    # Cache the integration details and webhook config for 60 seconds. 
-                    # ToDo: Refactor to event-driven webhook config updates (as in actions)
-                    integration = await config_manager.get_integration_details(integration_id, ttl=60)
+            # No retry loop here: on a cache miss get_integration_details reloads
+            # from the Gundi API under GUNDI_API_RETRY already, and the loop this
+            # replaced nested a second policy on top of it (multiplying the wall
+            # time) while iterating stamina synchronously inside a coroutine,
+            # which sleeps the whole event loop between attempts.
+            # Cache the integration details and webhook config for 60 seconds.
+            # ToDo: Refactor to event-driven webhook config updates (as in actions)
+            integration = await config_manager.get_integration_details(integration_id, ttl=60)
         except Exception as e:
             error_message = f"Error retrieving integration '{integration_id}': {type(e).__name__}: {e}"
             logger.exception(error_message)
@@ -185,7 +237,7 @@ async def process_webhook(request: Request):
             json_content["hex_format"] = json_content.get("hex_format", parsed_config.hex_format)
         # Forward raw payload to diagnostic URL before any transformation or validation
         if diag_url := getattr(parsed_config, "diagnostic_destination_url", None):
-            asyncio.ensure_future(
+            _spawn_background_task(
                 forward_payload_to_diagnostic_url(
                     destination_url=diag_url,
                     integration_id=str(integration.id),

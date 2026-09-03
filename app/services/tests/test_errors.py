@@ -198,22 +198,26 @@ def test_source_status_code_ignores_non_int_status(junk):
     assert classify_error(exc).status_code is None
 
 
-def test_classify_error_reads_aiohttp_response_status():
-    # aiohttp carries the status on .status, not .response.status_code; the
-    # classifier must give its 401/403/429/5xx the same verdict httpx gets.
-    import aiohttp
+@pytest.mark.parametrize(
+    "status, expected_type",
+    [(401, "auth"), (403, "auth"), (429, "rate_limit"), (503, "bad_response")],
+)
+def test_classify_error_reads_aiohttp_response_status(status, expected_type):
+    # aiohttp carries the status on .status, not .response.status_code, and has
+    # no .response at all; the classifier must give its 401/403/429/5xx the
+    # same verdict httpx gets, or every aiohttp connector's HTTP failures go
+    # unclassified.
     from multidict import CIMultiDict, CIMultiDictProxy
     from yarl import URL
-    from app.services.errors import classify_error
 
     request_info = aiohttp.RequestInfo(
         url=URL("https://source.example/me"), method="GET",
         headers=CIMultiDictProxy(CIMultiDict()), real_url=URL("https://source.example/me"),
     )
-    exc = aiohttp.ClientResponseError(request_info, (), status=429, message="Too Many Requests")
+    exc = aiohttp.ClientResponseError(request_info, (), status=status, message="boom")
 
     classified = classify_error(exc)
 
     assert classified is not None
-    assert classified.error_type == "rate_limit"
-    assert classified.status_code == 429
+    assert classified.error_type == expected_type
+    assert classified.status_code == status
