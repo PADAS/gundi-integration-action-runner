@@ -48,6 +48,9 @@ async def test_ipv6_multicast_is_blocked(mocker):
     "192.88.99.1",        # deprecated 6to4 relay anycast
     "64:ff9b:1::1",       # local-use IPv4/IPv6 translation
     "2002:c000:204::1",   # 6to4
+    # Registry entries newer than any pinned-era ipaddress knows about.
+    "3fff::1",            # documentation (RFC 9637)
+    "5f00::1",            # SRv6 SIDs (RFC 9602)
 ])
 @pytest.mark.asyncio
 async def test_special_use_addresses_are_blocked_by_is_global_or_the_explicit_list(mocker, ip):

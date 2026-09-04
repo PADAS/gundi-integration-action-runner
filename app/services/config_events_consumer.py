@@ -58,24 +58,29 @@ async def handle_action_config_updated_event(event: ActionConfigUpdated):
         # was lost or arrived out of order; the portal has the row, so fetch it
         # rather than apply the changes to nothing (an AttributeError here is
         # logged and acked by process_config_event, and the change is gone).
+        # Note the exact sentinel generation first: the replacement below
+        # compares against it, so a fresh tombstone from a concurrent
+        # ActionConfigDeleted (or a newer real config) is never overwritten.
         # Fetch only: a full reload SETs every action's config from one
         # snapshot and would overwrite a newer value another event cached
         # while the fetch was in flight.
-        integration = await config_manager._fetch_integration_from_gundi(integration_id)
-        action_config = integration.get_action_config(action_id)
-        if action_config is None:
-            logger.warning(
-                f"Ignoring ActionConfigUpdated for action '{action_id}' of integration "
-                f"'{integration_id}': the portal has no configuration for it."
-            )
-            return
-        _apply_changes(action_config, event_data.changes)
-        # Replace the sentinel only if it is still there. Deliveries run
-        # concurrently, so a second recovery for this action may have written
-        # a newer value while this one was fetching; if so, fall through and
-        # apply this event's changes to that value like any ordinary update.
-        if await config_manager.replace_absence_sentinel(integration_id, action_id, config=action_config):
-            return
+        observed = await config_manager.read_absence_sentinel(integration_id, action_id)
+        if observed is not None:
+            integration = await config_manager._fetch_integration_from_gundi(integration_id)
+            action_config = integration.get_action_config(action_id)
+            if action_config is None:
+                logger.warning(
+                    f"Ignoring ActionConfigUpdated for action '{action_id}' of integration "
+                    f"'{integration_id}': the portal has no configuration for it."
+                )
+                return
+            _apply_changes(action_config, event_data.changes)
+            if await config_manager.replace_absence_sentinel(
+                    integration_id, action_id, config=action_config, observed=observed,
+            ):
+                return
+        # The sentinel changed under us (a newer value, a newer tombstone, or
+        # it expired): re-read and treat this like any ordinary update.
         action_config = await config_manager.get_action_configuration(
             integration_id=integration_id,
             action_id=action_id
@@ -83,7 +88,7 @@ async def handle_action_config_updated_event(event: ActionConfigUpdated):
         if action_config is None:
             logger.warning(
                 f"Ignoring ActionConfigUpdated for action '{action_id}' of integration "
-                f"'{integration_id}': its configuration disappeared while recovering it."
+                f"'{integration_id}': it was deleted while the update was being recovered."
             )
             return
     _apply_changes(action_config, event_data.changes)

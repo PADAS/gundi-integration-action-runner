@@ -553,10 +553,10 @@ async def test_reload_writes_absence_sentinels_for_unconfigured_actions(
     set_calls = {c.args[0]: c for c in mock_redis_empty.Redis.return_value.set.call_args_list}
     for action_id in unconfigured:
         call = set_calls[f"integrationconfig.{integration_id}.{action_id}"]
-        assert call.args[1] == "null"
+        assert call.args[1].startswith("null:"), "an absence sentinel with a per-write generation"
         assert call.kwargs.get("nx") is True, "absence sentinels must never replace an existing key"
     for action_id in configured:
-        assert set_calls[f"integrationconfig.{integration_id}.{action_id}"].args[1] != "null"
+        assert not set_calls[f"integrationconfig.{integration_id}.{action_id}"].args[1].startswith("null")
 
 
 class _FakeRedis:
@@ -634,10 +634,68 @@ async def test_deleting_an_action_configuration_records_its_absence(
 
     await config_manager.delete_action_configuration(integration_id, "pull_events")
 
-    mock_redis_empty.Redis.return_value.set.assert_called_once_with(
-        f"integrationconfig.{integration_id}.pull_events", "null", ACTION_ABSENCE_SENTINEL_TTL_SECONDS,
-    )
+    (key, value, ttl), _ = mock_redis_empty.Redis.return_value.set.call_args
+    assert (key, ttl) == (f"integrationconfig.{integration_id}.pull_events", ACTION_ABSENCE_SENTINEL_TTL_SECONDS)
+    assert value.startswith("null:")
     assert not mock_redis_empty.Redis.return_value.delete.called
+
+
+@pytest.mark.asyncio
+async def test_every_absence_sentinel_write_has_its_own_generation(
+        mocker, mock_redis_empty, mock_gundi_client_v2_class, integration_v2,
+):
+    """A recovery reads a sentinel, fetches the portal, then replaces the
+    sentinel if it is still there. If a concurrent ActionConfigDeleted wrote a
+    new sentinel in between and both read "null", the recovery could not tell
+    the newer tombstone from the one it observed and would resurrect the
+    deleted config, permanently. Each write carries a generation instead."""
+    mocker.patch("app.services.config_manager.redis", mock_redis_empty)
+    mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
+    config_manager = IntegrationConfigurationManager()
+    integration_id = str(integration_v2.id)
+
+    await config_manager.delete_action_configuration(integration_id, "pull_events")
+    await config_manager.delete_action_configuration(integration_id, "pull_events")
+
+    first, second = [c.args[1] for c in mock_redis_empty.Redis.return_value.set.call_args_list]
+    assert first != second
+    assert first.startswith("null:") and second.startswith("null:")
+
+
+@pytest.mark.parametrize("stored", [b"null", b"null:0123abcd"])
+@pytest.mark.asyncio
+async def test_any_generation_of_the_sentinel_reads_as_absence(
+        mocker, mock_redis_empty, mock_gundi_client_v2_class, integration_v2, stored,
+):
+    # Legacy sentinels are the bare value; both shapes mean "the portal has no
+    # config for this action" and neither triggers a reload.
+    client = mock_redis_empty.Redis.return_value
+    client.get.return_value = async_return(stored)
+    mocker.patch("app.services.config_manager.redis", mock_redis_empty)
+    mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
+    config_manager = IntegrationConfigurationManager()
+
+    assert await config_manager.get_action_configuration(str(integration_v2.id), "pull_events") is None
+    assert not mock_gundi_client_v2_class.return_value.get_integration_details.called
+
+
+@pytest.mark.asyncio
+async def test_read_absence_sentinel_returns_the_exact_stored_value_or_none(
+        mocker, mock_redis_empty, mock_gundi_client_v2_class, integration_v2, pull_observations_config_as_json,
+):
+    client = mock_redis_empty.Redis.return_value
+    mocker.patch("app.services.config_manager.redis", mock_redis_empty)
+    mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
+    config_manager = IntegrationConfigurationManager()
+    integration_id = str(integration_v2.id)
+
+    client.get.return_value = async_return(b"null:0123abcd")
+    assert await config_manager.read_absence_sentinel(integration_id, "pull_events") == "null:0123abcd"
+    client.get.return_value = async_return(pull_observations_config_as_json.encode())
+    assert await config_manager.read_absence_sentinel(integration_id, "pull_events") is None
+    client.get.return_value = async_return(None)
+    assert await config_manager.read_absence_sentinel(integration_id, "pull_events") is None
+    assert not mock_gundi_client_v2_class.return_value.get_integration_details.called
 
 
 @pytest.mark.asyncio
@@ -742,7 +800,8 @@ async def test_a_legacy_permanent_sentinel_gets_the_ttl_on_its_next_hit_atomical
     assert config is None
     assert not client.ttl.called and not client.expire.called, "must not be two separate commands"
     (script, numkeys, called_key, value, ttl), _ = client.eval.call_args
-    assert (numkeys, called_key, value, ttl) == (1, key, "null", ACTION_ABSENCE_SENTINEL_TTL_SECONDS)
+    assert (numkeys, called_key, value, ttl) == (1, key, "null", ACTION_ABSENCE_SENTINEL_TTL_SECONDS), \
+        "the script compares against the value this read observed"
     # The script itself: expire only a key that still holds the sentinel and has no TTL.
     assert "GET" in script and "TTL" in script and "EXPIRE" in script and "-1" in script
     assert not mock_gundi_client_v2_class.return_value.get_integration_details.called
@@ -764,16 +823,24 @@ async def test_replace_absence_sentinel_writes_only_while_the_sentinel_is_still_
     integration_id = str(integration_v2.id)
     config = IntegrationActionConfiguration.parse_raw(pull_observations_config_as_json)
 
-    won = await config_manager.replace_absence_sentinel(integration_id, "pull_observations", config=config)
+    won = await config_manager.replace_absence_sentinel(
+        integration_id, "pull_observations", config=config, observed="null:0123abcd",
+    )
 
     assert won is True
     (script, numkeys, key, sentinel, value), _ = client.eval.call_args
-    assert (numkeys, key, sentinel, value) == (1, f"integrationconfig.{integration_id}.pull_observations", "null", config.json())
+    # The exact generation the caller observed, so a newer tombstone written by
+    # a concurrent ActionConfigDeleted does not compare equal and wins.
+    assert (numkeys, key, sentinel, value) == (
+        1, f"integrationconfig.{integration_id}.pull_observations", "null:0123abcd", config.json(),
+    )
     assert "GET" in script and "SET" in script
     assert not client.set.called
 
     client.eval.return_value = async_return(0)
-    assert await config_manager.replace_absence_sentinel(integration_id, "pull_observations", config=config) is False
+    assert await config_manager.replace_absence_sentinel(
+        integration_id, "pull_observations", config=config, observed="null:0123abcd",
+    ) is False
 
 
 @pytest.mark.parametrize("cached", ["webhook-config", "sentinel"])

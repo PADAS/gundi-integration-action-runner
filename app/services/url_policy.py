@@ -48,6 +48,11 @@ BLOCKED_NETWORKS = [
     ipaddress.ip_network("192.175.48.0/24"),  # direct delegation AS112
     ipaddress.ip_network("64:ff9b:1::/48"),   # local-use IPv4/IPv6 translation
     ipaddress.ip_network("2002::/16"),        # 6to4
+    # Registry entries newer than any pinned-era ipaddress knows about. The
+    # IANA special-purpose registries are the source of truth for this list;
+    # re-check them when bumping the Python image.
+    ipaddress.ip_network("3fff::/20"),        # documentation (RFC 9637)
+    ipaddress.ip_network("5f00::/16"),        # SRv6 SIDs (RFC 9602)
 ]
 
 
