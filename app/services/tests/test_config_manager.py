@@ -688,7 +688,8 @@ async def test_read_cached_action_configuration_never_reloads_and_reports_what_t
     could observe a fresh tombstone from a concurrent ActionConfigDeleted, and
     (b) never fall through to the full portal reload, whose unconditional SETs
     of configured actions would overwrite a tombstone written after the
-    reload's fetch. Three answers: a config, a sentinel, or nothing cached."""
+    reload's fetch. Three answers, each with the exact stored value as the
+    token to compare-and-set against: a config, a sentinel, or nothing."""
     client = mock_redis_empty.Redis.return_value
     mocker.patch("app.services.config_manager.redis", mock_redis_empty)
     mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
@@ -700,8 +701,9 @@ async def test_read_cached_action_configuration_never_reloads_and_reports_what_t
     assert client.get.call_count == 1, "one read establishes both the absence and the generation"
 
     client.get.return_value = async_return(pull_observations_config_as_json.encode())
-    config, sentinel = await config_manager.read_cached_action_configuration(integration_id, "pull_observations")
-    assert (config.json(), sentinel) == (pull_observations_config_as_json, None)
+    config, token = await config_manager.read_cached_action_configuration(integration_id, "pull_observations")
+    assert (config.json(), token) == (pull_observations_config_as_json, pull_observations_config_as_json), \
+        "the raw stored value, so an update can compare-and-set against exactly what it read"
 
     client.get.return_value = async_return(None)
     assert await config_manager.read_cached_action_configuration(integration_id, "pull_observations") == (None, None)
@@ -789,17 +791,17 @@ async def test_a_legacy_permanent_sentinel_gets_the_ttl_on_its_next_hit_atomical
 
 
 @pytest.mark.asyncio
-async def test_replace_absence_sentinel_requires_the_exact_observed_generation(
+async def test_replace_cached_entry_requires_the_exact_observed_value(
         mocker, mock_redis_empty, mock_gundi_client_v2_class, integration_v2, pull_observations_config_as_json,
 ):
-    """The consumer's recovery reads the portal, then writes. If another
-    delivery replaced the sentinel in between, this write must not land on top
-    of it, so the value check and the SET are one script. The key must equal
-    the generation observed: an expired key is not a match either, because a
-    newer tombstone written during a slow fetch can itself have expired by
-    the time the script runs, and treating "missing" as a match would then
-    install the stale config. The return value tells the caller whether its
-    value won."""
+    """Every consumer write is read-modify-write: it must not land on top of a
+    value another concurrent delivery wrote in between, so the value check and
+    the SET are one script, and the key must equal exactly what the caller
+    read, a sentinel generation or a config's raw JSON. An expired key is not
+    a match either: a newer tombstone written during a slow fetch can itself
+    have expired by the time the script runs, and treating "missing" as a
+    match would install the stale config. The return value tells the caller
+    whether its value won."""
     client = mock_redis_empty.Redis.return_value
     client.eval.return_value = async_return(1)
     mocker.patch("app.services.config_manager.redis", mock_redis_empty)
@@ -808,7 +810,7 @@ async def test_replace_absence_sentinel_requires_the_exact_observed_generation(
     integration_id = str(integration_v2.id)
     config = IntegrationActionConfiguration.parse_raw(pull_observations_config_as_json)
 
-    won = await config_manager.replace_absence_sentinel(
+    won = await config_manager.replace_cached_entry(
         integration_id, "pull_observations", config=config, observed="null:0123abcd",
     )
 
@@ -822,9 +824,17 @@ async def test_replace_absence_sentinel_requires_the_exact_observed_generation(
     assert not client.set.called
 
     client.eval.return_value = async_return(0)
-    assert await config_manager.replace_absence_sentinel(
+    assert await config_manager.replace_cached_entry(
         integration_id, "pull_observations", config=config, observed="null:0123abcd",
     ) is False
+
+    # The same primitive updates a real configuration against its raw JSON.
+    client.eval.return_value = async_return(1)
+    stale_raw = '{"id": "x"}'
+    assert await config_manager.replace_cached_entry(
+        integration_id, "pull_observations", config=config, observed=stale_raw,
+    ) is True
+    assert client.eval.call_args.args[3] == stale_raw
 
 
 @pytest.mark.asyncio

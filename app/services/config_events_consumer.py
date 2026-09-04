@@ -44,63 +44,71 @@ async def handle_action_config_created_event(event: ActionConfigCreated):
     )
 
 
+# Deliveries run concurrently, so an update is a compare-and-set loop: read,
+# apply, write only if the key still holds what was read; on a lost race,
+# re-read and apply to the value that won. Bounded so a pathological stream
+# cannot spin; a lost event is the failure mode this handler is built for, so
+# giving up is logged loudly.
+UPDATE_ATTEMPTS = 3
+
+
 async def handle_action_config_updated_event(event: ActionConfigUpdated):
     event_data = event.payload
     integration_id = event_data.integration_id
     action_id = event_data.alt_id
-    # One read of the cache, never a reload: the recovery below compares-and-
-    # sets against exactly what this read saw. A second read could observe a
-    # fresh tombstone written by a concurrent ActionConfigDeleted in between,
-    # and the full reload's unconditional SETs of configured actions could
-    # overwrite such a tombstone written after the reload's own fetch.
-    action_config, observed = await config_manager.read_cached_action_configuration(
-        integration_id=integration_id,
-        action_id=action_id
-    )
-    if action_config is None:
-        # Nothing usable cached: a recorded absence (`observed` is the exact
-        # sentinel) or nothing at all (cold cache, or an expired sentinel). An
-        # Updated event still arriving means the portal has the row and its
-        # Created event was lost or delivered out of order; fetch the row
-        # without touching the cache (a full reload would SET every action from
-        # one snapshot) and install it conditionally, so anything that landed
-        # meanwhile, a newer config or a newer tombstone, wins.
-        integration = await config_manager._fetch_integration_from_gundi(integration_id)
-        action_config = integration.get_action_config(action_id)
-        if action_config is None:
-            logger.warning(
-                f"Ignoring ActionConfigUpdated for action '{action_id}' of integration "
-                f"'{integration_id}': the portal has no configuration for it."
-            )
-            return
-        _apply_changes(action_config, event_data.changes)
-        if observed is not None:
-            installed = await config_manager.replace_absence_sentinel(
-                integration_id, action_id, config=action_config, observed=observed,
-            )
-        else:
-            installed = await config_manager.install_action_configuration_if_missing(
-                integration_id, action_id, config=action_config,
-            )
-        if installed:
-            return
-        # The key changed under us: re-read (still without reloading) and treat
-        # this like any ordinary update, or stop if it now records an absence.
-        action_config, _ = await config_manager.read_cached_action_configuration(
+    recovered_from_absence = False
+    for _ in range(UPDATE_ATTEMPTS):
+        # One read of the cache, never a reload: every write below compares-and-
+        # sets against exactly what this read saw. A second read could observe
+        # a fresh tombstone written by a concurrent ActionConfigDeleted in
+        # between, and the full reload's unconditional SETs of configured
+        # actions could overwrite such a tombstone written after the reload's
+        # own fetch.
+        action_config, observed = await config_manager.read_cached_action_configuration(
             integration_id=integration_id,
             action_id=action_id
         )
         if action_config is None:
-            logger.warning(
-                f"Ignoring ActionConfigUpdated for action '{action_id}' of integration "
-                f"'{integration_id}': it was deleted while the update was being recovered."
+            if recovered_from_absence:
+                # A tombstone (or nothing) after we already recovered once means
+                # a newer delete, or the sentinel expired under us: stop rather
+                # than fetch again and risk installing over a newer delete.
+                logger.warning(
+                    f"Ignoring ActionConfigUpdated for action '{action_id}' of integration "
+                    f"'{integration_id}': its cached configuration went away while the update was being applied."
+                )
+                return
+            # Nothing usable cached: a recorded absence (`observed` is the exact
+            # sentinel) or nothing at all (cold cache, or an expired sentinel).
+            # An Updated event still arriving means the portal has the row and
+            # its Created event was lost or delivered out of order; fetch the
+            # row without touching the cache (a full reload would SET every
+            # action from one snapshot) and install it conditionally below.
+            recovered_from_absence = True
+            integration = await config_manager._fetch_integration_from_gundi(integration_id)
+            action_config = integration.get_action_config(action_id)
+            if action_config is None:
+                logger.warning(
+                    f"Ignoring ActionConfigUpdated for action '{action_id}' of integration "
+                    f"'{integration_id}': the portal has no configuration for it."
+                )
+                return
+        _apply_changes(action_config, event_data.changes)
+        if observed is None:
+            written = await config_manager.install_action_configuration_if_missing(
+                integration_id, action_id, config=action_config,
             )
+        else:
+            written = await config_manager.replace_cached_entry(
+                integration_id, action_id, config=action_config, observed=observed,
+            )
+        if written:
             return
-    _apply_changes(action_config, event_data.changes)
-    await config_manager.set_action_configuration(
-        integration_id=integration_id,
-        action_id=action_id,
-        config=action_config
+        # The key changed under us (a newer value, a newer tombstone, or it
+        # expired): go round and apply this event's changes to what is there now.
+    logger.warning(
+        f"Gave up applying ActionConfigUpdated for action '{action_id}' of integration "
+        f"'{integration_id}' after {UPDATE_ATTEMPTS} attempts: the cached configuration kept changing underneath it."
     )
 
 

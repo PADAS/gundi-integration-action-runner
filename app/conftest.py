@@ -940,8 +940,9 @@ def mock_config_manager(mocker, integration_v2):
     mock_config_manager.get_integration_details.return_value = async_return(integration_v2)
     mock_config_manager.get_action_configuration.return_value = async_return(integration_v2.configurations[0])
     mock_config_manager.read_cached_action_configuration.return_value = async_return(
-        (integration_v2.configurations[0], None)
+        (integration_v2.configurations[0], integration_v2.configurations[0].json())
     )
+    mock_config_manager.replace_cached_entry.return_value = async_return(True)
     mock_config_manager.set_integration.return_value = async_return(None)
     mock_config_manager.set_action_configuration.return_value = async_return(None)
     mock_config_manager.delete_integration.return_value = async_return(None)

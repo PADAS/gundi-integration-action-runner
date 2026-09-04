@@ -84,14 +84,14 @@ if redis.call('TTL', KEYS[1]) == -1 then
 end
 return 0
 """
-# Replace the exact absence sentinel the caller observed with a real
-# configuration, but never anything that landed in between: a newer
-# configuration, a newer sentinel generation from a concurrent
-# ActionConfigDeleted, or nothing at all. A missing key is not a match either:
-# a tombstone written during a slow portal fetch can itself have expired by the
-# time this runs, and installing over "missing" would resurrect the deleted
-# config. Used by the consumer's Updated-after-sentinel recovery.
-_REPLACE_ABSENCE_SENTINEL_SCRIPT = """
+# Replace exactly the value the caller read (a sentinel generation or a
+# config's raw JSON) with a real configuration, but never anything that landed
+# in between: a newer configuration, a newer sentinel generation from a
+# concurrent ActionConfigDeleted, or nothing at all. A missing key is not a
+# match either: a tombstone written during a slow portal fetch can itself have
+# expired by the time this runs, and installing over "missing" would resurrect
+# the deleted config. Every consumer write of an action config goes through it.
+_REPLACE_CACHED_ENTRY_SCRIPT = """
 if redis.call('GET', KEYS[1]) == ARGV[1] then
     redis.call('SET', KEYS[1], ARGV[2])
     return 1
@@ -203,12 +203,13 @@ class IntegrationConfigurationManager:
             self, integration_id: str, action_id: str,
     ) -> Tuple[Optional[IntegrationActionConfiguration], Optional[str]]:
         """What the cache holds for this action, from one read and without ever
-        reloading from the portal: (config, None), (None, sentinel) for a
-        recorded absence, or (None, None) when nothing is cached.
+        reloading from the portal, with the exact stored value as a token:
+        (config, raw_json), (None, sentinel) for a recorded absence, or
+        (None, None) when nothing is cached.
 
-        For the consumer's recovery, which then compares-and-sets against what
-        it saw (replace_absence_sentinel / install_action_configuration_if_missing).
-        The sentinel must come from the very read that established the absence,
+        For the consumer, which then compares-and-sets against the token it
+        saw (replace_cached_entry / install_action_configuration_if_missing).
+        The token must come from the very read that established the state,
         since a second read could observe a fresh tombstone from a concurrent
         ActionConfigDeleted; and the full reload is off limits here because its
         unconditional SETs of configured actions would overwrite a tombstone
@@ -219,10 +220,11 @@ class IntegrationConfigurationManager:
                 data = await self.db_client.get(key)
         if not data:
             return None, None
+        raw = data.decode() if isinstance(data, bytes) else data
         if _is_absence_sentinel(data):
             await self._expire_legacy_sentinel(key, data)
-            return None, (data.decode() if isinstance(data, bytes) else data)
-        return IntegrationActionConfiguration.parse_raw(data), None
+            return None, raw
+        return IntegrationActionConfiguration.parse_raw(data), raw
 
     async def _expire_legacy_sentinel(self, key: str, observed) -> None:
         # Sentinels written before they carried a TTL are permanent, and the
@@ -272,19 +274,20 @@ class IntegrationConfigurationManager:
             with attempt:
                 await self.db_client.set(key, config.json(), ttl)
 
-    async def replace_absence_sentinel(
+    async def replace_cached_entry(
             self, integration_id: str, action_id: str, *, config: IntegrationActionConfiguration, observed: str,
     ) -> bool:
         """Write `config` only while the key still holds `observed`, the exact
-        sentinel the caller read (see read_cached_action_configuration).
-        Returns whether the write happened; False means the key changed, to a
-        real configuration, a fresh tombstone from a concurrent
-        ActionConfigDeleted, or nothing, and the caller must not overwrite it.
-        Permanent, like every real configuration."""
+        token the caller read (see read_cached_action_configuration): a
+        sentinel generation or a config's raw JSON. Returns whether the write
+        happened; False means the key changed, to a newer configuration, a
+        fresh tombstone from a concurrent ActionConfigDeleted, or nothing, and
+        the caller must not overwrite it. Permanent, like every real
+        configuration."""
         key = self._get_action_config_key(integration_id, action_id)
         async for attempt in stamina.retry_context(**REDIS_RETRY):
             with attempt:
-                written = await self.db_client.eval(_REPLACE_ABSENCE_SENTINEL_SCRIPT, 1, key, observed, config.json())
+                written = await self.db_client.eval(_REPLACE_CACHED_ENTRY_SCRIPT, 1, key, observed, config.json())
         return bool(written)
 
     async def install_action_configuration_if_missing(

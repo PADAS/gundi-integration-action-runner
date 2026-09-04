@@ -98,7 +98,7 @@ async def test_process_event_action_config_updated_from_pubsub(
 
     assert response.status_code == 200
     assert mock_config_manager.read_cached_action_configuration.called
-    assert mock_config_manager.set_action_configuration.called
+    assert mock_config_manager.replace_cached_entry.called
 
 
 @pytest.mark.asyncio
@@ -152,7 +152,7 @@ async def test_action_config_updated_reloads_from_the_portal_when_the_cache_reco
     mock_config_manager._fetch_integration_from_gundi = AsyncMock(return_value=integration_v2)
     mock_config_manager._reload_integration_from_gundi = AsyncMock(return_value=integration_v2)
     mock_config_manager.set_action_configuration = AsyncMock()
-    mock_config_manager.replace_absence_sentinel = AsyncMock(return_value=True)
+    mock_config_manager.replace_cached_entry = AsyncMock(return_value=True)
     mocker.patch.object(config_events_consumer, "config_manager", mock_config_manager)
 
     await config_events_consumer.handle_action_config_updated_event(
@@ -172,7 +172,7 @@ async def test_action_config_updated_reloads_from_the_portal_when_the_cache_reco
     # observe that newer tombstone and compare against it instead.
     assert mock_config_manager.read_cached_action_configuration.await_count == 1
     assert not mock_config_manager.set_action_configuration.called
-    kwargs = mock_config_manager.replace_absence_sentinel.await_args.kwargs
+    kwargs = mock_config_manager.replace_cached_entry.await_args.kwargs
     assert kwargs["observed"] == "null:gen1"
     assert kwargs["config"].id == existing.id
     assert kwargs["config"].data == {"lookback_days": 2}
@@ -190,10 +190,15 @@ async def test_action_config_updated_recovery_that_loses_the_race_applies_its_ch
 
     existing = integration_v2.configurations[0]
     newer = existing.copy(update={"data": {**existing.data, "lookback_days": 9, "fresh": True}})
-    mock_config_manager.read_cached_action_configuration = AsyncMock(side_effect=[(None, "null:gen1"), (newer, None)])
+    newer_raw = newer.json()  # before the handler applies its changes to this object
+    mock_config_manager.read_cached_action_configuration = AsyncMock(
+        side_effect=[(None, "null:gen1"), (newer, newer_raw)],
+    )
     mock_config_manager._fetch_integration_from_gundi = AsyncMock(return_value=integration_v2)
     mock_config_manager.set_action_configuration = AsyncMock()
-    mock_config_manager.replace_absence_sentinel = AsyncMock(return_value=False)
+    # First compare-and-set loses (against the sentinel); the second, against
+    # the newer value's raw JSON, wins.
+    mock_config_manager.replace_cached_entry = AsyncMock(side_effect=[False, True])
     mocker.patch.object(config_events_consumer, "config_manager", mock_config_manager)
 
     await config_events_consumer.handle_action_config_updated_event(
@@ -201,9 +206,11 @@ async def test_action_config_updated_recovery_that_loses_the_race_applies_its_ch
     )
 
     assert mock_config_manager.read_cached_action_configuration.await_count == 2
-    saved = mock_config_manager.set_action_configuration.await_args.kwargs["config"]
-    assert saved.data == {"lookback_days": 2}, "this event's changes, applied to the value that won"
-    assert saved.id == newer.id
+    assert not mock_config_manager.set_action_configuration.called, "never a plain SET: a delete can land in between"
+    kwargs = mock_config_manager.replace_cached_entry.await_args.kwargs
+    assert kwargs["observed"] == newer_raw, "compare-and-set against exactly the value re-read"
+    assert kwargs["config"].data == {"lookback_days": 2}, "this event's changes, applied to the value that won"
+    assert kwargs["config"].id == newer.id
 
 
 @pytest.mark.asyncio
@@ -218,7 +225,7 @@ async def test_action_config_updated_for_an_action_the_portal_has_no_config_for_
     mock_config_manager._fetch_integration_from_gundi = AsyncMock(return_value=integration_v2)
     mock_config_manager._reload_integration_from_gundi = AsyncMock(return_value=integration_v2)
     mock_config_manager.set_action_configuration = AsyncMock()
-    mock_config_manager.replace_absence_sentinel = AsyncMock(return_value=True)
+    mock_config_manager.replace_cached_entry = AsyncMock(return_value=True)
     mocker.patch.object(config_events_consumer, "config_manager", mock_config_manager)
 
     await config_events_consumer.handle_action_config_updated_event(
@@ -226,7 +233,7 @@ async def test_action_config_updated_for_an_action_the_portal_has_no_config_for_
     )
 
     assert not mock_config_manager.set_action_configuration.called
-    assert not mock_config_manager.replace_absence_sentinel.called
+    assert not mock_config_manager.replace_cached_entry.called
 
 
 @pytest.mark.asyncio
@@ -246,14 +253,15 @@ async def test_action_config_updated_recovery_does_not_undo_a_concurrent_delete(
     )
     mock_config_manager._fetch_integration_from_gundi = AsyncMock(return_value=integration_v2)
     mock_config_manager.set_action_configuration = AsyncMock()
-    mock_config_manager.replace_absence_sentinel = AsyncMock(return_value=False)
+    mock_config_manager.replace_cached_entry = AsyncMock(return_value=False)
     mocker.patch.object(config_events_consumer, "config_manager", mock_config_manager)
 
     await config_events_consumer.handle_action_config_updated_event(
         _updated_event(str(integration_v2.id), existing.action.value, {"data": {"lookback_days": 2}})
     )
 
-    assert mock_config_manager.replace_absence_sentinel.await_args.kwargs["observed"] == "null:gen1"
+    assert mock_config_manager.replace_cached_entry.await_args.kwargs["observed"] == "null:gen1"
+    assert mock_config_manager._fetch_integration_from_gundi.await_count == 1, "a tombstone on the re-read ends the recovery"
     assert not mock_config_manager.set_action_configuration.called
 
 
@@ -275,7 +283,7 @@ async def test_action_config_updated_on_a_cold_cache_installs_the_fetched_row_on
     mock_config_manager._fetch_integration_from_gundi = AsyncMock(return_value=integration_v2)
     mock_config_manager._reload_integration_from_gundi = AsyncMock(return_value=integration_v2)
     mock_config_manager.install_action_configuration_if_missing = AsyncMock(return_value=True)
-    mock_config_manager.replace_absence_sentinel = AsyncMock(return_value=True)
+    mock_config_manager.replace_cached_entry = AsyncMock(return_value=True)
     mock_config_manager.set_action_configuration = AsyncMock()
     mocker.patch.object(config_events_consumer, "config_manager", mock_config_manager)
 
@@ -284,7 +292,7 @@ async def test_action_config_updated_on_a_cold_cache_installs_the_fetched_row_on
     )
 
     assert not mock_config_manager._reload_integration_from_gundi.called
-    assert not mock_config_manager.replace_absence_sentinel.called
+    assert not mock_config_manager.replace_cached_entry.called
     assert not mock_config_manager.set_action_configuration.called
     installed = mock_config_manager.install_action_configuration_if_missing.await_args.kwargs["config"]
     assert installed.id == existing.id and installed.data == {"lookback_days": 2}
@@ -309,3 +317,74 @@ async def test_action_config_updated_on_a_cold_cache_yields_to_a_delete_that_lan
 
     assert mock_config_manager.read_cached_action_configuration.await_count == 2
     assert not mock_config_manager.set_action_configuration.called
+
+
+@pytest.mark.asyncio
+async def test_action_config_updated_on_a_cached_config_is_a_compare_and_set(
+        mocker, mock_config_manager, integration_v2,
+):
+    """The ordinary path is read-modify-write too. A plain SET after the read
+    would overwrite a tombstone (or a newer value) another concurrent delivery
+    wrote in between; the write compares against the raw value read."""
+    from app.services import config_events_consumer
+
+    existing = integration_v2.configurations[0]
+    mock_config_manager.read_cached_action_configuration = AsyncMock(return_value=(existing.copy(), existing.json()))
+    mock_config_manager.replace_cached_entry = AsyncMock(return_value=True)
+    mock_config_manager.set_action_configuration = AsyncMock()
+    mocker.patch.object(config_events_consumer, "config_manager", mock_config_manager)
+
+    await config_events_consumer.handle_action_config_updated_event(
+        _updated_event(str(integration_v2.id), existing.action.value, {"data": {"lookback_days": 2}})
+    )
+
+    assert not mock_config_manager.set_action_configuration.called
+    kwargs = mock_config_manager.replace_cached_entry.await_args.kwargs
+    assert kwargs["observed"] == existing.json()
+    assert kwargs["config"].data == {"lookback_days": 2}
+
+
+@pytest.mark.asyncio
+async def test_action_config_updated_retries_a_bounded_number_of_times_then_gives_up(
+        mocker, mock_config_manager, integration_v2, caplog,
+):
+    from app.services import config_events_consumer
+
+    existing = integration_v2.configurations[0]
+    mock_config_manager.read_cached_action_configuration = AsyncMock(return_value=(existing.copy(), existing.json()))
+    mock_config_manager.replace_cached_entry = AsyncMock(return_value=False)  # always beaten
+    mock_config_manager.set_action_configuration = AsyncMock()
+    mocker.patch.object(config_events_consumer, "config_manager", mock_config_manager)
+
+    await config_events_consumer.handle_action_config_updated_event(
+        _updated_event(str(integration_v2.id), existing.action.value, {"data": {"lookback_days": 2}})
+    )
+
+    assert mock_config_manager.replace_cached_entry.await_count == config_events_consumer.UPDATE_ATTEMPTS
+    assert not mock_config_manager.set_action_configuration.called
+    assert any("Gave up" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_action_config_updated_warning_on_a_lost_race_does_not_claim_a_delete(
+        mocker, mock_config_manager, integration_v2, caplog,
+):
+    """(None, None) on the re-read can be an expired sentinel or a cold-cache
+    winner that vanished, not only a delete; the operator must not be sent
+    looking for a delete event that never happened."""
+    from app.services import config_events_consumer
+
+    existing = integration_v2.configurations[0]
+    mock_config_manager.read_cached_action_configuration = AsyncMock(side_effect=[(None, None), (None, None)])
+    mock_config_manager._fetch_integration_from_gundi = AsyncMock(return_value=integration_v2)
+    mock_config_manager.install_action_configuration_if_missing = AsyncMock(return_value=False)
+    mock_config_manager.set_action_configuration = AsyncMock()
+    mocker.patch.object(config_events_consumer, "config_manager", mock_config_manager)
+
+    await config_events_consumer.handle_action_config_updated_event(
+        _updated_event(str(integration_v2.id), existing.action.value, {"data": {"lookback_days": 2}})
+    )
+
+    assert not mock_config_manager.set_action_configuration.called
+    messages = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert messages and all("deleted" not in m for m in messages)
