@@ -84,14 +84,15 @@ if redis.call('TTL', KEYS[1]) == -1 then
 end
 return 0
 """
-# Replace the exact absence sentinel the caller observed (or a key that has
-# since expired) with a real configuration, but never anything that landed in
-# between: a newer configuration, or a newer sentinel generation from a
-# concurrent ActionConfigDeleted. Used by the consumer's Updated-after-sentinel
-# recovery, which reads the portal and then writes.
+# Replace the exact absence sentinel the caller observed with a real
+# configuration, but never anything that landed in between: a newer
+# configuration, a newer sentinel generation from a concurrent
+# ActionConfigDeleted, or nothing at all. A missing key is not a match either:
+# a tombstone written during a slow portal fetch can itself have expired by the
+# time this runs, and installing over "missing" would resurrect the deleted
+# config. Used by the consumer's Updated-after-sentinel recovery.
 _REPLACE_ABSENCE_SENTINEL_SCRIPT = """
-local current = redis.call('GET', KEYS[1])
-if current == false or current == ARGV[1] then
+if redis.call('GET', KEYS[1]) == ARGV[1] then
     redis.call('SET', KEYS[1], ARGV[2])
     return 1
 end
@@ -191,31 +192,37 @@ class IntegrationConfigurationManager:
         return integration_details.webhook_configuration
 
     async def get_action_configuration(self, integration_id: str, action_id: str, ttl=None) -> Optional[IntegrationActionConfiguration]:
-        config, _ = await self.get_action_configuration_and_sentinel(integration_id, action_id, ttl)
-        return config
+        config, sentinel = await self.read_cached_action_configuration(integration_id, action_id)
+        if config is not None or sentinel is not None:
+            return config  # a cached config, or a cached absence
+        # If not found in the redis db, try reloading data from Gundi API
+        integration_details = await self._reload_integration_from_gundi(integration_id, ttl)
+        return integration_details.get_action_config(action_id)
 
-    async def get_action_configuration_and_sentinel(
-            self, integration_id: str, action_id: str, ttl=None,
+    async def read_cached_action_configuration(
+            self, integration_id: str, action_id: str,
     ) -> Tuple[Optional[IntegrationActionConfiguration], Optional[str]]:
-        """get_action_configuration, plus the exact absence sentinel when the
-        cache recorded the absence (None otherwise, including after a portal
-        reload). For a caller that will later compare-and-set against that
-        sentinel (replace_absence_sentinel): the value must come from the very
-        read that established the absence, since a second read could observe
-        a fresh tombstone written by a concurrent ActionConfigDeleted."""
+        """What the cache holds for this action, from one read and without ever
+        reloading from the portal: (config, None), (None, sentinel) for a
+        recorded absence, or (None, None) when nothing is cached.
+
+        For the consumer's recovery, which then compares-and-sets against what
+        it saw (replace_absence_sentinel / install_action_configuration_if_missing).
+        The sentinel must come from the very read that established the absence,
+        since a second read could observe a fresh tombstone from a concurrent
+        ActionConfigDeleted; and the full reload is off limits here because its
+        unconditional SETs of configured actions would overwrite a tombstone
+        written after the reload's own fetch."""
         key = self._get_action_config_key(integration_id, action_id)
         async for attempt in stamina.retry_context(**REDIS_RETRY):
             with attempt:
                 data = await self.db_client.get(key)
-        if data:
-            if _is_absence_sentinel(data):
-                await self._expire_legacy_sentinel(key, data)
-                observed = data.decode() if isinstance(data, bytes) else data
-                return None, observed  # cached absence: the portal has no config for this action
-            return IntegrationActionConfiguration.parse_raw(data), None
-        # If not found in the redis db, try reloading data from Gundi API
-        integration_details = await self._reload_integration_from_gundi(integration_id, ttl)
-        return integration_details.get_action_config(action_id), None
+        if not data:
+            return None, None
+        if _is_absence_sentinel(data):
+            await self._expire_legacy_sentinel(key, data)
+            return None, (data.decode() if isinstance(data, bytes) else data)
+        return IntegrationActionConfiguration.parse_raw(data), None
 
     async def _expire_legacy_sentinel(self, key: str, observed) -> None:
         # Sentinels written before they carried a TTL are permanent, and the
@@ -269,16 +276,28 @@ class IntegrationConfigurationManager:
             self, integration_id: str, action_id: str, *, config: IntegrationActionConfiguration, observed: str,
     ) -> bool:
         """Write `config` only while the key still holds `observed`, the exact
-        sentinel the caller read (see get_action_configuration_and_sentinel),
-        or has expired.
-        Returns whether the write happened; False means something newer is
-        there, a real configuration or a fresh tombstone from a concurrent
-        ActionConfigDeleted, and the caller must not overwrite it. Permanent,
-        like every real configuration."""
+        sentinel the caller read (see read_cached_action_configuration).
+        Returns whether the write happened; False means the key changed, to a
+        real configuration, a fresh tombstone from a concurrent
+        ActionConfigDeleted, or nothing, and the caller must not overwrite it.
+        Permanent, like every real configuration."""
         key = self._get_action_config_key(integration_id, action_id)
         async for attempt in stamina.retry_context(**REDIS_RETRY):
             with attempt:
                 written = await self.db_client.eval(_REPLACE_ABSENCE_SENTINEL_SCRIPT, 1, key, observed, config.json())
+        return bool(written)
+
+    async def install_action_configuration_if_missing(
+            self, integration_id: str, action_id: str, *, config: IntegrationActionConfiguration,
+    ) -> bool:
+        """Write `config` only if nothing is cached for this action (SET NX),
+        for a recovery that saw a cold cache, fetched the portal row, and must
+        not overwrite whatever landed meanwhile. Returns whether it was written.
+        Permanent, like every real configuration."""
+        key = self._get_action_config_key(integration_id, action_id)
+        async for attempt in stamina.retry_context(**REDIS_RETRY):
+            with attempt:
+                written = await self.db_client.set(key, config.json(), None, nx=True)
         return bool(written)
 
     async def delete_action_configuration(self, integration_id: str, action_id: str):

@@ -48,43 +48,45 @@ async def handle_action_config_updated_event(event: ActionConfigUpdated):
     event_data = event.payload
     integration_id = event_data.integration_id
     action_id = event_data.alt_id
-    # One read yields the config, or the exact sentinel that records its
-    # absence: the recovery below compares-and-sets against that sentinel, and
-    # a second read to pick it up could observe a fresh tombstone written by a
-    # concurrent ActionConfigDeleted in between and compare against the wrong
-    # generation.
-    action_config, observed = await config_manager.get_action_configuration_and_sentinel(
+    # One read of the cache, never a reload: the recovery below compares-and-
+    # sets against exactly what this read saw. A second read could observe a
+    # fresh tombstone written by a concurrent ActionConfigDeleted in between,
+    # and the full reload's unconditional SETs of configured actions could
+    # overwrite such a tombstone written after the reload's own fetch.
+    action_config, observed = await config_manager.read_cached_action_configuration(
         integration_id=integration_id,
         action_id=action_id
     )
     if action_config is None:
-        # The cache records this action as absent, so the lookup above did not
-        # go to the portal. An Updated event for it means the Created event
-        # was lost or arrived out of order; the portal has the row, so fetch it
-        # rather than apply the changes to nothing (an AttributeError here is
-        # logged and acked by process_config_event, and the change is gone).
-        # The replacement compares against the sentinel generation observed
-        # above, so a fresh tombstone from a concurrent ActionConfigDeleted (or
-        # a newer real config) is never overwritten. Fetch only: a full reload
-        # SETs every action's config from one snapshot and would overwrite a
-        # newer value another event cached while the fetch was in flight.
+        # Nothing usable cached: a recorded absence (`observed` is the exact
+        # sentinel) or nothing at all (cold cache, or an expired sentinel). An
+        # Updated event still arriving means the portal has the row and its
+        # Created event was lost or delivered out of order; fetch the row
+        # without touching the cache (a full reload would SET every action from
+        # one snapshot) and install it conditionally, so anything that landed
+        # meanwhile, a newer config or a newer tombstone, wins.
+        integration = await config_manager._fetch_integration_from_gundi(integration_id)
+        action_config = integration.get_action_config(action_id)
+        if action_config is None:
+            logger.warning(
+                f"Ignoring ActionConfigUpdated for action '{action_id}' of integration "
+                f"'{integration_id}': the portal has no configuration for it."
+            )
+            return
+        _apply_changes(action_config, event_data.changes)
         if observed is not None:
-            integration = await config_manager._fetch_integration_from_gundi(integration_id)
-            action_config = integration.get_action_config(action_id)
-            if action_config is None:
-                logger.warning(
-                    f"Ignoring ActionConfigUpdated for action '{action_id}' of integration "
-                    f"'{integration_id}': the portal has no configuration for it."
-                )
-                return
-            _apply_changes(action_config, event_data.changes)
-            if await config_manager.replace_absence_sentinel(
-                    integration_id, action_id, config=action_config, observed=observed,
-            ):
-                return
-        # The sentinel changed under us (a newer value, a newer tombstone, or
-        # it expired): re-read and treat this like any ordinary update.
-        action_config, _ = await config_manager.get_action_configuration_and_sentinel(
+            installed = await config_manager.replace_absence_sentinel(
+                integration_id, action_id, config=action_config, observed=observed,
+            )
+        else:
+            installed = await config_manager.install_action_configuration_if_missing(
+                integration_id, action_id, config=action_config,
+            )
+        if installed:
+            return
+        # The key changed under us: re-read (still without reloading) and treat
+        # this like any ordinary update, or stop if it now records an absence.
+        action_config, _ = await config_manager.read_cached_action_configuration(
             integration_id=integration_id,
             action_id=action_id
         )
