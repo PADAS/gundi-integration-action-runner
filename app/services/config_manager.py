@@ -72,9 +72,18 @@ class IntegrationConfigurationManager:
                 configured.add(config.action.value)
                 config_key = self._get_action_config_key(integration_id, config.action.value)
                 await self.db_client.set(config_key, config.json(), ttl)
+            # Sentinels are written with NX so they never replace a key that is
+            # already there. A reload reads the portal, then writes; if an
+            # ActionConfigCreated event for one of these actions lands in
+            # between, its config would otherwise be overwritten with a
+            # permanent "null" that no later event corrects. With NX the event's
+            # write wins in either order: written first, it is left alone;
+            # written after, it replaces the sentinel as a plain SET.
             for action in integration_details.type.actions or []:
                 if action.value not in configured:
-                    await self.db_client.set(self._get_action_config_key(integration_id, action.value), _ABSENCE_SENTINEL, ttl)
+                    await self.db_client.set(
+                        self._get_action_config_key(integration_id, action.value), _ABSENCE_SENTINEL, ttl, nx=True,
+                    )
             await self._cache_webhook_configuration(integration_id, integration_details.webhook_configuration, ttl)
             return integration_details
 

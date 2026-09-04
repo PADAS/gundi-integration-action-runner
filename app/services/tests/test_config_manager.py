@@ -549,11 +549,60 @@ async def test_reload_writes_absence_sentinels_for_unconfigured_actions(
 
     await config_manager.get_integration(integration_id)
 
-    set_calls = {c.args[0]: c.args[1] for c in mock_redis_empty.Redis.return_value.set.call_args_list}
+    set_calls = {c.args[0]: c for c in mock_redis_empty.Redis.return_value.set.call_args_list}
     for action_id in unconfigured:
-        assert set_calls[f"integrationconfig.{integration_id}.{action_id}"] == "null"
+        call = set_calls[f"integrationconfig.{integration_id}.{action_id}"]
+        assert call.args[1] == "null"
+        assert call.kwargs.get("nx") is True, "absence sentinels must never replace an existing key"
     for action_id in configured:
-        assert set_calls[f"integrationconfig.{integration_id}.{action_id}"] != "null"
+        assert set_calls[f"integrationconfig.{integration_id}.{action_id}"].args[1] != "null"
+
+
+class _FakeRedis:
+    """Just enough of redis.asyncio for the reload/event interleaving test:
+    a dict with SET honouring nx."""
+    def __init__(self):
+        self.data = {}
+
+    async def get(self, key):
+        return self.data.get(key)
+
+    async def set(self, key, value, ex=None, nx=False):
+        if nx and key in self.data:
+            return None
+        self.data[key] = value
+        return True
+
+    async def delete(self, *keys):
+        return sum(self.data.pop(k, None) is not None for k in keys)
+
+
+@pytest.mark.asyncio
+async def test_stale_reload_does_not_overwrite_a_concurrently_created_action_config(
+        mocker, mock_gundi_client_v2_class, integration_v2, pull_observations_config_as_json,
+):
+    """Copilot on #102: a reload reads the portal before an action config exists,
+    the ActionConfigCreated event caches the new config, then the reload's
+    sentinel loop runs. The sentinel must not replace the config: nothing later
+    would correct a permanent "null" for an action the portal now has."""
+    mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
+    config_manager = IntegrationConfigurationManager()
+    fake = _FakeRedis()
+    config_manager.db_client = fake
+    integration_id = str(integration_v2.id)
+    configured = {c.action.value for c in integration_v2.configurations}
+    newly_created = next(a.value for a in integration_v2.type.actions if a.value not in configured)
+    created_key = f"integrationconfig.{integration_id}.{newly_created}"
+
+    # The portal snapshot the reload works from predates the creation...
+    reload = config_manager._reload_integration_from_gundi(integration_id)
+    # ...and the event handler's write lands before the reload's sentinel loop.
+    created = IntegrationActionConfiguration.parse_raw(pull_observations_config_as_json)
+    await config_manager.set_action_configuration(integration_id, newly_created, created)
+    await reload
+
+    assert fake.data[created_key] == created.json()
+    assert await config_manager.get_action_configuration(integration_id, newly_created) == created
 
 
 @pytest.mark.asyncio
