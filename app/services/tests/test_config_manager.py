@@ -4,6 +4,7 @@ import pytest
 
 from gundi_core.schemas.v2 import IntegrationSummary, IntegrationActionConfiguration, Integration, WebhookConfiguration
 from app.services.config_manager import (
+    ACTION_ABSENCE_SENTINEL_TTL_SECONDS,
     IntegrationConfigurationManager,
     WEBHOOK_CONFIG_DEFAULT_TTL_SECONDS,
 )
@@ -634,6 +635,81 @@ async def test_deleting_an_action_configuration_records_its_absence(
     await config_manager.delete_action_configuration(integration_id, "pull_events")
 
     mock_redis_empty.Redis.return_value.set.assert_called_once_with(
-        f"integrationconfig.{integration_id}.pull_events", "null"
+        f"integrationconfig.{integration_id}.pull_events", "null", ACTION_ABSENCE_SENTINEL_TTL_SECONDS,
     )
     assert not mock_redis_empty.Redis.return_value.delete.called
+
+
+@pytest.mark.asyncio
+async def test_reload_absence_sentinels_expire_when_the_caller_asks_for_no_ttl(
+        mocker, mock_redis_empty, mock_gundi_client_v2_class, integration_v2,
+):
+    """The action path caches with ttl=None. A permanent "null" is corrected
+    only by an ActionConfig* event for that action; if the Created event is
+    lost (the consumer swallows handler failures and acks), the action stays
+    "unconfigured" until someone flushes redis. A bounded sentinel misses
+    again after the TTL and the reload sees the portal's real config."""
+    mocker.patch("app.services.config_manager.redis", mock_redis_empty)
+    mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
+    config_manager = IntegrationConfigurationManager()
+    integration_id = str(integration_v2.id)
+    configured = {c.action.value for c in integration_v2.configurations}
+    unconfigured = {a.value for a in integration_v2.type.actions} - configured
+
+    await config_manager.get_integration(integration_id, ttl=None)
+
+    set_calls = {c.args[0]: c for c in mock_redis_empty.Redis.return_value.set.call_args_list}
+    for action_id in unconfigured:
+        call = set_calls[f"integrationconfig.{integration_id}.{action_id}"]
+        assert call.args[2] == ACTION_ABSENCE_SENTINEL_TTL_SECONDS
+    for action_id in configured:
+        # Real configs stay permanent: the events that change them invalidate them.
+        assert set_calls[f"integrationconfig.{integration_id}.{action_id}"].args[2] is None
+
+
+@pytest.mark.asyncio
+async def test_reload_absence_sentinels_keep_an_explicit_caller_ttl(
+        mocker, mock_redis_empty, mock_gundi_client_v2_class, integration_v2,
+):
+    mocker.patch("app.services.config_manager.redis", mock_redis_empty)
+    mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
+    config_manager = IntegrationConfigurationManager()
+    integration_id = str(integration_v2.id)
+    configured = {c.action.value for c in integration_v2.configurations}
+    unconfigured = {a.value for a in integration_v2.type.actions} - configured
+
+    await config_manager.get_integration(integration_id, ttl=60)
+
+    set_calls = {c.args[0]: c for c in mock_redis_empty.Redis.return_value.set.call_args_list}
+    for action_id in unconfigured:
+        assert set_calls[f"integrationconfig.{integration_id}.{action_id}"].args[2] == 60
+
+
+@pytest.mark.asyncio
+async def test_portal_reloads_are_blocked_on_the_ephemeral_path(
+        mocker, mock_redis_empty, mock_gundi_client_v2_class, integration_v2,
+):
+    """A reference/auth handler running against a draft integration has no
+    portal row: a reload would 404 and spin GUNDI_API_RETRY for up to two
+    minutes on the request. Same guard _get_gundi_api_key applies, for the
+    same reason, so the invariant holds by construction rather than because
+    no handler happens to call the config manager today."""
+    from app.services.activity_logger import ephemeral_run
+    from app.services.gundi import EphemeralWriteBlocked
+
+    mocker.patch("app.services.config_manager.redis", mock_redis_empty)
+    mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
+    config_manager = IntegrationConfigurationManager()
+    integration_id = str(integration_v2.id)
+
+    token = ephemeral_run.set(True)
+    try:
+        with pytest.raises(EphemeralWriteBlocked):
+            await config_manager._reload_integration_from_gundi(integration_id)
+        with pytest.raises(EphemeralWriteBlocked):
+            await config_manager._reload_webhook_configuration_from_gundi(integration_id)
+    finally:
+        ephemeral_run.reset(token)
+
+    assert not mock_gundi_client_v2_class.called
+    assert not mock_redis_empty.Redis.return_value.set.called

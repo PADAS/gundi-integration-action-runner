@@ -12,7 +12,7 @@ from redis.exceptions import RedisError
 from gundi_core.schemas.v2 import Integration, IntegrationSummary, IntegrationActionConfiguration, WebhookConfiguration
 from gundi_client_v2 import GundiClient
 from app import settings
-from .gundi import GUNDI_API_RETRY
+from .gundi import GUNDI_API_RETRY, _block_if_ephemeral
 from .retry_policies import REDIS_RETRY
 
 logger = logging.getLogger(__name__)
@@ -21,8 +21,9 @@ logger = logging.getLogger(__name__)
 # Cached marker meaning "this integration has no configuration for this
 # action" / "no webhook configuration", so a cold cache doesn't trigger a
 # Gundi API reload on every lookup of something the portal says is absent.
-# Action-config sentinels are invalidated by the same ActionConfig* events as
-# real configs; the webhook sentinel has no event and relies on its TTL.
+# Action-config sentinels are replaced by the ActionConfig* events for that
+# action and, as a backstop, expire (see ACTION_ABSENCE_SENTINEL_TTL_SECONDS);
+# the webhook sentinel has no event and relies on its TTL alone.
 _ABSENCE_SENTINEL = "null"
 _NO_WEBHOOK_CONFIG_SENTINEL = _ABSENCE_SENTINEL
 # Default expiry for the webhook key (the config itself or the absence
@@ -34,6 +35,15 @@ _NO_WEBHOOK_CONFIG_SENTINEL = _ABSENCE_SENTINEL
 # config change can take to reach a connector that is not also receiving
 # webhooks (the webhook path caches for 60 s on its own).
 WEBHOOK_CONFIG_DEFAULT_TTL_SECONDS = 300
+# Expiry for an action absence sentinel when the caller asks for no TTL (the
+# action path). Real configs stay permanent because every change to them
+# arrives as an event; a sentinel's only correction is the ActionConfigCreated
+# event for that action, and the consumer acks a failed or lost delivery, so a
+# permanent "null" would keep the action "unconfigured" until someone flushed
+# redis. Bounded, the next lookup after expiry misses and the reload writes
+# whatever the portal now says. It also lets an orphan sentinel (a cascade
+# ActionConfigDeleted arriving after IntegrationDeleted) age out on its own.
+ACTION_ABSENCE_SENTINEL_TTL_SECONDS = 300
 
 
 class IntegrationConfigurationManager:
@@ -54,38 +64,50 @@ class IntegrationConfigurationManager:
     def _get_webhook_config_key(self, integration_id: str) -> str:
         return f"integrationconfig.{integration_id}.webhook"
 
-    async def _reload_integration_from_gundi(self, integration_id: str, ttl=None) -> Integration:
-        key = self._get_integration_key(integration_id)
+    async def _fetch_integration_from_gundi(self, integration_id: str) -> Integration:
+        # The one portal read both reloads share. Blocked on the ephemeral
+        # path: a draft integration has no portal row, so the read would 404
+        # and spin GUNDI_API_RETRY for up to two minutes on the request (the
+        # same guard, for the same reason, as gundi._get_gundi_api_key).
+        _block_if_ephemeral("IntegrationConfigurationManager reload")
         async with GundiClient() as gundi:
             async for attempt in stamina.retry_context(**GUNDI_API_RETRY):
                 with attempt:
                     integration_details = await gundi.get_integration_details(integration_id)
-            integration = IntegrationSummary.from_integration(integration_details)
-            await self.db_client.set(key, integration.json(), ttl)
-            # Save configurations for individual actions, and a sentinel for each
-            # action of the type that has none: otherwise every lookup of an
-            # unconfigured action misses and reloads from the Gundi API, so an
-            # integration configured for two of its type's three actions would
-            # hit the portal on every single run.
-            configured = set()
-            for config in integration_details.configurations:
-                configured.add(config.action.value)
-                config_key = self._get_action_config_key(integration_id, config.action.value)
-                await self.db_client.set(config_key, config.json(), ttl)
-            # Sentinels are written with NX so they never replace a key that is
-            # already there. A reload reads the portal, then writes; if an
-            # ActionConfigCreated event for one of these actions lands in
-            # between, its config would otherwise be overwritten with a
-            # permanent "null" that no later event corrects. With NX the event's
-            # write wins in either order: written first, it is left alone;
-            # written after, it replaces the sentinel as a plain SET.
-            for action in integration_details.type.actions or []:
-                if action.value not in configured:
-                    await self.db_client.set(
-                        self._get_action_config_key(integration_id, action.value), _ABSENCE_SENTINEL, ttl, nx=True,
-                    )
-            await self._cache_webhook_configuration(integration_id, integration_details.webhook_configuration, ttl)
-            return integration_details
+        return integration_details
+
+    async def _reload_integration_from_gundi(self, integration_id: str, ttl=None) -> Integration:
+        key = self._get_integration_key(integration_id)
+        integration_details = await self._fetch_integration_from_gundi(integration_id)
+        integration = IntegrationSummary.from_integration(integration_details)
+        await self.db_client.set(key, integration.json(), ttl)
+        # Save configurations for individual actions, and a sentinel for each
+        # action of the type that has none: otherwise every lookup of an
+        # unconfigured action misses and reloads from the Gundi API, so an
+        # integration configured for two of its type's three actions would
+        # hit the portal on every single run.
+        configured = set()
+        for config in integration_details.configurations:
+            configured.add(config.action.value)
+            config_key = self._get_action_config_key(integration_id, config.action.value)
+            await self.db_client.set(config_key, config.json(), ttl)
+        # Sentinels are written with NX so they never replace a key that is
+        # already there. A reload reads the portal, then writes; if an
+        # ActionConfigCreated event for one of these actions lands in
+        # between, its config would otherwise be overwritten with a "null"
+        # that no later event corrects. With NX the event's write wins in
+        # either order: written first, it is left alone; written after, it
+        # replaces the sentinel as a plain SET. The sentinel also expires
+        # (ACTION_ABSENCE_SENTINEL_TTL_SECONDS) for the case where that event
+        # never arrives at all.
+        sentinel_ttl = ttl if ttl is not None else ACTION_ABSENCE_SENTINEL_TTL_SECONDS
+        for action in integration_details.type.actions or []:
+            if action.value not in configured:
+                await self.db_client.set(
+                    self._get_action_config_key(integration_id, action.value), _ABSENCE_SENTINEL, sentinel_ttl, nx=True,
+                )
+        await self._cache_webhook_configuration(integration_id, integration_details.webhook_configuration, ttl)
+        return integration_details
 
     async def _cache_webhook_configuration(self, integration_id: str, webhook_configuration, ttl=None):
         # Save the webhook configuration, or a sentinel marking its absence, so
@@ -111,10 +133,7 @@ class IntegrationConfigurationManager:
         event-invalidated keys would be downgraded to a 60 s expiry and the next
         action run would go back to the portal.
         """
-        async with GundiClient() as gundi:
-            async for attempt in stamina.retry_context(**GUNDI_API_RETRY):
-                with attempt:
-                    integration_details = await gundi.get_integration_details(integration_id)
+        integration_details = await self._fetch_integration_from_gundi(integration_id)
         await self._cache_webhook_configuration(integration_id, integration_details.webhook_configuration, ttl)
         return integration_details.webhook_configuration
 
@@ -153,11 +172,12 @@ class IntegrationConfigurationManager:
     async def delete_action_configuration(self, integration_id: str, action_id: str):
         # Record the absence rather than dropping the key: a deleted key misses on
         # the next lookup and reloads the whole integration from the Gundi API,
-        # which would then report the same absence.
+        # which would then report the same absence. Bounded like the reload's
+        # sentinels, so a Deleted that outlives its integration ages out.
         key = self._get_action_config_key(integration_id, action_id)
         async for attempt in stamina.retry_context(**REDIS_RETRY):
             with attempt:
-                await self.db_client.set(key, _ABSENCE_SENTINEL)
+                await self.db_client.set(key, _ABSENCE_SENTINEL, ACTION_ABSENCE_SENTINEL_TTL_SECONDS)
 
     async def get_integration(self, integration_id: str, ttl=None) -> IntegrationSummary:
         key = self._get_integration_key(integration_id)
