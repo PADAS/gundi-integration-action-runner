@@ -161,14 +161,15 @@ def _ephemeral_error_text(exc: Exception, *, classified, expose_message: bool) -
     if expose_message or isinstance(exc, EphemeralWriteBlocked):
         message = exc.args[0] if exc.args else str(exc)
         return f"{type(exc).__name__}: {message}"
+    if isinstance(exc, IntegrationConfigurationError):
+        # The connector vouches for this message (see the class docstring),
+        # and the response is the runner's 422 regardless of any status the
+        # connector attached, so no "(HTTP n)" suffix that would contradict it.
+        return format_classified_error(classified._replace(status_code=None))
     if classified:
         # One renderer with the activity log (errors.format_classified_error),
-        # minus the message: it may hold str(exc) from the source. The one
-        # exception is IntegrationConfigurationError, whose message the
-        # connector vouches for (see its docstring).
-        return format_classified_error(
-            classified, include_message=isinstance(exc, IntegrationConfigurationError),
-        )
+        # minus the message: it may hold str(exc) from the source.
+        return format_classified_error(classified, include_message=False)
     return type(exc).__name__
 
 

@@ -39,6 +39,20 @@ async def test_ipv6_multicast_is_blocked(mocker):
         await _validate_diagnostic_url("https://example.com/hook")
 
 
+@pytest.mark.parametrize("ip", [
+    "198.18.0.1",    # benchmarking (RFC 2544), often routed internally
+    "192.0.2.10",    # TEST-NET-1 documentation range
+    "2001:db8::1",   # IPv6 documentation range
+])
+@pytest.mark.asyncio
+async def test_non_global_special_use_addresses_are_blocked(mocker, ip):
+    # Not in the explicit blocklist, but not routable on the public internet
+    # either (ip.is_global is False): a finite blocklist alone leaves these open.
+    _mock_resolution(mocker, ip)
+    with pytest.raises(ValueError, match="private or reserved"):
+        await _validate_diagnostic_url("https://example.com/hook")
+
+
 @pytest.mark.asyncio
 async def test_public_address_is_allowed(mocker):
     _mock_resolution(mocker, "93.184.216.34")

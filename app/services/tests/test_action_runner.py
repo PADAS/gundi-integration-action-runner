@@ -1546,6 +1546,29 @@ async def test_ephemeral_configuration_error_forwards_its_message_as_422(
     assert not mock_publish_event.called
 
 
+@pytest.mark.asyncio
+async def test_ephemeral_configuration_error_with_a_status_code_still_answers_422_and_says_so(
+        mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event,
+        mock_reference_action_handler, mock_pull_observations_action_handler,
+        mock_push_action_handler, mock_generic_action_handler,
+):
+    # A connector may attach the source status it saw (a 404 for an unknown
+    # event type). The response is still the runner's 422, so the body must
+    # not carry a contradicting "(HTTP 404)" suffix.
+    from app.services.errors import IntegrationConfigurationError
+
+    handlers = _auth_handlers_raising(
+        IntegrationConfigurationError("Unknown event type", status_code=404), mock_reference_action_handler,
+        mock_pull_observations_action_handler, mock_push_action_handler, mock_generic_action_handler,
+    )
+    _patch_ephemeral_runner(mocker, handlers, mock_gundi_client_v2, mock_config_manager, mock_publish_event)
+
+    response = api_client.post("/v1/actions/execute/", json=_ephemeral_body(action_id="auth"))
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["error"] == "Invalid configuration — Unknown event type"
+
+
 def _mock_draft_url_resolution(mocker, ip):
     mock_loop = mocker.MagicMock()
     mock_loop.getaddrinfo = AsyncMock(return_value=[(None, None, None, None, (ip, 443))])

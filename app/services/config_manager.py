@@ -144,11 +144,24 @@ class IntegrationConfigurationManager:
                 data = await self.db_client.get(key)
         if data:
             if data in (_ABSENCE_SENTINEL, _ABSENCE_SENTINEL.encode()):
+                await self._expire_legacy_sentinel(key)
                 return None  # cached absence: the portal has no config for this action
             return IntegrationActionConfiguration.parse_raw(data)
         # If not found in the redis db, try reloading data from Gundi API
         integration_details = await self._reload_integration_from_gundi(integration_id, ttl)
         return integration_details.get_action_config(action_id)
+
+    async def _expire_legacy_sentinel(self, key: str) -> None:
+        # Sentinels written before they carried a TTL are permanent, and the
+        # reload's NX write never touches an existing key, so an integration
+        # already hit by the lost-event bug would stay "unconfigured" after
+        # rollout. Attach the TTL on a hit instead: one TTL round trip per
+        # sentinel hit, and a write only on the first hit after rollout. Can
+        # go once every deployment has run a release with sentinel TTLs.
+        async for attempt in stamina.retry_context(**REDIS_RETRY):
+            with attempt:
+                if await self.db_client.ttl(key) == -1:
+                    await self.db_client.expire(key, ACTION_ABSENCE_SENTINEL_TTL_SECONDS)
 
     async def get_webhook_configuration(self, integration_id: str, ttl=None) -> Optional[WebhookConfiguration]:
         key = self._get_webhook_config_key(integration_id)

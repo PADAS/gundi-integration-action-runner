@@ -73,7 +73,11 @@ async def validate_outbound_url(url: str, *, allowlist: Iterable[str] = (), what
         # sail past the IPv4 blocklist entries; check the embedded IPv4 instead.
         if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
             ip = ip.ipv4_mapped
-        if any(ip in net for net in BLOCKED_NETWORKS):
+        # The explicit blocklist names the ranges an operator expects to see;
+        # is_global catches the rest of the special-use space (benchmarking,
+        # documentation and other IANA-reserved ranges are often routed
+        # internally) so the check means "public addresses only" literally.
+        if not ip.is_global or any(ip in net for net in BLOCKED_NETWORKS):
             raise ValueError(
                 f"{lead} resolves to a private or reserved address ({ip}), which is blocked to prevent SSRF."
             )
