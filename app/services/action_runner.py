@@ -25,6 +25,7 @@ from .state import IntegrationStateManager
 from .utils import find_config_for_action
 from .activity_logger import publish_event, log_action_activity, ephemeral_run
 from .errors import classify_error, format_classified_error, source_status_code, IntegrationError, IntegrationConfigurationError
+from .url_policy import validate_outbound_url
 from .gundi import EphemeralWriteBlocked
 
 _portal = GundiClient()
@@ -403,6 +404,23 @@ async def _execute_action_impl(
                 e, integration_id=None, action_id=action_id,
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             )
+        if settings.EPHEMERAL_BASE_URL_BLOCK_PRIVATE_ADDRESSES and integration_state.base_url:
+            # The draft base_url reaches the connector's HTTP client unchanged;
+            # with the policy on, refuse one that points the runner at a
+            # private or reserved address before any handler runs. An empty
+            # base_url is left to the connector's own guard.
+            try:
+                await validate_outbound_url(
+                    integration_state.base_url,
+                    allowlist=settings.EPHEMERAL_BASE_URL_ALLOWLIST, what="draft base_url",
+                )
+            except ValueError as e:
+                # Runner-authored: the text names the host and the resolved
+                # address, never the URL's userinfo, path or query.
+                return await _handle_error(
+                    e, integration_id=None, action_id=action_id,
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, expose_message=True,
+                )
     elif integration_id is None:
         # Request-shape error, not an action failure: reachable from the PubSub
         # route, which forwards whatever the message carried. Don't publish a

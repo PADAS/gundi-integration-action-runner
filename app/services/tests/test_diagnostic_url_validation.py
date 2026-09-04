@@ -14,7 +14,7 @@ def _addrinfo(ip):
 def _mock_resolution(mocker, ip):
     mock_loop = mocker.MagicMock()
     mock_loop.getaddrinfo = AsyncMock(return_value=_addrinfo(ip))
-    mocker.patch("app.services.webhooks.asyncio.get_running_loop", return_value=mock_loop)
+    mocker.patch("app.services.url_policy.asyncio.get_running_loop", return_value=mock_loop)
 
 
 @pytest.mark.asyncio
@@ -125,15 +125,15 @@ async def test_hung_dns_resolution_is_rejected_not_awaited_forever(mocker):
     """httpx's timeout does not cover getaddrinfo, which runs in the default
     executor with no deadline; a hung resolver would pin the forward task (and
     the shutdown drain) indefinitely."""
-    import app.services.webhooks as webhooks
+    import app.services.url_policy as url_policy
 
     async def _never(*args, **kwargs):
         await asyncio.Event().wait()
 
     mock_loop = mocker.MagicMock()
     mock_loop.getaddrinfo = _never
-    mocker.patch("app.services.webhooks.asyncio.get_running_loop", return_value=mock_loop)
-    mocker.patch.object(webhooks, "_DNS_RESOLUTION_TIMEOUT_SECONDS", 0.05)
+    mocker.patch("app.services.url_policy.asyncio.get_running_loop", return_value=mock_loop)
+    mocker.patch.object(url_policy, "DNS_RESOLUTION_TIMEOUT_SECONDS", 0.05)
 
     with pytest.raises(ValueError, match="Timed out resolving"):
         await asyncio.wait_for(_validate_diagnostic_url("https://slow.example/hook"), timeout=2)

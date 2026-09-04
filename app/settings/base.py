@@ -80,3 +80,14 @@ TRIGGER_ACTIONS_ALWAYS_SYNC = env.bool("TRIGGER_ACTIONS_ALWAYS_SYNC", False)
 # When non-empty, only the listed hostnames are permitted as diagnostic destinations.
 # Example: "diagnostics.example.com,hooks.example.org"
 DIAGNOSTIC_URL_ALLOWLIST = env.list("DIAGNOSTIC_URL_ALLOWLIST", [])
+
+# SSRF protection for the ephemeral (draft-integration) path. The draft's
+# base_url is request-controlled and reaches the connector's HTTP client
+# unchanged, so with this on it must be https, resolve only to public
+# addresses and, when the allowlist is non-empty, name one of those hosts.
+# Off by default: a saved integration's base_url is operator-supplied with no
+# host policy either, and the endpoint is reachable only by callers who can
+# already reach the runner. Turn it on where the runner can reach addresses
+# its callers should not (see app/services/url_policy.py for the caveats).
+EPHEMERAL_BASE_URL_BLOCK_PRIVATE_ADDRESSES = env.bool("EPHEMERAL_BASE_URL_BLOCK_PRIVATE_ADDRESSES", False)
+EPHEMERAL_BASE_URL_ALLOWLIST = env.list("EPHEMERAL_BASE_URL_ALLOWLIST", [])

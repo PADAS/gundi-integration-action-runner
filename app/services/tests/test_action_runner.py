@@ -1546,6 +1546,54 @@ async def test_ephemeral_configuration_error_forwards_its_message_as_422(
     assert not mock_publish_event.called
 
 
+def _mock_draft_url_resolution(mocker, ip):
+    mock_loop = mocker.MagicMock()
+    mock_loop.getaddrinfo = AsyncMock(return_value=[(None, None, None, None, (ip, 443))])
+    mocker.patch("app.services.url_policy.asyncio.get_running_loop", return_value=mock_loop)
+
+
+@pytest.mark.asyncio
+async def test_ephemeral_draft_base_url_resolving_to_a_private_address_is_rejected_when_the_policy_is_on(
+        mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event, mock_ephemeral_action_handlers,
+):
+    # integration_state.base_url is request-controlled and reaches the
+    # connector's HTTP client unchanged. With the (opt-in) policy on, a draft
+    # URL that resolves to loopback, RFC 1918 or the cloud metadata range is
+    # refused before any handler runs, with the runner's own text.
+    from app import settings
+
+    _patch_ephemeral_runner(mocker, mock_ephemeral_action_handlers, mock_gundi_client_v2, mock_config_manager, mock_publish_event)
+    mocker.patch.object(settings, "EPHEMERAL_BASE_URL_BLOCK_PRIVATE_ADDRESSES", True)
+    _mock_draft_url_resolution(mocker, "169.254.169.254")
+
+    response = api_client.post(
+        "/v1/actions/execute/", json=_ephemeral_body(base_url="https://metadata.internal.example"),
+    )
+
+    assert response.status_code == 422
+    assert "private or reserved" in response.json()["detail"]["error"]
+    handler, _, _ = mock_ephemeral_action_handlers["list_species"]
+    assert not handler.called
+    assert not mock_publish_event.called
+
+
+@pytest.mark.asyncio
+async def test_ephemeral_draft_base_url_resolving_publicly_runs_when_the_policy_is_on(
+        mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event, mock_ephemeral_action_handlers,
+):
+    from app import settings
+
+    _patch_ephemeral_runner(mocker, mock_ephemeral_action_handlers, mock_gundi_client_v2, mock_config_manager, mock_publish_event)
+    mocker.patch.object(settings, "EPHEMERAL_BASE_URL_BLOCK_PRIVATE_ADDRESSES", True)
+    _mock_draft_url_resolution(mocker, "93.184.216.34")
+
+    response = api_client.post("/v1/actions/execute/", json=_ephemeral_body(base_url="https://sandbox.pamdas.org"))
+
+    assert response.status_code == 200
+    handler, _, _ = mock_ephemeral_action_handlers["list_species"]
+    assert handler.called
+
+
 @pytest.mark.asyncio
 async def test_ephemeral_auth_error_without_status_code_is_401(
         mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event,
