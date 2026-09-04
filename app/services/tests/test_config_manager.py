@@ -680,9 +680,14 @@ async def test_any_generation_of_the_sentinel_reads_as_absence(
 
 
 @pytest.mark.asyncio
-async def test_read_absence_sentinel_returns_the_exact_stored_value_or_none(
+async def test_get_action_configuration_and_sentinel_returns_the_sentinel_from_the_same_read(
         mocker, mock_redis_empty, mock_gundi_client_v2_class, integration_v2, pull_observations_config_as_json,
 ):
+    """The consumer's recovery compares-and-sets against the sentinel it saw.
+    That value must come from the very read that established the absence: a
+    second read could observe a fresh tombstone written by a concurrent
+    ActionConfigDeleted in between, and the compare-and-set would then succeed
+    against the newer tombstone and resurrect the deleted configuration."""
     client = mock_redis_empty.Redis.return_value
     mocker.patch("app.services.config_manager.redis", mock_redis_empty)
     mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
@@ -690,14 +695,18 @@ async def test_read_absence_sentinel_returns_the_exact_stored_value_or_none(
     integration_id = str(integration_v2.id)
 
     client.get.return_value = async_return(b"null:0123abcd")
-    assert await config_manager.read_absence_sentinel(integration_id, "pull_events") == "null:0123abcd"
-    client.get.return_value = async_return(pull_observations_config_as_json.encode())
-    assert await config_manager.read_absence_sentinel(integration_id, "pull_events") is None
-    client.get.return_value = async_return(None)
-    assert await config_manager.read_absence_sentinel(integration_id, "pull_events") is None
+    assert await config_manager.get_action_configuration_and_sentinel(integration_id, "pull_events") == (None, "null:0123abcd")
+    assert client.get.call_count == 1, "one read establishes both the absence and the generation"
     assert not mock_gundi_client_v2_class.return_value.get_integration_details.called
 
+    client.get.return_value = async_return(pull_observations_config_as_json.encode())
+    config, sentinel = await config_manager.get_action_configuration_and_sentinel(integration_id, "pull_observations")
+    assert (config.json(), sentinel) == (pull_observations_config_as_json, None)
 
+    client.get.return_value = async_return(None)
+    config, sentinel = await config_manager.get_action_configuration_and_sentinel(integration_id, "pull_observations")
+    assert mock_gundi_client_v2_class.return_value.get_integration_details.called, "a miss still reloads from the portal"
+    assert sentinel is None
 @pytest.mark.asyncio
 async def test_reload_absence_sentinels_expire_when_the_caller_asks_for_no_ttl(
         mocker, mock_redis_empty, mock_gundi_client_v2_class, integration_v2,

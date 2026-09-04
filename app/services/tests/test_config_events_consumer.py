@@ -97,7 +97,7 @@ async def test_process_event_action_config_updated_from_pubsub(
     )
 
     assert response.status_code == 200
-    assert mock_config_manager.get_action_configuration.called
+    assert mock_config_manager.get_action_configuration_and_sentinel.called
     assert mock_config_manager.set_action_configuration.called
 
 
@@ -148,11 +148,10 @@ async def test_action_config_updated_reloads_from_the_portal_when_the_cache_reco
     from app.services import config_events_consumer
 
     existing = integration_v2.configurations[0]
-    mock_config_manager.get_action_configuration = AsyncMock(return_value=None)
+    mock_config_manager.get_action_configuration_and_sentinel = AsyncMock(return_value=(None, "null:gen1"))
     mock_config_manager._fetch_integration_from_gundi = AsyncMock(return_value=integration_v2)
     mock_config_manager._reload_integration_from_gundi = AsyncMock(return_value=integration_v2)
     mock_config_manager.set_action_configuration = AsyncMock()
-    mock_config_manager.read_absence_sentinel = AsyncMock(return_value="null:gen1")
     mock_config_manager.replace_absence_sentinel = AsyncMock(return_value=True)
     mocker.patch.object(config_events_consumer, "config_manager", mock_config_manager)
 
@@ -165,10 +164,13 @@ async def test_action_config_updated_reloads_from_the_portal_when_the_cache_reco
     assert str(fetched_id) == str(integration_v2.id)
     assert not mock_config_manager._reload_integration_from_gundi.called, "must not rewrite the whole cache"
     # The recovered value replaces the exact sentinel generation this handler
-    # observed, in one server-side step: a plain SET would let the slower of
-    # two concurrent recoveries restore its stale snapshot over the newer one,
-    # and comparing against a bare "null" would let it overwrite a newer
-    # tombstone from a concurrent ActionConfigDeleted.
+    # observed on the read that established the absence, in one server-side
+    # step: a plain SET would let the slower of two concurrent recoveries
+    # restore its stale snapshot over the newer one, comparing against a bare
+    # "null" would let it overwrite a newer tombstone from a concurrent
+    # ActionConfigDeleted, and a second read to pick up the generation could
+    # observe that newer tombstone and compare against it instead.
+    assert mock_config_manager.get_action_configuration_and_sentinel.await_count == 1
     assert not mock_config_manager.set_action_configuration.called
     kwargs = mock_config_manager.replace_absence_sentinel.await_args.kwargs
     assert kwargs["observed"] == "null:gen1"
@@ -188,10 +190,9 @@ async def test_action_config_updated_recovery_that_loses_the_race_applies_its_ch
 
     existing = integration_v2.configurations[0]
     newer = existing.copy(update={"data": {**existing.data, "lookback_days": 9, "fresh": True}})
-    mock_config_manager.get_action_configuration = AsyncMock(side_effect=[None, newer])
+    mock_config_manager.get_action_configuration_and_sentinel = AsyncMock(side_effect=[(None, "null:gen1"), (newer, None)])
     mock_config_manager._fetch_integration_from_gundi = AsyncMock(return_value=integration_v2)
     mock_config_manager.set_action_configuration = AsyncMock()
-    mock_config_manager.read_absence_sentinel = AsyncMock(return_value="null:gen1")
     mock_config_manager.replace_absence_sentinel = AsyncMock(return_value=False)
     mocker.patch.object(config_events_consumer, "config_manager", mock_config_manager)
 
@@ -199,7 +200,7 @@ async def test_action_config_updated_recovery_that_loses_the_race_applies_its_ch
         _updated_event(str(integration_v2.id), existing.action.value, {"data": {"lookback_days": 2}})
     )
 
-    assert mock_config_manager.get_action_configuration.await_count == 2
+    assert mock_config_manager.get_action_configuration_and_sentinel.await_count == 2
     saved = mock_config_manager.set_action_configuration.await_args.kwargs["config"]
     assert saved.data == {"lookback_days": 2}, "this event's changes, applied to the value that won"
     assert saved.id == newer.id
@@ -213,11 +214,10 @@ async def test_action_config_updated_for_an_action_the_portal_has_no_config_for_
 
     configured = {c.action.value for c in integration_v2.configurations}
     unconfigured = next(a.value for a in integration_v2.type.actions if a.value not in configured)
-    mock_config_manager.get_action_configuration = AsyncMock(return_value=None)
+    mock_config_manager.get_action_configuration_and_sentinel = AsyncMock(return_value=(None, "null:gen1"))
     mock_config_manager._fetch_integration_from_gundi = AsyncMock(return_value=integration_v2)
     mock_config_manager._reload_integration_from_gundi = AsyncMock(return_value=integration_v2)
     mock_config_manager.set_action_configuration = AsyncMock()
-    mock_config_manager.read_absence_sentinel = AsyncMock(return_value="null:gen1")
     mock_config_manager.replace_absence_sentinel = AsyncMock(return_value=True)
     mocker.patch.object(config_events_consumer, "config_manager", mock_config_manager)
 
@@ -241,10 +241,11 @@ async def test_action_config_updated_recovery_does_not_undo_a_concurrent_delete(
     from app.services import config_events_consumer
 
     existing = integration_v2.configurations[0]
-    mock_config_manager.get_action_configuration = AsyncMock(side_effect=[None, None])
+    mock_config_manager.get_action_configuration_and_sentinel = AsyncMock(
+        side_effect=[(None, "null:gen1"), (None, "null:gen2")],
+    )
     mock_config_manager._fetch_integration_from_gundi = AsyncMock(return_value=integration_v2)
     mock_config_manager.set_action_configuration = AsyncMock()
-    mock_config_manager.read_absence_sentinel = AsyncMock(return_value="null:gen1")
     mock_config_manager.replace_absence_sentinel = AsyncMock(return_value=False)
     mocker.patch.object(config_events_consumer, "config_manager", mock_config_manager)
 

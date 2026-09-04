@@ -48,7 +48,12 @@ async def handle_action_config_updated_event(event: ActionConfigUpdated):
     event_data = event.payload
     integration_id = event_data.integration_id
     action_id = event_data.alt_id
-    action_config = await config_manager.get_action_configuration(
+    # One read yields the config, or the exact sentinel that records its
+    # absence: the recovery below compares-and-sets against that sentinel, and
+    # a second read to pick it up could observe a fresh tombstone written by a
+    # concurrent ActionConfigDeleted in between and compare against the wrong
+    # generation.
+    action_config, observed = await config_manager.get_action_configuration_and_sentinel(
         integration_id=integration_id,
         action_id=action_id
     )
@@ -58,13 +63,11 @@ async def handle_action_config_updated_event(event: ActionConfigUpdated):
         # was lost or arrived out of order; the portal has the row, so fetch it
         # rather than apply the changes to nothing (an AttributeError here is
         # logged and acked by process_config_event, and the change is gone).
-        # Note the exact sentinel generation first: the replacement below
-        # compares against it, so a fresh tombstone from a concurrent
-        # ActionConfigDeleted (or a newer real config) is never overwritten.
-        # Fetch only: a full reload SETs every action's config from one
-        # snapshot and would overwrite a newer value another event cached
-        # while the fetch was in flight.
-        observed = await config_manager.read_absence_sentinel(integration_id, action_id)
+        # The replacement compares against the sentinel generation observed
+        # above, so a fresh tombstone from a concurrent ActionConfigDeleted (or
+        # a newer real config) is never overwritten. Fetch only: a full reload
+        # SETs every action's config from one snapshot and would overwrite a
+        # newer value another event cached while the fetch was in flight.
         if observed is not None:
             integration = await config_manager._fetch_integration_from_gundi(integration_id)
             action_config = integration.get_action_config(action_id)
@@ -81,7 +84,7 @@ async def handle_action_config_updated_event(event: ActionConfigUpdated):
                 return
         # The sentinel changed under us (a newer value, a newer tombstone, or
         # it expired): re-read and treat this like any ordinary update.
-        action_config = await config_manager.get_action_configuration(
+        action_config, _ = await config_manager.get_action_configuration_and_sentinel(
             integration_id=integration_id,
             action_id=action_id
         )
