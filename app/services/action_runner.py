@@ -24,7 +24,8 @@ from .config_manager import IntegrationConfigurationManager
 from .state import IntegrationStateManager
 from .utils import find_config_for_action
 from .activity_logger import publish_event, log_action_activity, ephemeral_run
-from .errors import classify_error, format_classified_error, source_status_code, IntegrationError
+from .errors import classify_error, format_classified_error, source_status_code, IntegrationError, IntegrationConfigurationError
+from .url_policy import validate_outbound_url
 from .gundi import EphemeralWriteBlocked
 
 _portal = GundiClient()
@@ -160,11 +161,15 @@ def _ephemeral_error_text(exc: Exception, *, classified, expose_message: bool) -
     if expose_message or isinstance(exc, EphemeralWriteBlocked):
         message = exc.args[0] if exc.args else str(exc)
         return f"{type(exc).__name__}: {message}"
+    if isinstance(exc, IntegrationConfigurationError):
+        # The connector vouches for this message (see the class docstring),
+        # and the response is the runner's 422 regardless of any status the
+        # connector attached, so no "(HTTP n)" suffix that would contradict it.
+        return format_classified_error(classified._replace(status_code=None))
     if classified:
-        text = classified.title
-        if classified.status_code:
-            text = f"{text} (HTTP {classified.status_code})"
-        return text
+        # One renderer with the activity log (errors.format_classified_error),
+        # minus the message: it may hold str(exc) from the source.
+        return format_classified_error(classified, include_message=False)
     return type(exc).__name__
 
 
@@ -179,12 +184,17 @@ def _ephemeral_status_for(exc: Exception, fallback: int) -> int:
     are forwarded: statuses below 400 are not failures the portal can
     classify (a redirect surfaced by raise_for_status with redirects off is
     the common one), and anything outside the HTTP range is a connector bug,
-    not a status the runner should answer with. Everything else keeps the
-    caller's `fallback` (500 for a handler exception, 504 for a timeout).
+    not a status the runner should answer with. A connector's
+    IntegrationConfigurationError is not a source verdict either: it is a
+    422, the request was understood but its content cannot be acted on.
+    Everything else keeps the caller's `fallback` (500 for a handler
+    exception, 504 for a timeout).
     """
     source_status = source_status_code(exc)
     if source_status is None and isinstance(exc, IntegrationError) and exc.error_type == "auth":
         return status.HTTP_401_UNAUTHORIZED
+    if isinstance(exc, IntegrationConfigurationError):
+        return status.HTTP_422_UNPROCESSABLE_ENTITY
     if source_status is not None and 400 <= source_status <= 599:
         return source_status
     return fallback
@@ -395,6 +405,23 @@ async def _execute_action_impl(
                 e, integration_id=None, action_id=action_id,
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             )
+        if settings.EPHEMERAL_BASE_URL_BLOCK_PRIVATE_ADDRESSES and integration_state.base_url:
+            # The draft base_url reaches the connector's HTTP client unchanged;
+            # with the policy on, refuse one that points the runner at a
+            # private or reserved address before any handler runs. An empty
+            # base_url is left to the connector's own guard.
+            try:
+                await validate_outbound_url(
+                    integration_state.base_url,
+                    allowlist=settings.EPHEMERAL_BASE_URL_ALLOWLIST, what="draft base_url",
+                )
+            except ValueError as e:
+                # Runner-authored: the text names the host and the resolved
+                # address, never the URL's userinfo, path or query.
+                return await _handle_error(
+                    e, integration_id=None, action_id=action_id,
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, expose_message=True,
+                )
     elif integration_id is None:
         # Request-shape error, not an action failure: reachable from the PubSub
         # route, which forwards whatever the message carried. Don't publish a

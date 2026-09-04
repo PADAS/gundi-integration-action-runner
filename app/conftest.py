@@ -92,6 +92,7 @@ def mock_redis_empty(mocker, mock_integration_state):
     redis_client.incr.return_value = redis_client
     redis_client.decr.return_value = async_return(None)
     redis_client.expire.return_value = redis_client
+    redis_client.eval.return_value = async_return(0)  # scripts (compare-and-expire) report "nothing changed"
     redis_client.execute.return_value = async_return((1, True))
     redis_client.__aenter__.return_value = redis_client
     redis_client.__aexit__.return_value = None

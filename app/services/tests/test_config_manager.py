@@ -4,6 +4,7 @@ import pytest
 
 from gundi_core.schemas.v2 import IntegrationSummary, IntegrationActionConfiguration, Integration, WebhookConfiguration
 from app.services.config_manager import (
+    ACTION_ABSENCE_SENTINEL_TTL_SECONDS,
     IntegrationConfigurationManager,
     WEBHOOK_CONFIG_DEFAULT_TTL_SECONDS,
 )
@@ -634,6 +635,142 @@ async def test_deleting_an_action_configuration_records_its_absence(
     await config_manager.delete_action_configuration(integration_id, "pull_events")
 
     mock_redis_empty.Redis.return_value.set.assert_called_once_with(
-        f"integrationconfig.{integration_id}.pull_events", "null"
+        f"integrationconfig.{integration_id}.pull_events", "null", ACTION_ABSENCE_SENTINEL_TTL_SECONDS,
     )
     assert not mock_redis_empty.Redis.return_value.delete.called
+
+
+@pytest.mark.asyncio
+async def test_reload_absence_sentinels_expire_when_the_caller_asks_for_no_ttl(
+        mocker, mock_redis_empty, mock_gundi_client_v2_class, integration_v2,
+):
+    """The action path caches with ttl=None. A permanent "null" is corrected
+    only by an ActionConfig* event for that action; if the Created event is
+    lost (the consumer swallows handler failures and acks), the action stays
+    "unconfigured" until someone flushes redis. A bounded sentinel misses
+    again after the TTL and the reload sees the portal's real config."""
+    mocker.patch("app.services.config_manager.redis", mock_redis_empty)
+    mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
+    config_manager = IntegrationConfigurationManager()
+    integration_id = str(integration_v2.id)
+    configured = {c.action.value for c in integration_v2.configurations}
+    unconfigured = {a.value for a in integration_v2.type.actions} - configured
+
+    await config_manager.get_integration(integration_id, ttl=None)
+
+    set_calls = {c.args[0]: c for c in mock_redis_empty.Redis.return_value.set.call_args_list}
+    for action_id in unconfigured:
+        call = set_calls[f"integrationconfig.{integration_id}.{action_id}"]
+        assert call.args[2] == ACTION_ABSENCE_SENTINEL_TTL_SECONDS
+    for action_id in configured:
+        # Real configs stay permanent: the events that change them invalidate them.
+        assert set_calls[f"integrationconfig.{integration_id}.{action_id}"].args[2] is None
+
+
+@pytest.mark.asyncio
+async def test_reload_absence_sentinels_keep_an_explicit_caller_ttl(
+        mocker, mock_redis_empty, mock_gundi_client_v2_class, integration_v2,
+):
+    mocker.patch("app.services.config_manager.redis", mock_redis_empty)
+    mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
+    config_manager = IntegrationConfigurationManager()
+    integration_id = str(integration_v2.id)
+    configured = {c.action.value for c in integration_v2.configurations}
+    unconfigured = {a.value for a in integration_v2.type.actions} - configured
+
+    await config_manager.get_integration(integration_id, ttl=60)
+
+    set_calls = {c.args[0]: c for c in mock_redis_empty.Redis.return_value.set.call_args_list}
+    for action_id in unconfigured:
+        assert set_calls[f"integrationconfig.{integration_id}.{action_id}"].args[2] == 60
+
+
+@pytest.mark.asyncio
+async def test_portal_reloads_are_blocked_on_the_ephemeral_path(
+        mocker, mock_redis_empty, mock_gundi_client_v2_class, integration_v2,
+):
+    """A reference/auth handler running against a draft integration has no
+    portal row: a reload would 404 and spin GUNDI_API_RETRY for up to two
+    minutes on the request. Same guard _get_gundi_api_key applies, for the
+    same reason, so the invariant holds by construction rather than because
+    no handler happens to call the config manager today."""
+    from app.services.activity_logger import ephemeral_run
+    from app.services.gundi import EphemeralWriteBlocked
+
+    mocker.patch("app.services.config_manager.redis", mock_redis_empty)
+    mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
+    config_manager = IntegrationConfigurationManager()
+    integration_id = str(integration_v2.id)
+
+    token = ephemeral_run.set(True)
+    try:
+        with pytest.raises(EphemeralWriteBlocked):
+            await config_manager._reload_integration_from_gundi(integration_id)
+        with pytest.raises(EphemeralWriteBlocked):
+            await config_manager._reload_webhook_configuration_from_gundi(integration_id)
+    finally:
+        ephemeral_run.reset(token)
+
+    assert not mock_gundi_client_v2_class.called
+    assert not mock_redis_empty.Redis.return_value.set.called
+
+
+@pytest.mark.asyncio
+async def test_a_legacy_permanent_sentinel_gets_the_ttl_on_its_next_hit_atomically(
+        mocker, mock_redis_empty, mock_gundi_client_v2_class, integration_v2,
+):
+    """Sentinels written before this release have no expiry, and the reload's
+    NX write never touches an existing key, so without a read-time fix an
+    integration already hit by the lost-event bug would stay "unconfigured"
+    after rollout. A hit on a sentinel attaches the bounded TTL, in one
+    server-side step: a separate TTL check and EXPIRE could race an
+    ActionConfigCreated write in between and put the TTL on the real config,
+    which must stay permanent. The value check, the "still permanent" check
+    and the expiry therefore run as one script that only touches a key still
+    holding the sentinel with no TTL; the sentinel still answers this lookup."""
+    client = mock_redis_empty.Redis.return_value
+    client.get.return_value = async_return(b"null")
+    client.eval.return_value = async_return(1)
+    mocker.patch("app.services.config_manager.redis", mock_redis_empty)
+    mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
+    config_manager = IntegrationConfigurationManager()
+    integration_id = str(integration_v2.id)
+    key = f"integrationconfig.{integration_id}.pull_events"
+
+    config = await config_manager.get_action_configuration(integration_id, "pull_events")
+
+    assert config is None
+    assert not client.ttl.called and not client.expire.called, "must not be two separate commands"
+    (script, numkeys, called_key, value, ttl), _ = client.eval.call_args
+    assert (numkeys, called_key, value, ttl) == (1, key, "null", ACTION_ABSENCE_SENTINEL_TTL_SECONDS)
+    # The script itself: expire only a key that still holds the sentinel and has no TTL.
+    assert "GET" in script and "TTL" in script and "EXPIRE" in script and "-1" in script
+    assert not mock_gundi_client_v2_class.return_value.get_integration_details.called
+
+
+@pytest.mark.asyncio
+async def test_replace_absence_sentinel_writes_only_while_the_sentinel_is_still_there(
+        mocker, mock_redis_empty, mock_gundi_client_v2_class, integration_v2, pull_observations_config_as_json,
+):
+    """The consumer's Updated-after-sentinel recovery reads the portal, then
+    writes. If another delivery replaced the sentinel in between, this write
+    must not land on top of it, so the value check and the SET are one script;
+    the return value tells the caller whether its value won."""
+    client = mock_redis_empty.Redis.return_value
+    client.eval.return_value = async_return(1)
+    mocker.patch("app.services.config_manager.redis", mock_redis_empty)
+    mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
+    config_manager = IntegrationConfigurationManager()
+    integration_id = str(integration_v2.id)
+    config = IntegrationActionConfiguration.parse_raw(pull_observations_config_as_json)
+
+    won = await config_manager.replace_absence_sentinel(integration_id, "pull_observations", config=config)
+
+    assert won is True
+    (script, numkeys, key, sentinel, value), _ = client.eval.call_args
+    assert (numkeys, key, sentinel, value) == (1, f"integrationconfig.{integration_id}.pull_observations", "null", config.json())
+    assert "GET" in script and "SET" in script
+    assert not client.set.called
+
+    client.eval.return_value = async_return(0)
+    assert await config_manager.replace_absence_sentinel(integration_id, "pull_observations", config=config) is False

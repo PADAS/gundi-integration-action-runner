@@ -64,6 +64,20 @@ class IntegrationBadResponseError(IntegrationError):
     default_title = "Unexpected response from the provider"
 
 
+class IntegrationConfigurationError(IntegrationError):
+    """A problem the connector found with the integration's own configuration
+    or a query parameter (an empty site URL, an unknown event type), rather
+    than a verdict from the provider.
+
+    Connector-authored, but by contract the message describes the shape of
+    the problem without echoing the submitted values, so the ephemeral path
+    forwards it (as a 422) where it redacts every other connector message
+    (see action_runner._ephemeral_error_text).
+    """
+    error_type = "configuration"
+    default_title = "Invalid configuration"
+
+
 class ClassifiedError(NamedTuple):
     error_type: str
     title: str
@@ -140,15 +154,17 @@ def classify_error(exc: Exception) -> Optional[ClassifiedError]:
     return None
 
 
-def format_classified_error(classified: ClassifiedError) -> str:
+def format_classified_error(classified: ClassifiedError, *, include_message: bool = True) -> str:
     """Build the clean text: "<title> — <message> (HTTP <status>)".
 
     The portal prepends "Error running action '<id>': " to this string, so it
     must be short and lead with what an operator needs to see. The message
-    segment is skipped when redundant; the HTTP suffix when unknown.
+    segment is skipped when redundant, or when the caller passes
+    include_message=False (the ephemeral path, where the message may carry
+    str(exc) from the source); the HTTP suffix when unknown.
     """
     text = classified.title
-    if classified.message and classified.message != classified.title:
+    if include_message and classified.message and classified.message != classified.title:
         text = f"{text} — {classified.message}"
     if classified.status_code:
         text = f"{text} (HTTP {classified.status_code})"

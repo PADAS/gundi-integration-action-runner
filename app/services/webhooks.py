@@ -1,7 +1,6 @@
 import asyncio
 import datetime
 import importlib
-import ipaddress
 import logging
 from urllib.parse import urlparse
 import httpx
@@ -13,6 +12,7 @@ from gundi_core.events import IntegrationWebhookFailed, WebhookExecutionFailed
 from app.services.utils import DyntamicFactory
 from app.webhooks.core import get_webhook_handler, DynamicSchemaConfig, HexStringConfig, GenericJsonPayload
 from app.services.config_manager import IntegrationConfigurationManager
+from app.services.url_policy import validate_outbound_url
 
 config_manager = IntegrationConfigurationManager()
 logger = logging.getLogger(__name__)
@@ -44,10 +44,6 @@ def _spawn_background_task(coro) -> asyncio.Task:
 # period (Cloud Run and Kubernetes default to 10 s, then SIGKILL), or the
 # aclose() the drain protects never runs at all.
 _SHUTDOWN_DRAIN_TIMEOUT_SECONDS = 5.0
-# Bound on the resolver call in _validate_diagnostic_url. httpx's timeout=10.0
-# is per phase of its own request and does not cover getaddrinfo, which runs
-# in the default executor with no deadline of its own.
-_DNS_RESOLUTION_TIMEOUT_SECONDS = 5.0
 
 
 async def close_diagnostic_client() -> None:
@@ -70,69 +66,11 @@ async def close_diagnostic_client() -> None:
         await _diagnostic_client.aclose()
         _diagnostic_client = None
 
-_BLOCKED_NETWORKS = [
-    ipaddress.ip_network("127.0.0.0/8"),    # loopback
-    ipaddress.ip_network("::1/128"),          # IPv6 loopback
-    ipaddress.ip_network("10.0.0.0/8"),       # RFC 1918 private
-    ipaddress.ip_network("172.16.0.0/12"),    # RFC 1918 private
-    ipaddress.ip_network("192.168.0.0/16"),   # RFC 1918 private
-    ipaddress.ip_network("169.254.0.0/16"),   # link-local / cloud metadata (AWS, GCP)
-    ipaddress.ip_network("fe80::/10"),        # IPv6 link-local
-    ipaddress.ip_network("fc00::/7"),         # IPv6 unique local
-    ipaddress.ip_network("0.0.0.0/8"),        # unspecified
-    ipaddress.ip_network("100.64.0.0/10"),    # carrier-grade NAT
-    ipaddress.ip_network("224.0.0.0/4"),      # multicast
-    ipaddress.ip_network("240.0.0.0/4"),      # reserved
-    ipaddress.ip_network("::/128"),           # IPv6 unspecified
-    ipaddress.ip_network("ff00::/8"),         # IPv6 multicast
-]
-
-
 async def _validate_diagnostic_url(url: str) -> None:
-    """Raise ValueError if url fails SSRF safety checks.
-
-    Note: this validation is a best-effort defence. Because DNS is re-resolved
-    by httpx at request time, a DNS-rebinding attack could cause the actual
-    connection to reach a private address even after this check passes (TOCTOU).
-    Operators should also restrict outbound network access at the infrastructure
-    level for a complete mitigation.
-    """
-    parsed = urlparse(url)
-    if parsed.scheme != "https":
-        raise ValueError(
-            f"Diagnostic URL scheme '{parsed.scheme}' is not allowed; only 'https' is permitted."
-        )
-    hostname = (parsed.hostname or "").rstrip(".").lower()
-    if not hostname:
-        raise ValueError("Diagnostic URL has no hostname.")
-    allowlist = settings.DIAGNOSTIC_URL_ALLOWLIST
-    if allowlist and hostname not in [h.rstrip(".").lower() for h in allowlist]:
-        raise ValueError(
-            f"Diagnostic URL hostname '{hostname}' is not in the configured allowlist."
-        )
-    loop = asyncio.get_running_loop()
-    try:
-        addr_infos = await asyncio.wait_for(
-            loop.getaddrinfo(hostname, None), timeout=_DNS_RESOLUTION_TIMEOUT_SECONDS,
-        )
-    except asyncio.TimeoutError:
-        raise ValueError(
-            f"Timed out resolving diagnostic URL hostname '{hostname}' "
-            f"after {_DNS_RESOLUTION_TIMEOUT_SECONDS:g}s."
-        )
-    except OSError as e:
-        raise ValueError(f"Cannot resolve diagnostic URL hostname '{hostname}': {e}")
-    for _, _, _, _, sockaddr in addr_infos:
-        ip = ipaddress.ip_address(sockaddr[0])
-        # An IPv4-mapped IPv6 address (::ffff:a.b.c.d) parses as IPv6 and would
-        # sail past the IPv4 blocklist entries; check the embedded IPv4 instead.
-        if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
-            ip = ip.ipv4_mapped
-        if any(ip in net for net in _BLOCKED_NETWORKS):
-            raise ValueError(
-                f"Diagnostic URL resolves to a private or reserved address ({ip}), "
-                "which is blocked to prevent SSRF."
-            )
+    """Raise ValueError if url fails the SSRF safety checks (see url_policy):
+    https only, a hostname, in DIAGNOSTIC_URL_ALLOWLIST when one is set, and
+    resolving only to public addresses."""
+    await validate_outbound_url(url, allowlist=settings.DIAGNOSTIC_URL_ALLOWLIST, what="diagnostic URL")
 
 
 def _redact_url(url: str) -> str:
