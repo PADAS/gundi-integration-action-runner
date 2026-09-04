@@ -72,10 +72,17 @@ async def validate_outbound_url(url: str, *, allowlist: Iterable[str] = (), what
     query or userinfo, so they are safe to surface.
     """
     lead = what[:1].upper() + what[1:]
-    parsed = urlparse(url)
+    try:
+        parsed = urlparse(url)
+        hostname = (parsed.hostname or "").rstrip(".").lower()
+    except ValueError:
+        # The parser's own message quotes the authority it choked on, userinfo
+        # included (e.g. a fullwidth "@" fails NFKC validation with the whole
+        # netloc in the text). Callers treat this function's ValueErrors as
+        # safe, policy-authored text, so never let that message through.
+        raise ValueError(f"{lead} could not be parsed.") from None
     if parsed.scheme != "https":
         raise ValueError(f"{lead} scheme '{parsed.scheme}' is not allowed; only 'https' is permitted.")
-    hostname = (parsed.hostname or "").rstrip(".").lower()
     if not hostname:
         raise ValueError(f"{lead} has no hostname.")
     allowed = [h.rstrip(".").lower() for h in allowlist]

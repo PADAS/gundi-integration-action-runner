@@ -56,6 +56,23 @@ async def test_special_use_addresses_are_blocked_by_is_global_or_the_explicit_li
         await _validate_diagnostic_url("https://example.com/hook")
 
 
+@pytest.mark.parametrize("url", [
+    # A fullwidth "@" (U+FF20) in the authority: urlparse raises a ValueError
+    # that quotes the whole netloc, userinfo included.
+    "https://user:SECRET＠example.com/hook",
+    # An unterminated IPv6 literal fails inside urlparse too.
+    "https://user:SECRET@[::1/hook",
+])
+@pytest.mark.asyncio
+async def test_unparseable_url_is_rejected_without_echoing_the_authority(mocker, url):
+    # Both callers treat the policy's ValueError as safe, policy-authored text
+    # (the ephemeral path returns it with expose_message=True; diagnostic
+    # forwarding logs it), so the parser's own message must never pass through.
+    with pytest.raises(ValueError, match="could not be parsed") as info:
+        await _validate_diagnostic_url(url)
+    assert "SECRET" not in str(info.value)
+
+
 @pytest.mark.asyncio
 async def test_public_address_is_allowed(mocker):
     _mock_resolution(mocker, "93.184.216.34")
