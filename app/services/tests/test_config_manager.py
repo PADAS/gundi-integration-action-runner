@@ -774,3 +774,37 @@ async def test_replace_absence_sentinel_writes_only_while_the_sentinel_is_still_
 
     client.eval.return_value = async_return(0)
     assert await config_manager.replace_absence_sentinel(integration_id, "pull_observations", config=config) is False
+
+
+@pytest.mark.parametrize("cached", ["webhook-config", "sentinel"])
+@pytest.mark.asyncio
+async def test_a_legacy_permanent_webhook_entry_gets_the_default_ttl_on_its_next_hit(
+        mocker, mock_redis_empty, mock_gundi_client_v2_class, integration_v2_with_webhook, cached,
+):
+    """Before the webhook key carried a TTL, the action path's reload
+    (ttl=None) wrote both real webhook configs and the "null" sentinel
+    permanently, and a cache hit never refreshes the key, so integrations with
+    such an entry would serve a stale or missing webhook configuration
+    indefinitely after rollout. A hit attaches the default TTL to an entry
+    that has none, in one server-side step (a separate TTL check and EXPIRE
+    could race a fresh write and clobber its expiry), whatever the value: a
+    real config that then expires is simply refreshed from the portal."""
+    from app.services.config_manager import WEBHOOK_CONFIG_DEFAULT_TTL_SECONDS
+
+    client = mock_redis_empty.Redis.return_value
+    value = integration_v2_with_webhook.webhook_configuration.json() if cached == "webhook-config" else "null"
+    client.get.return_value = async_return(value.encode())
+    client.eval.return_value = async_return(1)
+    mocker.patch("app.services.config_manager.redis", mock_redis_empty)
+    mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
+    config_manager = IntegrationConfigurationManager()
+    integration_id = str(integration_v2_with_webhook.id)
+
+    result = await config_manager.get_webhook_configuration(integration_id)
+
+    assert (result is None) == (cached == "sentinel")
+    assert not client.ttl.called and not client.expire.called, "must not be two separate commands"
+    (script, numkeys, key, ttl), _ = client.eval.call_args
+    assert (numkeys, key, ttl) == (1, f"integrationconfig.{integration_id}.webhook", WEBHOOK_CONFIG_DEFAULT_TTL_SECONDS)
+    assert "TTL" in script and "EXPIRE" in script and "-1" in script
+    assert not mock_gundi_client_v2_class.return_value.get_integration_details.called

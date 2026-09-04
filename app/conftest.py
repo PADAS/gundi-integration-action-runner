@@ -73,6 +73,7 @@ def mock_redis(mocker, mock_integration_state):
     redis_client.incr.return_value = redis_client
     redis_client.decr.return_value = async_return(None)
     redis_client.expire.return_value = redis_client
+    redis_client.eval.return_value = async_return(0)  # scripts (compare-and-expire) report "nothing changed"
     redis_client.execute.return_value = async_return((1, True))
     redis_client.__aenter__.return_value = redis_client
     redis_client.__aexit__.return_value = None
@@ -112,6 +113,7 @@ def mock_redis_with_integration_config(mocker, integration_v2_as_json):
     redis_client.incr.return_value = redis_client
     redis_client.decr.return_value = async_return(None)
     redis_client.expire.return_value = redis_client
+    redis_client.eval.return_value = async_return(0)  # scripts (compare-and-expire) report "nothing changed"
     redis_client.execute.return_value = async_return((1, True))
     redis_client.__aenter__.return_value = redis_client
     redis_client.__aexit__.return_value = None
@@ -131,6 +133,7 @@ def mock_redis_with_action_config(mocker, pull_observations_config_as_json):
     redis_client.incr.return_value = redis_client
     redis_client.decr.return_value = async_return(None)
     redis_client.expire.return_value = redis_client
+    redis_client.eval.return_value = async_return(0)  # scripts (compare-and-expire) report "nothing changed"
     redis_client.execute.return_value = async_return((1, True))
     redis_client.__aenter__.return_value = redis_client
     redis_client.__aexit__.return_value = None
@@ -152,6 +155,7 @@ def mock_redis_with_webhook_config(mocker, integration_v2_with_webhook):
     redis_client.incr.return_value = redis_client
     redis_client.decr.return_value = async_return(None)
     redis_client.expire.return_value = redis_client
+    redis_client.eval.return_value = async_return(0)  # scripts (compare-and-expire) report "nothing changed"
     redis_client.execute.return_value = async_return((1, True))
     redis_client.__aenter__.return_value = redis_client
     redis_client.__aexit__.return_value = None

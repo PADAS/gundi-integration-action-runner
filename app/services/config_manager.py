@@ -54,6 +54,16 @@ if redis.call('GET', KEYS[1]) == ARGV[1] and redis.call('TTL', KEYS[1]) == -1 th
 end
 return 0
 """
+# Attach a TTL to a key that has none, whatever it holds. Used for webhook
+# entries written before the key carried a TTL (see _expire_legacy_webhook_entry).
+# One server-side step: a client-side TTL check followed by EXPIRE could race a
+# fresh write and replace the expiry it came with.
+_EXPIRE_IF_PERMANENT_SCRIPT = """
+if redis.call('TTL', KEYS[1]) == -1 then
+    return redis.call('EXPIRE', KEYS[1], ARGV[1])
+end
+return 0
+"""
 # Replace the absence sentinel (or a key that has since expired) with a real
 # configuration, but never a configuration that landed in between. Used by the
 # consumer's Updated-after-sentinel recovery, which reads the portal and then
@@ -194,11 +204,25 @@ class IntegrationConfigurationManager:
             with attempt:
                 data = await self.db_client.get(key)
         if data:
+            await self._expire_legacy_webhook_entry(key, ttl)
             if data in (_NO_WEBHOOK_CONFIG_SENTINEL, _NO_WEBHOOK_CONFIG_SENTINEL.encode()):
                 return None  # cached absence — this integration has no webhook config
             return WebhookConfiguration.parse_raw(data)
         # Missing or expired: refresh this key only (see the method's docstring).
         return await self._reload_webhook_configuration_from_gundi(integration_id, ttl)
+
+    async def _expire_legacy_webhook_entry(self, key: str, ttl=None) -> None:
+        # Before the webhook key always carried a TTL, the action path's reload
+        # (ttl=None) wrote both real configs and the absence sentinel
+        # permanently, and a hit never refreshes the key, so such an entry
+        # would serve a stale or missing webhook config indefinitely. Attach
+        # the bounded TTL on a hit to an entry that has none; a real config
+        # that then expires is simply refreshed from the portal. Can go once
+        # every deployment has run a release with webhook TTLs.
+        webhook_ttl = ttl if ttl is not None else WEBHOOK_CONFIG_DEFAULT_TTL_SECONDS
+        async for attempt in stamina.retry_context(**REDIS_RETRY):
+            with attempt:
+                await self.db_client.eval(_EXPIRE_IF_PERMANENT_SCRIPT, 1, key, webhook_ttl)
 
 
     async def set_action_configuration(self, integration_id: str, action_id: str, config: IntegrationActionConfiguration, ttl=None):
