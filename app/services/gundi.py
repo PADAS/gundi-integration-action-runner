@@ -27,11 +27,14 @@ def _block_if_ephemeral(op: str) -> None:
         )
 
 
-# One retry policy for every Gundi API call (the send helpers below and the
-# config manager's reloads), defined once so the wait curve and the stop
-# condition can't drift apart, and applied exactly once per call path:
-# nesting it (a decorated helper calling another decorated helper) multiplies
-# the attempts.
+# One retry policy for every request-time Gundi API call (the send helpers
+# below and the config manager's reloads), defined once so the wait curve and
+# the stop condition can't drift apart, and applied exactly once per call
+# path: nesting it (a decorated helper calling another decorated helper)
+# multiplies the attempts. Self-registration is the deliberate exception: a
+# one-shot startup/CLI path that keeps its own three-attempt policy in
+# self_registration.py, so a slow portal fails the boot fast instead of
+# holding the process for two minutes.
 #
 # stamina combines `attempts` and `timeout` with stop_any(), so the tighter
 # one wins, and its defaults (attempts=10 / timeout=45 s) silently truncate a
