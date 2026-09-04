@@ -52,6 +52,20 @@ async def handle_action_config_updated_event(event: ActionConfigUpdated):
         integration_id=integration_id,
         action_id=action_id
     )
+    if action_config is None:
+        # The cache records this action as absent, so the lookup above did not
+        # go to the portal. An Updated event for it means the Created event
+        # was lost or arrived out of order; the portal has the row, so reload
+        # rather than apply the changes to nothing (an AttributeError here is
+        # logged and acked by process_config_event, and the change is gone).
+        integration = await config_manager._reload_integration_from_gundi(integration_id)
+        action_config = integration.get_action_config(action_id)
+    if action_config is None:
+        logger.warning(
+            f"Ignoring ActionConfigUpdated for action '{action_id}' of integration "
+            f"'{integration_id}': the portal has no configuration for it."
+        )
+        return
     for key, value in event_data.changes.items():
         setattr(action_config, key, value)
     await config_manager.set_action_configuration(
