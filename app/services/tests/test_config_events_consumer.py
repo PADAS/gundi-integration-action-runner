@@ -351,8 +351,21 @@ async def test_action_config_updated_retries_a_bounded_number_of_times_then_give
     from app.services import config_events_consumer
 
     existing = integration_v2.configurations[0]
-    mock_config_manager.read_cached_action_configuration = AsyncMock(return_value=(existing.copy(), existing.json()))
-    mock_config_manager.replace_cached_entry = AsyncMock(return_value=False)  # always beaten
+    """After the attempts, reconcile from the portal rather than write blind or
+    delete: a DEL could erase a tombstone a concurrent delete just wrote, and
+    a later reload whose fetch predates that delete would then resurrect the
+    config. The portal row (authoritative, read after everything) is installed
+    with one more compare-and-set against exactly what the cache holds now."""
+    portal_row = integration_v2.configurations[0]
+    latest_raw = '{"id": "latest"}'
+    mock_config_manager.read_cached_action_configuration = AsyncMock(
+        side_effect=[(existing.copy(), existing.json())] * config_events_consumer.UPDATE_ATTEMPTS
+        + [(existing.copy(), latest_raw)],
+    )
+    mock_config_manager.replace_cached_entry = AsyncMock(
+        side_effect=[False] * config_events_consumer.UPDATE_ATTEMPTS + [True],
+    )
+    mock_config_manager._fetch_integration_from_gundi = AsyncMock(return_value=integration_v2)
     mock_config_manager.set_action_configuration = AsyncMock()
     mock_config_manager.invalidate_action_configuration = AsyncMock()
     mocker.patch.object(config_events_consumer, "config_manager", mock_config_manager)
@@ -361,15 +374,38 @@ async def test_action_config_updated_retries_a_bounded_number_of_times_then_give
         _updated_event(str(integration_v2.id), existing.action.value, {"data": {"lookback_days": 2}})
     )
 
-    assert mock_config_manager.replace_cached_entry.await_count == config_events_consumer.UPDATE_ATTEMPTS
+    assert mock_config_manager.replace_cached_entry.await_count == config_events_consumer.UPDATE_ATTEMPTS + 1
     assert not mock_config_manager.set_action_configuration.called
-    # Giving up must not leave a stale permanent config behind an acked event:
-    # drop the key so the next lookup rebuilds it from the portal, the source
-    # of truth for whatever won the race.
-    mock_config_manager.invalidate_action_configuration.assert_awaited_once()
-    (inv_integration, inv_action), _ = mock_config_manager.invalidate_action_configuration.await_args
-    assert (str(inv_integration), inv_action) == (str(integration_v2.id), existing.action.value)
-    assert any("Gave up" in r.getMessage() and "rebuil" in r.getMessage() for r in caplog.records)
+    assert not mock_config_manager.invalidate_action_configuration.called, "never delete an unobserved value"
+    final = mock_config_manager.replace_cached_entry.await_args.kwargs
+    assert final["observed"] == latest_raw
+    assert final["config"].json() == portal_row.json(), "the portal row as fetched, not this event's changes"
+    assert any("Gave up" in r.getMessage() and "portal" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_action_config_updated_give_up_records_an_absence_when_the_portal_has_no_row(
+        mocker, mock_config_manager, integration_v2,
+):
+    from app.services import config_events_consumer
+
+    existing = integration_v2.configurations[0]
+    gone = integration_v2.copy(update={"configurations": []})
+    mock_config_manager.read_cached_action_configuration = AsyncMock(return_value=(existing.copy(), existing.json()))
+    mock_config_manager.replace_cached_entry = AsyncMock(return_value=False)
+    mock_config_manager.replace_cached_entry_with_absence = AsyncMock(return_value=True)
+    mock_config_manager._fetch_integration_from_gundi = AsyncMock(return_value=gone)
+    mock_config_manager.set_action_configuration = AsyncMock()
+    mock_config_manager.invalidate_action_configuration = AsyncMock()
+    mocker.patch.object(config_events_consumer, "config_manager", mock_config_manager)
+
+    await config_events_consumer.handle_action_config_updated_event(
+        _updated_event(str(integration_v2.id), existing.action.value, {"data": {"lookback_days": 2}})
+    )
+
+    mock_config_manager.replace_cached_entry_with_absence.assert_awaited_once()
+    assert mock_config_manager.replace_cached_entry_with_absence.await_args.kwargs["observed"] == existing.json()
+    assert not mock_config_manager.invalidate_action_configuration.called
 
 
 @pytest.mark.asyncio

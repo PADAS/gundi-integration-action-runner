@@ -160,12 +160,12 @@ async def test_get_action_configuration_with_ttl(
 
     assert action_config
     assert isinstance(action_config, IntegrationActionConfiguration)
-    # Verify that set was called with TTL for action config
-    mock_redis_empty.Redis.return_value.set.assert_any_call(
-        f"integrationconfig.{integration_id}.{action_id}",
-        action_config.json(),
-        ttl
-    )
+    # Verify the configured action was written through the snapshot script
+    # with the caller's TTL (the script preserves a newer tombstone, so this
+    # write is an EVAL rather than a plain SET).
+    snapshot_writes = {c.args[2]: c.args for c in mock_redis_empty.Redis.return_value.eval.call_args_list}
+    _, _, _, written_json, _, written_ttl = snapshot_writes[f"integrationconfig.{integration_id}.{action_id}"]
+    assert (written_json, written_ttl) == (action_config.json(), ttl)
     # Verify that integration was also saved with TTL
     mock_redis_empty.Redis.return_value.set.assert_any_call(
         f"integration.{integration_id}",
@@ -551,17 +551,20 @@ async def test_reload_writes_absence_sentinels_for_unconfigured_actions(
     await config_manager.get_integration(integration_id)
 
     set_calls = {c.args[0]: c for c in mock_redis_empty.Redis.return_value.set.call_args_list}
+    snapshot_writes = {c.args[2]: c for c in mock_redis_empty.Redis.return_value.eval.call_args_list}
     for action_id in unconfigured:
         call = set_calls[f"integrationconfig.{integration_id}.{action_id}"]
         assert call.args[1].startswith("null:"), "an absence sentinel with a per-write generation"
         assert call.kwargs.get("nx") is True, "absence sentinels must never replace an existing key"
     for action_id in configured:
-        assert not set_calls[f"integrationconfig.{integration_id}.{action_id}"].args[1].startswith("null")
+        # Written through the snapshot script, which preserves a newer tombstone.
+        assert not snapshot_writes[f"integrationconfig.{integration_id}.{action_id}"].args[3].startswith("null")
 
 
 class _FakeRedis:
-    """Just enough of redis.asyncio for the reload/event interleaving test:
-    a dict with SET honouring nx."""
+    """Just enough of redis.asyncio for the reload/event interleaving tests: a
+    dict with SET honouring nx, and an eval that emulates the module's scripts
+    (matched by identity) so the interleavings exercise their real decisions."""
     def __init__(self):
         self.data = {}
 
@@ -576,6 +579,30 @@ class _FakeRedis:
 
     async def delete(self, *keys):
         return sum(self.data.pop(k, None) is not None for k in keys)
+
+    async def ttl(self, key):
+        return -1 if key in self.data else -2
+
+    async def eval(self, script, numkeys, key, *args):
+        import re
+        from app.services import config_manager as cm
+        current = self.data.get(key)
+        if script is cm._WRITE_SNAPSHOT_CONFIG_SCRIPT:
+            value, fetch_started_ns, ttl = args
+            m = re.match(r"^null:(\d+):", current) if isinstance(current, str) else None
+            if m and int(m.group(1)) >= int(fetch_started_ns):
+                return 0
+            self.data[key] = value
+            return 1
+        if script is cm._REPLACE_CACHED_ENTRY_SCRIPT:
+            observed, value = args[0], args[1]
+            if current != observed:
+                return 0
+            self.data[key] = value
+            return 1
+        if script is cm._EXPIRE_LEGACY_SENTINEL_SCRIPT:
+            return 0
+        raise AssertionError(f"unexpected script: {script[:40]}")
 
 
 @pytest.mark.asyncio
@@ -815,9 +842,9 @@ async def test_replace_cached_entry_requires_the_exact_observed_value(
     )
 
     assert won is True
-    (script, numkeys, key, sentinel, value), _ = client.eval.call_args
-    assert (numkeys, key, sentinel, value) == (
-        1, f"integrationconfig.{integration_id}.pull_observations", "null:0123abcd", config.json(),
+    (script, numkeys, key, sentinel, value, ttl), _ = client.eval.call_args
+    assert (numkeys, key, sentinel, value, ttl) == (
+        1, f"integrationconfig.{integration_id}.pull_observations", "null:0123abcd", config.json(), "",
     )
     assert "GET" in script and "SET" in script
     assert "false" not in script, "a missing (expired) key must not count as the observed sentinel"
@@ -890,25 +917,4 @@ async def test_a_legacy_permanent_webhook_entry_gets_the_default_ttl_on_its_next
     (script, numkeys, key, ttl), _ = client.eval.call_args
     assert (numkeys, key, ttl) == (1, f"integrationconfig.{integration_id}.webhook", WEBHOOK_CONFIG_DEFAULT_TTL_SECONDS)
     assert "TTL" in script and "EXPIRE" in script and "-1" in script
-    assert not mock_gundi_client_v2_class.return_value.get_integration_details.called
-
-
-@pytest.mark.asyncio
-async def test_invalidate_action_configuration_drops_the_key_so_the_next_lookup_reloads(
-        mocker, mock_redis_empty, mock_gundi_client_v2_class, integration_v2,
-):
-    """The consumer's last resort after a lost compare-and-set race: rather
-    than write anything (which could overwrite a newer value or tombstone) or
-    leave a stale permanent config behind an acked event, drop the key. The
-    next lookup misses and rebuilds it from the portal, the source of truth."""
-    client = mock_redis_empty.Redis.return_value
-    mocker.patch("app.services.config_manager.redis", mock_redis_empty)
-    mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
-    config_manager = IntegrationConfigurationManager()
-    integration_id = str(integration_v2.id)
-
-    await config_manager.invalidate_action_configuration(integration_id, "pull_events")
-
-    client.delete.assert_called_once_with(f"integrationconfig.{integration_id}.pull_events")
-    assert not client.set.called and not client.eval.called
     assert not mock_gundi_client_v2_class.return_value.get_integration_details.called

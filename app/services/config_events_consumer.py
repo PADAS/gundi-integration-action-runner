@@ -47,8 +47,8 @@ async def handle_action_config_created_event(event: ActionConfigCreated):
 # Deliveries run concurrently, so an update is a compare-and-set loop: read,
 # apply, write only if the key still holds what was read; on a lost race,
 # re-read and apply to the value that won. Bounded so a pathological stream
-# cannot spin. Giving up drops the key (the next lookup rebuilds it from the
-# portal) rather than leaving a stale permanent config behind an acked event.
+# cannot spin. Giving up reconciles from the portal, still conditionally,
+# rather than leaving a stale permanent config behind an acked event.
 UPDATE_ATTEMPTS = 3
 
 
@@ -107,15 +107,35 @@ async def handle_action_config_updated_event(event: ActionConfigUpdated):
         # The key changed under us (a newer value, a newer tombstone, or it
         # expired): go round and apply this event's changes to what is there now.
     # process_config_event acks the event whatever happens here, so a stale
-    # permanent config left behind would never self-heal. Drop the key instead:
-    # the next lookup misses and rebuilds it from the portal, which holds the
-    # truth about whatever won the race.
-    await config_manager.invalidate_action_configuration(integration_id, action_id)
+    # permanent config left behind would never self-heal. Reconcile from the
+    # portal, which holds the truth about whatever won the race, but still
+    # conditionally: a blind write or a DEL could clobber a tombstone a
+    # concurrent delete wrote a moment ago, and a later reload whose fetch
+    # predates that delete would then resurrect the config. If this write
+    # loses too, the cache holds a value newer than everything we saw; leave it.
+    reconciled = await _reconcile_from_portal(integration_id, action_id)
     logger.warning(
         f"Gave up applying ActionConfigUpdated for action '{action_id}' of integration "
         f"'{integration_id}' after {UPDATE_ATTEMPTS} attempts: the cached configuration kept changing "
-        "underneath it. Dropped the cached entry; the next lookup rebuilds it from the portal."
+        f"underneath it. Reconciled the cache from the portal instead"
+        + ("." if reconciled else "; that write lost as well, leaving the newer cached value in place.")
     )
+
+
+async def _reconcile_from_portal(integration_id, action_id) -> bool:
+    _, observed = await config_manager.read_cached_action_configuration(
+        integration_id=integration_id,
+        action_id=action_id
+    )
+    integration = await config_manager._fetch_integration_from_gundi(integration_id)
+    row = integration.get_action_config(action_id)
+    if row is None:
+        if observed is None:
+            return True  # nothing cached and nothing in the portal: already reconciled
+        return await config_manager.replace_cached_entry_with_absence(integration_id, action_id, observed=observed)
+    if observed is None:
+        return await config_manager.install_action_configuration_if_missing(integration_id, action_id, config=row)
+    return await config_manager.replace_cached_entry(integration_id, action_id, config=row, observed=observed)
 
 
 def _apply_changes(action_config, changes: dict) -> None:
