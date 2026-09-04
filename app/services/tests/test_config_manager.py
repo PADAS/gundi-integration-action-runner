@@ -891,3 +891,24 @@ async def test_a_legacy_permanent_webhook_entry_gets_the_default_ttl_on_its_next
     assert (numkeys, key, ttl) == (1, f"integrationconfig.{integration_id}.webhook", WEBHOOK_CONFIG_DEFAULT_TTL_SECONDS)
     assert "TTL" in script and "EXPIRE" in script and "-1" in script
     assert not mock_gundi_client_v2_class.return_value.get_integration_details.called
+
+
+@pytest.mark.asyncio
+async def test_invalidate_action_configuration_drops_the_key_so_the_next_lookup_reloads(
+        mocker, mock_redis_empty, mock_gundi_client_v2_class, integration_v2,
+):
+    """The consumer's last resort after a lost compare-and-set race: rather
+    than write anything (which could overwrite a newer value or tombstone) or
+    leave a stale permanent config behind an acked event, drop the key. The
+    next lookup misses and rebuilds it from the portal, the source of truth."""
+    client = mock_redis_empty.Redis.return_value
+    mocker.patch("app.services.config_manager.redis", mock_redis_empty)
+    mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
+    config_manager = IntegrationConfigurationManager()
+    integration_id = str(integration_v2.id)
+
+    await config_manager.invalidate_action_configuration(integration_id, "pull_events")
+
+    client.delete.assert_called_once_with(f"integrationconfig.{integration_id}.pull_events")
+    assert not client.set.called and not client.eval.called
+    assert not mock_gundi_client_v2_class.return_value.get_integration_details.called

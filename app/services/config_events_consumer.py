@@ -47,8 +47,8 @@ async def handle_action_config_created_event(event: ActionConfigCreated):
 # Deliveries run concurrently, so an update is a compare-and-set loop: read,
 # apply, write only if the key still holds what was read; on a lost race,
 # re-read and apply to the value that won. Bounded so a pathological stream
-# cannot spin; a lost event is the failure mode this handler is built for, so
-# giving up is logged loudly.
+# cannot spin. Giving up drops the key (the next lookup rebuilds it from the
+# portal) rather than leaving a stale permanent config behind an acked event.
 UPDATE_ATTEMPTS = 3
 
 
@@ -56,8 +56,7 @@ async def handle_action_config_updated_event(event: ActionConfigUpdated):
     event_data = event.payload
     integration_id = event_data.integration_id
     action_id = event_data.alt_id
-    recovered_from_absence = False
-    for _ in range(UPDATE_ATTEMPTS):
+    for attempt in range(UPDATE_ATTEMPTS):
         # One read of the cache, never a reload: every write below compares-and-
         # sets against exactly what this read saw. A second read could observe
         # a fresh tombstone written by a concurrent ActionConfigDeleted in
@@ -69,10 +68,12 @@ async def handle_action_config_updated_event(event: ActionConfigUpdated):
             action_id=action_id
         )
         if action_config is None:
-            if recovered_from_absence:
-                # A tombstone (or nothing) after we already recovered once means
-                # a newer delete, or the sentinel expired under us: stop rather
-                # than fetch again and risk installing over a newer delete.
+            if attempt > 0:
+                # An absence seen after a failed write (a tombstone, or nothing)
+                # means a newer delete, or the sentinel expired under us. Stop:
+                # fetching the portal now and installing over that tombstone is
+                # exactly the delete race this handler exists to prevent. Only
+                # an absence on the first read is a recovery.
                 logger.warning(
                     f"Ignoring ActionConfigUpdated for action '{action_id}' of integration "
                     f"'{integration_id}': its cached configuration went away while the update was being applied."
@@ -84,7 +85,6 @@ async def handle_action_config_updated_event(event: ActionConfigUpdated):
             # its Created event was lost or delivered out of order; fetch the
             # row without touching the cache (a full reload would SET every
             # action from one snapshot) and install it conditionally below.
-            recovered_from_absence = True
             integration = await config_manager._fetch_integration_from_gundi(integration_id)
             action_config = integration.get_action_config(action_id)
             if action_config is None:
@@ -106,9 +106,15 @@ async def handle_action_config_updated_event(event: ActionConfigUpdated):
             return
         # The key changed under us (a newer value, a newer tombstone, or it
         # expired): go round and apply this event's changes to what is there now.
+    # process_config_event acks the event whatever happens here, so a stale
+    # permanent config left behind would never self-heal. Drop the key instead:
+    # the next lookup misses and rebuilds it from the portal, which holds the
+    # truth about whatever won the race.
+    await config_manager.invalidate_action_configuration(integration_id, action_id)
     logger.warning(
         f"Gave up applying ActionConfigUpdated for action '{action_id}' of integration "
-        f"'{integration_id}' after {UPDATE_ATTEMPTS} attempts: the cached configuration kept changing underneath it."
+        f"'{integration_id}' after {UPDATE_ATTEMPTS} attempts: the cached configuration kept changing "
+        "underneath it. Dropped the cached entry; the next lookup rebuilds it from the portal."
     )
 
 

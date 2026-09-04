@@ -303,6 +303,17 @@ class IntegrationConfigurationManager:
                 written = await self.db_client.set(key, config.json(), None, nx=True)
         return bool(written)
 
+    async def invalidate_action_configuration(self, integration_id: str, action_id: str) -> None:
+        """Drop the cached entry for this action, whatever it holds, so the next
+        lookup misses and rebuilds it from the portal. The consumer's last
+        resort after losing its compare-and-set race repeatedly: writing
+        anything could overwrite a newer value or tombstone, and leaving a
+        stale permanent config behind an acked event would never self-heal."""
+        key = self._get_action_config_key(integration_id, action_id)
+        async for attempt in stamina.retry_context(**REDIS_RETRY):
+            with attempt:
+                await self.db_client.delete(key)
+
     async def delete_action_configuration(self, integration_id: str, action_id: str):
         # Record the absence rather than dropping the key: a deleted key misses on
         # the next lookup and reloads the whole integration from the Gundi API,

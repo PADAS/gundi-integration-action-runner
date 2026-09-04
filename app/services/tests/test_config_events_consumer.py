@@ -354,6 +354,7 @@ async def test_action_config_updated_retries_a_bounded_number_of_times_then_give
     mock_config_manager.read_cached_action_configuration = AsyncMock(return_value=(existing.copy(), existing.json()))
     mock_config_manager.replace_cached_entry = AsyncMock(return_value=False)  # always beaten
     mock_config_manager.set_action_configuration = AsyncMock()
+    mock_config_manager.invalidate_action_configuration = AsyncMock()
     mocker.patch.object(config_events_consumer, "config_manager", mock_config_manager)
 
     await config_events_consumer.handle_action_config_updated_event(
@@ -362,7 +363,13 @@ async def test_action_config_updated_retries_a_bounded_number_of_times_then_give
 
     assert mock_config_manager.replace_cached_entry.await_count == config_events_consumer.UPDATE_ATTEMPTS
     assert not mock_config_manager.set_action_configuration.called
-    assert any("Gave up" in r.getMessage() for r in caplog.records)
+    # Giving up must not leave a stale permanent config behind an acked event:
+    # drop the key so the next lookup rebuilds it from the portal, the source
+    # of truth for whatever won the race.
+    mock_config_manager.invalidate_action_configuration.assert_awaited_once()
+    (inv_integration, inv_action), _ = mock_config_manager.invalidate_action_configuration.await_args
+    assert (str(inv_integration), inv_action) == (str(integration_v2.id), existing.action.value)
+    assert any("Gave up" in r.getMessage() and "rebuil" in r.getMessage() for r in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -388,3 +395,35 @@ async def test_action_config_updated_warning_on_a_lost_race_does_not_claim_a_del
     assert not mock_config_manager.set_action_configuration.called
     messages = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
     assert messages and all("deleted" not in m for m in messages)
+
+
+@pytest.mark.asyncio
+async def test_action_config_updated_on_a_cached_config_stops_when_a_delete_wins_the_race(
+        mocker, mock_config_manager, integration_v2, caplog,
+):
+    """An ordinary update reads a config, loses its compare-and-set to a
+    concurrent ActionConfigDeleted, and re-reads a tombstone. That absence
+    must end the update: treating it as an initial absence would fetch the
+    portal and replace that exact tombstone with the fetched config, the
+    delete race this recovery exists to prevent. Only an absence seen on the
+    first read may trigger a recovery."""
+    from app.services import config_events_consumer
+
+    existing = integration_v2.configurations[0]
+    mock_config_manager.read_cached_action_configuration = AsyncMock(
+        side_effect=[(existing.copy(), existing.json()), (None, "null:gen2")],
+    )
+    mock_config_manager.replace_cached_entry = AsyncMock(return_value=False)
+    mock_config_manager._fetch_integration_from_gundi = AsyncMock(return_value=integration_v2)
+    mock_config_manager.install_action_configuration_if_missing = AsyncMock(return_value=True)
+    mock_config_manager.set_action_configuration = AsyncMock()
+    mocker.patch.object(config_events_consumer, "config_manager", mock_config_manager)
+
+    await config_events_consumer.handle_action_config_updated_event(
+        _updated_event(str(integration_v2.id), existing.action.value, {"data": {"lookback_days": 2}})
+    )
+
+    assert not mock_config_manager._fetch_integration_from_gundi.called, "no recovery after a failed write"
+    assert mock_config_manager.replace_cached_entry.await_count == 1
+    assert not mock_config_manager.install_action_configuration_if_missing.called
+    assert not mock_config_manager.set_action_configuration.called
