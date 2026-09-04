@@ -266,3 +266,29 @@ async def test_ephemeral_state_noops_leave_a_debug_trace(mocker, mock_redis, cap
         ephemeral_run.reset(token)
 
     assert any("ephemeral" in r.getMessage().lower() for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_state_redis_retry_backoff_does_not_block_the_event_loop(mocker, mock_redis, integration_v2):
+    """stamina's sync iterator sleeps with time.sleep between attempts; inside a
+    coroutine that freezes every other request on the worker. All four state
+    calls must iterate asynchronously."""
+    from unittest.mock import AsyncMock
+    import redis.asyncio as redis
+    from app.conftest import async_return
+    from app.services.state import IntegrationStateManager
+    calls = {"n": 0}
+    def flaky_get(key):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise redis.RedisError("flap")
+        return async_return(None)
+    mock_redis.Redis.return_value.get.side_effect = flaky_get
+    mocker.patch("app.services.state.redis", mock_redis)
+    mocker.patch("time.sleep", side_effect=AssertionError("retry back-off blocked the event loop"))
+    mocker.patch("asyncio.sleep", AsyncMock())
+
+    state = await IntegrationStateManager().get_state(str(integration_v2.id), "pull_observations")
+
+    assert state == {}
+    assert calls["n"] == 2

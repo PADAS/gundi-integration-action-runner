@@ -27,9 +27,11 @@ def _block_if_ephemeral(op: str) -> None:
         )
 
 
-# One retry policy for every Gundi API call (the helpers below and the
-# config manager's reload), defined once so the wait curve and the stop
-# condition can't drift apart.
+# One retry policy for every Gundi API call (the send helpers below and the
+# config manager's reloads), defined once so the wait curve and the stop
+# condition can't drift apart, and applied exactly once per call path:
+# nesting it (a decorated helper calling another decorated helper) multiplies
+# the attempts.
 #
 # stamina combines `attempts` and `timeout` with stop_any(), so the tighter
 # one wins, and its defaults (attempts=10 / timeout=45 s) silently truncate a
@@ -57,8 +59,11 @@ GUNDI_API_RETRY = dict(
 )
 
 
-@stamina.retry(**GUNDI_API_RETRY)
 async def _get_gundi_api_key(integration_id):
+    # No retry decorator of its own: every caller is one of the retry-decorated
+    # send helpers below, and a second policy nested inside the first restarts
+    # the inner six attempts on each outer attempt (36 portal calls, many
+    # minutes of sleep) for a portal that keeps failing.
     # An ephemeral run's synthetic integration has no persisted api key —
     # letting this reach the portal would 404 and then stamina would retry
     # for up to 5 minutes with the portal-facing request thread held.
