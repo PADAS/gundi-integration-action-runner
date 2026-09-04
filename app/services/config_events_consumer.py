@@ -60,22 +60,43 @@ async def handle_action_config_updated_event(event: ActionConfigUpdated):
         # logged and acked by process_config_event, and the change is gone).
         # Fetch only: a full reload SETs every action's config from one
         # snapshot and would overwrite a newer value another event cached
-        # while the fetch was in flight. The set below writes just this key.
+        # while the fetch was in flight.
         integration = await config_manager._fetch_integration_from_gundi(integration_id)
         action_config = integration.get_action_config(action_id)
-    if action_config is None:
-        logger.warning(
-            f"Ignoring ActionConfigUpdated for action '{action_id}' of integration "
-            f"'{integration_id}': the portal has no configuration for it."
+        if action_config is None:
+            logger.warning(
+                f"Ignoring ActionConfigUpdated for action '{action_id}' of integration "
+                f"'{integration_id}': the portal has no configuration for it."
+            )
+            return
+        _apply_changes(action_config, event_data.changes)
+        # Replace the sentinel only if it is still there. Deliveries run
+        # concurrently, so a second recovery for this action may have written
+        # a newer value while this one was fetching; if so, fall through and
+        # apply this event's changes to that value like any ordinary update.
+        if await config_manager.replace_absence_sentinel(integration_id, action_id, config=action_config):
+            return
+        action_config = await config_manager.get_action_configuration(
+            integration_id=integration_id,
+            action_id=action_id
         )
-        return
-    for key, value in event_data.changes.items():
-        setattr(action_config, key, value)
+        if action_config is None:
+            logger.warning(
+                f"Ignoring ActionConfigUpdated for action '{action_id}' of integration "
+                f"'{integration_id}': its configuration disappeared while recovering it."
+            )
+            return
+    _apply_changes(action_config, event_data.changes)
     await config_manager.set_action_configuration(
         integration_id=integration_id,
         action_id=action_id,
         config=action_config
     )
+
+
+def _apply_changes(action_config, changes: dict) -> None:
+    for key, value in changes.items():
+        setattr(action_config, key, value)
 
 
 async def handle_action_config_deleted_event(event: ActionConfigDeleted):

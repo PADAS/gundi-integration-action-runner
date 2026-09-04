@@ -42,6 +42,12 @@ async def test_ipv6_multicast_is_blocked(mocker):
     # Caught by the explicit blocklist only: ipaddress reports the deprecated
     # IPv6 site-local range as is_global, so the check above misses it.
     "fec0::1",
+    # Also explicit-list only on the Python the image runs (3.10): is_global's
+    # view of the IANA special-purpose registries was corrected in 3.13.
+    "192.0.0.8",          # IPv4 dummy address (IETF protocol assignments block)
+    "192.88.99.1",        # deprecated 6to4 relay anycast
+    "64:ff9b:1::1",       # local-use IPv4/IPv6 translation
+    "2002:c000:204::1",   # 6to4
 ])
 @pytest.mark.asyncio
 async def test_special_use_addresses_are_blocked_by_is_global_or_the_explicit_list(mocker, ip):

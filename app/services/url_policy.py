@@ -36,6 +36,18 @@ BLOCKED_NETWORKS = [
     ipaddress.ip_network("240.0.0.0/4"),      # reserved
     ipaddress.ip_network("::/128"),           # IPv6 unspecified
     ipaddress.ip_network("ff00::/8"),         # IPv6 multicast
+    # IANA special-purpose ranges that ipaddress.is_global still reports as
+    # global on the Python the image runs (3.10; corrected in 3.13). Listed so
+    # the policy does not depend on the interpreter's registry. 192.0.0.0/24 is
+    # blocked whole: its two globally reachable anycast hosts (.9, .10) are
+    # not addresses a source system lives at.
+    ipaddress.ip_network("192.0.0.0/24"),     # IETF protocol assignments (incl. the dummy 192.0.0.8)
+    ipaddress.ip_network("192.31.196.0/24"),  # AS112-v4
+    ipaddress.ip_network("192.52.193.0/24"),  # AMT
+    ipaddress.ip_network("192.88.99.0/24"),   # deprecated 6to4 relay anycast
+    ipaddress.ip_network("192.175.48.0/24"),  # direct delegation AS112
+    ipaddress.ip_network("64:ff9b:1::/48"),   # local-use IPv4/IPv6 translation
+    ipaddress.ip_network("2002::/16"),        # 6to4
 ]
 
 

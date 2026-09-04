@@ -746,3 +746,31 @@ async def test_a_legacy_permanent_sentinel_gets_the_ttl_on_its_next_hit_atomical
     # The script itself: expire only a key that still holds the sentinel and has no TTL.
     assert "GET" in script and "TTL" in script and "EXPIRE" in script and "-1" in script
     assert not mock_gundi_client_v2_class.return_value.get_integration_details.called
+
+
+@pytest.mark.asyncio
+async def test_replace_absence_sentinel_writes_only_while_the_sentinel_is_still_there(
+        mocker, mock_redis_empty, mock_gundi_client_v2_class, integration_v2, pull_observations_config_as_json,
+):
+    """The consumer's Updated-after-sentinel recovery reads the portal, then
+    writes. If another delivery replaced the sentinel in between, this write
+    must not land on top of it, so the value check and the SET are one script;
+    the return value tells the caller whether its value won."""
+    client = mock_redis_empty.Redis.return_value
+    client.eval.return_value = async_return(1)
+    mocker.patch("app.services.config_manager.redis", mock_redis_empty)
+    mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
+    config_manager = IntegrationConfigurationManager()
+    integration_id = str(integration_v2.id)
+    config = IntegrationActionConfiguration.parse_raw(pull_observations_config_as_json)
+
+    won = await config_manager.replace_absence_sentinel(integration_id, "pull_observations", config=config)
+
+    assert won is True
+    (script, numkeys, key, sentinel, value), _ = client.eval.call_args
+    assert (numkeys, key, sentinel, value) == (1, f"integrationconfig.{integration_id}.pull_observations", "null", config.json())
+    assert "GET" in script and "SET" in script
+    assert not client.set.called
+
+    client.eval.return_value = async_return(0)
+    assert await config_manager.replace_absence_sentinel(integration_id, "pull_observations", config=config) is False

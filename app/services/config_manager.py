@@ -54,6 +54,19 @@ if redis.call('GET', KEYS[1]) == ARGV[1] and redis.call('TTL', KEYS[1]) == -1 th
 end
 return 0
 """
+# Replace the absence sentinel (or a key that has since expired) with a real
+# configuration, but never a configuration that landed in between. Used by the
+# consumer's Updated-after-sentinel recovery, which reads the portal and then
+# writes: two such recoveries for one action can race, and the slower one's
+# plain SET would restore its stale snapshot over the newer value.
+_REPLACE_ABSENCE_SENTINEL_SCRIPT = """
+local current = redis.call('GET', KEYS[1])
+if current == false or current == ARGV[1] then
+    redis.call('SET', KEYS[1], ARGV[2])
+    return 1
+end
+return 0
+"""
 
 
 class IntegrationConfigurationManager:
@@ -193,6 +206,19 @@ class IntegrationConfigurationManager:
         async for attempt in stamina.retry_context(**REDIS_RETRY):
             with attempt:
                 await self.db_client.set(key, config.json(), ttl)
+
+    async def replace_absence_sentinel(
+            self, integration_id: str, action_id: str, *, config: IntegrationActionConfiguration,
+    ) -> bool:
+        """Write `config` only while the key still holds the absence sentinel
+        (or has expired). Returns whether the write happened; False means a
+        newer value is already there and the caller must not overwrite it.
+        Permanent, like every real configuration."""
+        key = self._get_action_config_key(integration_id, action_id)
+        async for attempt in stamina.retry_context(**REDIS_RETRY):
+            with attempt:
+                written = await self.db_client.eval(_REPLACE_ABSENCE_SENTINEL_SCRIPT, 1, key, _ABSENCE_SENTINEL, config.json())
+        return bool(written)
 
     async def delete_action_configuration(self, integration_id: str, action_id: str):
         # Record the absence rather than dropping the key: a deleted key misses on
