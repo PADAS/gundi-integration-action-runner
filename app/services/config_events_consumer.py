@@ -55,10 +55,13 @@ async def handle_action_config_updated_event(event: ActionConfigUpdated):
     if action_config is None:
         # The cache records this action as absent, so the lookup above did not
         # go to the portal. An Updated event for it means the Created event
-        # was lost or arrived out of order; the portal has the row, so reload
+        # was lost or arrived out of order; the portal has the row, so fetch it
         # rather than apply the changes to nothing (an AttributeError here is
         # logged and acked by process_config_event, and the change is gone).
-        integration = await config_manager._reload_integration_from_gundi(integration_id)
+        # Fetch only: a full reload SETs every action's config from one
+        # snapshot and would overwrite a newer value another event cached
+        # while the fetch was in flight. The set below writes just this key.
+        integration = await config_manager._fetch_integration_from_gundi(integration_id)
         action_config = integration.get_action_config(action_id)
     if action_config is None:
         logger.warning(

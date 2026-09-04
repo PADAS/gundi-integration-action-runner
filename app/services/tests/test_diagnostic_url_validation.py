@@ -6,15 +6,8 @@ import pytest
 from app.services.webhooks import _validate_diagnostic_url
 
 
-def _addrinfo(ip):
-    # Matches the (family, type, proto, canonname, sockaddr) shape returned by getaddrinfo.
-    return [(None, None, None, None, (ip, 443))]
-
-
 def _mock_resolution(mocker, ip):
-    mock_loop = mocker.MagicMock()
-    mock_loop.getaddrinfo = AsyncMock(return_value=_addrinfo(ip))
-    mocker.patch("app.services.url_policy.asyncio.get_running_loop", return_value=mock_loop)
+    mocker.patch("app.services.url_policy._resolve_addresses", AsyncMock(return_value=[ip]))
 
 
 @pytest.mark.asyncio
@@ -40,15 +33,18 @@ async def test_ipv6_multicast_is_blocked(mocker):
 
 
 @pytest.mark.parametrize("ip", [
+    # Caught by ip.is_global being False: not in the explicit blocklist, but not
+    # routable on the public internet either. A finite blocklist alone leaves
+    # these open.
     "198.18.0.1",    # benchmarking (RFC 2544), often routed internally
     "192.0.2.10",    # TEST-NET-1 documentation range
     "2001:db8::1",   # IPv6 documentation range
-    "fec0::1",       # deprecated IPv6 site-local; ipaddress still reports it is_global
+    # Caught by the explicit blocklist only: ipaddress reports the deprecated
+    # IPv6 site-local range as is_global, so the check above misses it.
+    "fec0::1",
 ])
 @pytest.mark.asyncio
-async def test_non_global_special_use_addresses_are_blocked(mocker, ip):
-    # Not in the explicit blocklist, but not routable on the public internet
-    # either (ip.is_global is False): a finite blocklist alone leaves these open.
+async def test_special_use_addresses_are_blocked_by_is_global_or_the_explicit_list(mocker, ip):
     _mock_resolution(mocker, ip)
     with pytest.raises(ValueError, match="private or reserved"):
         await _validate_diagnostic_url("https://example.com/hook")

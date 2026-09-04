@@ -1570,9 +1570,10 @@ async def test_ephemeral_configuration_error_with_a_status_code_still_answers_42
 
 
 def _mock_draft_url_resolution(mocker, ip):
-    mock_loop = mocker.MagicMock()
-    mock_loop.getaddrinfo = AsyncMock(return_value=[(None, None, None, None, (ip, 443))])
-    mocker.patch("app.services.url_policy.asyncio.get_running_loop", return_value=mock_loop)
+    # Patch the policy's resolver seam, never asyncio.get_running_loop: that
+    # module attribute is shared with the test client's portal, which then
+    # hands its task to a MagicMock loop and waits forever.
+    mocker.patch("app.services.url_policy._resolve_addresses", AsyncMock(return_value=[ip]))
 
 
 @pytest.mark.asyncio
@@ -1611,6 +1612,45 @@ async def test_ephemeral_draft_base_url_resolving_publicly_runs_when_the_policy_
     _mock_draft_url_resolution(mocker, "93.184.216.34")
 
     response = api_client.post("/v1/actions/execute/", json=_ephemeral_body(base_url="https://sandbox.pamdas.org"))
+
+    assert response.status_code == 200
+    handler, _, _ = mock_ephemeral_action_handlers["list_species"]
+    assert handler.called
+
+
+@pytest.mark.asyncio
+async def test_ephemeral_draft_base_url_outside_the_allowlist_is_rejected(
+        mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event, mock_ephemeral_action_handlers,
+):
+    from app import settings
+
+    _patch_ephemeral_runner(mocker, mock_ephemeral_action_handlers, mock_gundi_client_v2, mock_config_manager, mock_publish_event)
+    mocker.patch.object(settings, "EPHEMERAL_BASE_URL_BLOCK_PRIVATE_ADDRESSES", True)
+    mocker.patch.object(settings, "EPHEMERAL_BASE_URL_ALLOWLIST", ["sandbox.pamdas.org"])
+    _mock_draft_url_resolution(mocker, "93.184.216.34")  # not reached: the allowlist check runs before DNS
+
+    response = api_client.post("/v1/actions/execute/", json=_ephemeral_body(base_url="https://other.example.org"))
+
+    assert response.status_code == 422
+    assert "not in the configured allowlist" in response.json()["detail"]["error"]
+    handler, _, _ = mock_ephemeral_action_handlers["list_species"]
+    assert not handler.called
+
+
+@pytest.mark.asyncio
+async def test_ephemeral_draft_base_url_in_the_allowlist_runs_after_hostname_normalization(
+        mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event, mock_ephemeral_action_handlers,
+):
+    # Allowlist entries and URL hostnames are compared case-insensitively and
+    # without a trailing dot, so an operator's "Sandbox.PamDAS.org." matches.
+    from app import settings
+
+    _patch_ephemeral_runner(mocker, mock_ephemeral_action_handlers, mock_gundi_client_v2, mock_config_manager, mock_publish_event)
+    mocker.patch.object(settings, "EPHEMERAL_BASE_URL_BLOCK_PRIVATE_ADDRESSES", True)
+    mocker.patch.object(settings, "EPHEMERAL_BASE_URL_ALLOWLIST", ["Sandbox.PamDAS.org."])
+    _mock_draft_url_resolution(mocker, "93.184.216.34")
+
+    response = api_client.post("/v1/actions/execute/", json=_ephemeral_body(base_url="https://SANDBOX.pamdas.org"))
 
     assert response.status_code == 200
     handler, _, _ = mock_ephemeral_action_handlers["list_species"]

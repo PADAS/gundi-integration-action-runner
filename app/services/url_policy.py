@@ -39,6 +39,18 @@ BLOCKED_NETWORKS = [
 ]
 
 
+async def _resolve_addresses(hostname: str) -> list:
+    """Every address `hostname` resolves to, as strings, within
+    DNS_RESOLUTION_TIMEOUT_SECONDS. Tests replace this function rather than
+    asyncio.get_running_loop: patching that module attribute also reaches the
+    test client's own event loop machinery."""
+    loop = asyncio.get_running_loop()
+    addr_infos = await asyncio.wait_for(
+        loop.getaddrinfo(hostname, None), timeout=DNS_RESOLUTION_TIMEOUT_SECONDS,
+    )
+    return [sockaddr[0] for _, _, _, _, sockaddr in addr_infos]
+
+
 async def validate_outbound_url(url: str, *, allowlist: Iterable[str] = (), what: str = "URL") -> None:
     """Raise ValueError unless `url` is https, has a hostname, is in `allowlist`
     when one is given, and resolves only to public addresses.
@@ -57,19 +69,16 @@ async def validate_outbound_url(url: str, *, allowlist: Iterable[str] = (), what
     allowed = [h.rstrip(".").lower() for h in allowlist]
     if allowed and hostname not in allowed:
         raise ValueError(f"{lead} hostname '{hostname}' is not in the configured allowlist.")
-    loop = asyncio.get_running_loop()
     try:
-        addr_infos = await asyncio.wait_for(
-            loop.getaddrinfo(hostname, None), timeout=DNS_RESOLUTION_TIMEOUT_SECONDS,
-        )
+        addresses = await _resolve_addresses(hostname)
     except asyncio.TimeoutError:
         raise ValueError(
             f"Timed out resolving {what} hostname '{hostname}' after {DNS_RESOLUTION_TIMEOUT_SECONDS:g}s."
         )
     except OSError as e:
         raise ValueError(f"Cannot resolve {what} hostname '{hostname}': {e}")
-    for _, _, _, _, sockaddr in addr_infos:
-        ip = ipaddress.ip_address(sockaddr[0])
+    for address in addresses:
+        ip = ipaddress.ip_address(address)
         # An IPv4-mapped IPv6 address (::ffff:a.b.c.d) parses as IPv6 and would
         # sail past the IPv4 blocklist entries; check the embedded IPv4 instead.
         if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
