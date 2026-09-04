@@ -28,6 +28,7 @@ BLOCKED_NETWORKS = [
     ipaddress.ip_network("192.168.0.0/16"),   # RFC 1918 private
     ipaddress.ip_network("169.254.0.0/16"),   # link-local / cloud metadata (AWS, GCP)
     ipaddress.ip_network("fe80::/10"),        # IPv6 link-local
+    ipaddress.ip_network("fec0::/10"),        # deprecated IPv6 site-local; ipaddress still reports it is_global
     ipaddress.ip_network("fc00::/7"),         # IPv6 unique local
     ipaddress.ip_network("0.0.0.0/8"),        # unspecified
     ipaddress.ip_network("100.64.0.0/10"),    # carrier-grade NAT

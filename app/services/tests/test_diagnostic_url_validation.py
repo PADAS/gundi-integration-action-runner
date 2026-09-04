@@ -43,6 +43,7 @@ async def test_ipv6_multicast_is_blocked(mocker):
     "198.18.0.1",    # benchmarking (RFC 2544), often routed internally
     "192.0.2.10",    # TEST-NET-1 documentation range
     "2001:db8::1",   # IPv6 documentation range
+    "fec0::1",       # deprecated IPv6 site-local; ipaddress still reports it is_global
 ])
 @pytest.mark.asyncio
 async def test_non_global_special_use_addresses_are_blocked(mocker, ip):

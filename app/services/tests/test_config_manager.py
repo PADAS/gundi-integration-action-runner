@@ -716,45 +716,33 @@ async def test_portal_reloads_are_blocked_on_the_ephemeral_path(
 
 
 @pytest.mark.asyncio
-async def test_a_legacy_permanent_sentinel_gets_the_ttl_on_its_next_hit(
+async def test_a_legacy_permanent_sentinel_gets_the_ttl_on_its_next_hit_atomically(
         mocker, mock_redis_empty, mock_gundi_client_v2_class, integration_v2,
 ):
     """Sentinels written before this release have no expiry, and the reload's
     NX write never touches an existing key, so without a read-time fix an
     integration already hit by the lost-event bug would stay "unconfigured"
-    after rollout. A hit on a sentinel with no TTL (redis TTL == -1) attaches
-    the bounded one; the sentinel still answers this lookup."""
+    after rollout. A hit on a sentinel attaches the bounded TTL, in one
+    server-side step: a separate TTL check and EXPIRE could race an
+    ActionConfigCreated write in between and put the TTL on the real config,
+    which must stay permanent. The value check, the "still permanent" check
+    and the expiry therefore run as one script that only touches a key still
+    holding the sentinel with no TTL; the sentinel still answers this lookup."""
     client = mock_redis_empty.Redis.return_value
     client.get.return_value = async_return(b"null")
-    client.ttl.return_value = async_return(-1)
-    client.expire.return_value = async_return(True)
+    client.eval.return_value = async_return(1)
     mocker.patch("app.services.config_manager.redis", mock_redis_empty)
     mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
     config_manager = IntegrationConfigurationManager()
     integration_id = str(integration_v2.id)
+    key = f"integrationconfig.{integration_id}.pull_events"
 
     config = await config_manager.get_action_configuration(integration_id, "pull_events")
 
     assert config is None
-    client.expire.assert_called_once_with(
-        f"integrationconfig.{integration_id}.pull_events", ACTION_ABSENCE_SENTINEL_TTL_SECONDS,
-    )
+    assert not client.ttl.called and not client.expire.called, "must not be two separate commands"
+    (script, numkeys, called_key, value, ttl), _ = client.eval.call_args
+    assert (numkeys, called_key, value, ttl) == (1, key, "null", ACTION_ABSENCE_SENTINEL_TTL_SECONDS)
+    # The script itself: expire only a key that still holds the sentinel and has no TTL.
+    assert "GET" in script and "TTL" in script and "EXPIRE" in script and "-1" in script
     assert not mock_gundi_client_v2_class.return_value.get_integration_details.called
-
-
-@pytest.mark.asyncio
-async def test_an_expiring_sentinel_is_left_alone_on_a_hit(
-        mocker, mock_redis_empty, mock_gundi_client_v2_class, integration_v2,
-):
-    client = mock_redis_empty.Redis.return_value
-    client.get.return_value = async_return(b"null")
-    client.ttl.return_value = async_return(120)
-    client.expire.return_value = async_return(True)
-    mocker.patch("app.services.config_manager.redis", mock_redis_empty)
-    mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
-    config_manager = IntegrationConfigurationManager()
-
-    config = await config_manager.get_action_configuration(str(integration_v2.id), "pull_events")
-
-    assert config is None
-    assert not client.expire.called

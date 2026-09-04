@@ -44,6 +44,16 @@ WEBHOOK_CONFIG_DEFAULT_TTL_SECONDS = 300
 # whatever the portal now says. It also lets an orphan sentinel (a cascade
 # ActionConfigDeleted arriving after IntegrationDeleted) age out on its own.
 ACTION_ABSENCE_SENTINEL_TTL_SECONDS = 300
+# Attach a TTL to a key only while it still holds the absence sentinel with no
+# expiry (TTL == -1). One server-side step on purpose: a client-side TTL check
+# followed by EXPIRE could race an ActionConfigCreated write in between and
+# put the TTL on the real configuration, which must stay permanent.
+_EXPIRE_LEGACY_SENTINEL_SCRIPT = """
+if redis.call('GET', KEYS[1]) == ARGV[1] and redis.call('TTL', KEYS[1]) == -1 then
+    return redis.call('EXPIRE', KEYS[1], ARGV[2])
+end
+return 0
+"""
 
 
 class IntegrationConfigurationManager:
@@ -155,13 +165,15 @@ class IntegrationConfigurationManager:
         # Sentinels written before they carried a TTL are permanent, and the
         # reload's NX write never touches an existing key, so an integration
         # already hit by the lost-event bug would stay "unconfigured" after
-        # rollout. Attach the TTL on a hit instead: one TTL round trip per
-        # sentinel hit, and a write only on the first hit after rollout. Can
-        # go once every deployment has run a release with sentinel TTLs.
+        # rollout. Attach the TTL on a hit instead: one round trip per sentinel
+        # hit (the compare-and-expire script), and a write only on the first
+        # hit after rollout. Can go once every deployment has run a release
+        # with sentinel TTLs.
         async for attempt in stamina.retry_context(**REDIS_RETRY):
             with attempt:
-                if await self.db_client.ttl(key) == -1:
-                    await self.db_client.expire(key, ACTION_ABSENCE_SENTINEL_TTL_SECONDS)
+                await self.db_client.eval(
+                    _EXPIRE_LEGACY_SENTINEL_SCRIPT, 1, key, _ABSENCE_SENTINEL, ACTION_ABSENCE_SENTINEL_TTL_SECONDS,
+                )
 
     async def get_webhook_configuration(self, integration_id: str, ttl=None) -> Optional[WebhookConfiguration]:
         key = self._get_webhook_config_key(integration_id)
