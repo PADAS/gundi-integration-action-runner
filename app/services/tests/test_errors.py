@@ -10,7 +10,9 @@ from app.services.errors import (
     IntegrationConnectionError,
     IntegrationRateLimitError,
     IntegrationBadResponseError,
+    IntegrationConfigurationError,
     classify_error,
+    format_classified_error,
     format_error_message,
     source_status_code,
 )
@@ -23,6 +25,7 @@ from app.services.errors import (
         (IntegrationConnectionError, "connectivity", "Could not reach the provider"),
         (IntegrationRateLimitError, "rate_limit", "Rate limited by the provider"),
         (IntegrationBadResponseError, "bad_response", "Unexpected response from the provider"),
+        (IntegrationConfigurationError, "configuration", "Invalid configuration"),
     ],
 )
 def test_integration_error_subclasses_define_category(exception_class, expected_type, expected_title):
@@ -161,6 +164,20 @@ def test_format_omits_http_suffix_without_status_code():
     exc = IntegrationConnectionError("DNS lookup failed")
 
     assert format_error_message(exc) == "Could not reach the provider — DNS lookup failed"
+
+
+def test_format_can_omit_the_message_segment():
+    # The ephemeral path renders the same ClassifiedError without the message,
+    # which may carry str(exc) from the source. One renderer, one switch.
+    exc = IntegrationAuthError("TrackIt rejected the credentials", status_code=401)
+
+    assert format_classified_error(classify_error(exc), include_message=False) == "Authentication failed (HTTP 401)"
+
+
+def test_format_without_message_keeps_the_title_when_there_is_no_status():
+    exc = IntegrationConnectionError("DNS lookup failed")
+
+    assert format_classified_error(classify_error(exc), include_message=False) == "Could not reach the provider"
 
 
 def test_classify_builtin_timeout_as_connectivity():

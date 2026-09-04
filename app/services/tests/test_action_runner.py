@@ -1519,6 +1519,34 @@ def _auth_handlers_raising(exc, mock_reference_action_handler, mock_pull_observa
 
 
 @pytest.mark.asyncio
+async def test_ephemeral_configuration_error_forwards_its_message_as_422(
+        mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event,
+        mock_reference_action_handler, mock_pull_observations_action_handler,
+        mock_push_action_handler, mock_generic_action_handler,
+):
+    # A connector's own guard ("site URL is empty", "unknown event type") is
+    # neither a source verdict nor runner-authored, so today it redacts to the
+    # bare type name with a 500 and the portal wizard has nothing to act on.
+    # IntegrationConfigurationError is the connector's explicit opt-in: its
+    # message describes the shape of the problem without echoing submitted
+    # values, so the ephemeral path forwards it, as a 422 (the request was
+    # understood; its content cannot be acted on).
+    from app.services.errors import IntegrationConfigurationError
+
+    handlers = _auth_handlers_raising(
+        IntegrationConfigurationError("Site URL is empty or invalid"), mock_reference_action_handler,
+        mock_pull_observations_action_handler, mock_push_action_handler, mock_generic_action_handler,
+    )
+    _patch_ephemeral_runner(mocker, handlers, mock_gundi_client_v2, mock_config_manager, mock_publish_event)
+
+    response = api_client.post("/v1/actions/execute/", json=_ephemeral_body(action_id="auth"))
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["error"] == "Invalid configuration — Site URL is empty or invalid"
+    assert not mock_publish_event.called
+
+
+@pytest.mark.asyncio
 async def test_ephemeral_auth_error_without_status_code_is_401(
         mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event,
         mock_reference_action_handler, mock_pull_observations_action_handler,
