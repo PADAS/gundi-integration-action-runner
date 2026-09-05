@@ -44,8 +44,16 @@ logger = logging.getLogger(__name__)
 # it (a fresh tombstone numbered 1 would look older than an in-flight reload's
 # 100). So a generation is qualified by an epoch (_GENERATION_EPOCH_KEY), minted
 # whenever the counter or the epoch is found missing, and the reload preserves
-# any tombstone from an epoch other than its own. Sentinels written before
-# generations existed are the bare value and still read as absence.
+# any tombstone from an epoch other than its own.
+#
+# Generated tombstones are opt-in (settings.CONFIG_CACHE_SENTINEL_GENERATIONS).
+# A rolling deployment runs old and new replicas side by side, and a replica on
+# a release without this reader parses anything but the bare "null" as a
+# configuration, failing every lookup of that action; so the reader ships
+# first and the writer is turned on once every replica has it. Until then, and
+# for sentinels written before generations existed, the value is the bare
+# "null", which still reads as absence; the reload's ordering guard simply has
+# nothing to compare and behaves as before.
 _ABSENCE_SENTINEL_PREFIX = "null"
 _NO_WEBHOOK_CONFIG_SENTINEL = "null"
 _GENERATION_KEY = "integrationconfig.generation"
@@ -132,12 +140,13 @@ end
 _NEXT_GENERATION_SCRIPT = _NEXT_GENERATION_LUA + """
 return next_generation(KEYS[1], KEYS[2], ARGV[1])
 """
-# Write an absence sentinel with a fresh generation, atomically with the INCR
-# that issues it (a generation taken separately could be written after a higher
-# one, breaking the ordering the reload relies on). KEYS[1] is the action key,
-# KEYS[2] the counter, KEYS[3] the epoch key; ARGV[1] a hex nonce, ARGV[2] the
-# TTL in seconds, ARGV[3] the precondition ('any', 'missing', or 'equals' the
-# value in ARGV[4]), ARGV[5] a candidate epoch.
+# Write an absence sentinel, atomically with the INCR that issues its generation
+# (a generation taken separately could be written after a higher one, breaking
+# the ordering the reload relies on). KEYS[1] is the action key, KEYS[2] the
+# counter, KEYS[3] the epoch key; ARGV[1] a hex nonce, ARGV[2] the TTL in
+# seconds, ARGV[3] the precondition ('any', 'missing', or 'equals' the value in
+# ARGV[4]), ARGV[5] a candidate epoch, ARGV[6] '1' to write a generated
+# tombstone or '0' for the bare value (CONFIG_CACHE_SENTINEL_GENERATIONS).
 _WRITE_TOMBSTONE_SCRIPT = _NEXT_GENERATION_LUA + """
 local current = redis.call('GET', KEYS[1])
 if ARGV[3] == 'missing' and current then
@@ -146,8 +155,11 @@ end
 if ARGV[3] == 'equals' and current ~= ARGV[4] then
     return 0
 end
-local generation = next_generation(KEYS[2], KEYS[3], ARGV[5])
-redis.call('SET', KEYS[1], 'null:' .. generation .. ':' .. ARGV[1], 'EX', ARGV[2])
+local value = 'null'
+if ARGV[6] == '1' then
+    value = 'null:' .. next_generation(KEYS[2], KEYS[3], ARGV[5]) .. ':' .. ARGV[1]
+end
+redis.call('SET', KEYS[1], value, 'EX', ARGV[2])
 return 1
 """
 # The reload's write of one configured action from its portal snapshot. Refuses
@@ -214,6 +226,7 @@ class IntegrationConfigurationManager:
                 written = await self.db_client.eval(
                     _WRITE_TOMBSTONE_SCRIPT, 3, key, _GENERATION_KEY, _GENERATION_EPOCH_KEY,
                     uuid.uuid4().hex, ttl, mode, expected, uuid.uuid4().hex,
+                    "1" if settings.CONFIG_CACHE_SENTINEL_GENERATIONS else "0",
                 )
         return bool(written)
 

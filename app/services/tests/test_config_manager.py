@@ -555,12 +555,20 @@ async def test_reload_writes_absence_sentinels_for_unconfigured_actions(
     tombstones = {c.args[2]: c.args for c in evals if c.args[0] is cm._WRITE_TOMBSTONE_SCRIPT}
     snapshots = {c.args[2]: c.args for c in evals if c.args[0] is cm._WRITE_SNAPSHOT_CONFIG_SCRIPT}
     for action_id in unconfigured:
-        _, numkeys, _, counter, epoch_key, _hex, _ttl, mode, _, _ = tombstones[f"integrationconfig.{integration_id}.{action_id}"]
+        _, numkeys, _, counter, epoch_key, _hex, _ttl, mode, _, _, _ = tombstones[f"integrationconfig.{integration_id}.{action_id}"]
         assert (numkeys, counter, epoch_key, mode) == (3, cm._GENERATION_KEY, cm._GENERATION_EPOCH_KEY, "missing"), \
             "a Redis-issued generation, and never replacing an existing key"
     for action_id in configured:
         # Written through the snapshot script, which preserves a newer tombstone.
         assert not snapshots[f"integrationconfig.{integration_id}.{action_id}"][3].startswith("null")
+
+
+@pytest.fixture
+def generations_on(mocker):
+    """Generated tombstones are opt-in until every replica runs a tolerant
+    reader (see CONFIG_CACHE_SENTINEL_GENERATIONS); these tests exercise them."""
+    from app.services import config_manager as cm
+    mocker.patch.object(cm.settings, "CONFIG_CACHE_SENTINEL_GENERATIONS", True)
 
 
 class _FakeRedis:
@@ -604,12 +612,15 @@ class _FakeRedis:
             return next_generation(counter, epoch_key, args[0])
         if script is cm._WRITE_TOMBSTONE_SCRIPT:
             counter, epoch_key = keys[1], keys[2]
-            hex_part, ttl, mode, expected, candidate_epoch = args
+            hex_part, ttl, mode, expected, candidate_epoch, generated = args
             if mode == "missing" and current is not None:
                 return 0
             if mode == "equals" and current != expected:
                 return 0
-            self.data[key] = f"null:{next_generation(counter, epoch_key, candidate_epoch)}:{hex_part}"
+            if generated == "1":
+                self.data[key] = f"null:{next_generation(counter, epoch_key, candidate_epoch)}:{hex_part}"
+            else:
+                self.data[key] = "null"  # the format every deployed replica can read
             return 1
         if script is cm._WRITE_SNAPSHOT_CONFIG_SCRIPT:
             value, fetch_token, ttl = args
@@ -688,7 +699,7 @@ async def test_deleting_an_action_configuration_records_its_absence(
     await config_manager.delete_action_configuration(integration_id, "pull_events")
 
     from app.services import config_manager as cm
-    (script, numkeys, key, counter, epoch_key, _hex, ttl, mode, _, _), _ = mock_redis_empty.Redis.return_value.eval.call_args
+    (script, numkeys, key, counter, epoch_key, _hex, ttl, mode, _, _, _), _ = mock_redis_empty.Redis.return_value.eval.call_args
     assert script is cm._WRITE_TOMBSTONE_SCRIPT
     assert (numkeys, key, counter, epoch_key, ttl, mode) == (
         3, f"integrationconfig.{integration_id}.pull_events", cm._GENERATION_KEY, cm._GENERATION_EPOCH_KEY,
@@ -699,9 +710,7 @@ async def test_deleting_an_action_configuration_records_its_absence(
 
 
 @pytest.mark.asyncio
-async def test_every_absence_sentinel_write_has_its_own_generation(
-        mocker, mock_redis_empty, mock_gundi_client_v2_class, integration_v2,
-):
+async def test_every_absence_sentinel_write_has_its_own_generation(generations_on, mocker, mock_redis_empty, mock_gundi_client_v2_class, integration_v2,):
     """A recovery reads a sentinel, fetches the portal, then replaces the
     sentinel if it is still there. If a concurrent ActionConfigDeleted wrote a
     new sentinel in between and both read "null", the recovery could not tell
@@ -996,7 +1005,7 @@ async def test_a_legacy_permanent_webhook_entry_gets_the_default_ttl_on_its_next
 
 
 @pytest.mark.asyncio
-async def test_absence_sentinels_carry_a_redis_issued_generation(integration_v2):
+async def test_absence_sentinels_carry_a_redis_issued_generation(generations_on, integration_v2):
     """The reload compares a tombstone's generation with the one it took before
     its portal fetch, to tell a tombstone written while the fetch was in flight
     (preserve it) from one that predates the fetch (the portal is newer;
@@ -1024,7 +1033,7 @@ async def test_absence_sentinels_carry_a_redis_issued_generation(integration_v2)
 
 
 @pytest.mark.asyncio
-async def test_reload_preserves_a_tombstone_written_while_its_fetch_was_in_flight(mocker, integration_v2):
+async def test_reload_preserves_a_tombstone_written_while_its_fetch_was_in_flight(generations_on, mocker, integration_v2):
     """_reload_integration_from_gundi takes a generation, fetches the portal,
     then writes each configured action. A concurrent ActionConfigDeleted that
     lands between the fetch and the write leaves a tombstone with a higher
@@ -1064,7 +1073,7 @@ async def test_reload_preserves_a_tombstone_written_while_its_fetch_was_in_fligh
 
 
 @pytest.mark.asyncio
-async def test_reload_overwrites_a_sentinel_that_predates_its_fetch(mocker, integration_v2):
+async def test_reload_overwrites_a_sentinel_that_predates_its_fetch(generations_on, mocker, integration_v2):
     """A sentinel written before the reload took its generation is older than
     the snapshot (the lost-Created case the sentinel TTL exists for): the
     portal's row wins."""
@@ -1102,7 +1111,7 @@ async def test_replace_cached_entry_with_absence_writes_a_fresh_expiring_tombsto
     won = await config_manager.replace_cached_entry_with_absence(integration_id, "pull_events", observed='{"id": "x"}')
 
     assert won is True
-    (script, numkeys, key, counter, epoch_key, _hex, ttl, mode, expected, _), _ = client.eval.call_args
+    (script, numkeys, key, counter, epoch_key, _hex, ttl, mode, expected, _, _), _ = client.eval.call_args
     assert script is cm._WRITE_TOMBSTONE_SCRIPT
     assert (numkeys, key, counter, epoch_key, ttl, mode, expected) == (
         3, f"integrationconfig.{integration_id}.pull_events", cm._GENERATION_KEY, cm._GENERATION_EPOCH_KEY,
@@ -1111,7 +1120,7 @@ async def test_replace_cached_entry_with_absence_writes_a_fresh_expiring_tombsto
 
 
 @pytest.mark.asyncio
-async def test_reload_preserves_a_tombstone_from_a_later_epoch_even_with_a_lower_generation(mocker, integration_v2):
+async def test_reload_preserves_a_tombstone_from_a_later_epoch_even_with_a_lower_generation(generations_on, mocker, integration_v2):
     """The counter is an ordinary Redis key. If the cache is flushed (or the
     counter evicted) while a reload is in flight, a delete that follows
     numbers from 1 again; compared by number alone, that fresh tombstone would
@@ -1149,3 +1158,27 @@ async def test_reload_preserves_a_tombstone_from_a_later_epoch_even_with_a_lower
     await reload
 
     assert fake.data[key] == tombstone, "a tombstone from another epoch is never overwritten by a snapshot"
+
+
+@pytest.mark.asyncio
+async def test_by_default_tombstones_are_the_bare_value_every_replica_can_read(integration_v2):
+    """Rolling deployments run old and new replicas side by side. A replica on
+    the previous release recognises only the exact "null" sentinel and parses
+    anything else as a configuration, so a generated tombstone would raise on
+    every lookup there until the rollout completes. Generated tombstones are
+    therefore opt-in (CONFIG_CACHE_SENTINEL_GENERATIONS): this release ships
+    the tolerant reader everywhere; a later one turns the writer on."""
+    from app.services import config_manager as cm
+
+    assert cm.settings.CONFIG_CACHE_SENTINEL_GENERATIONS is False
+    config_manager = IntegrationConfigurationManager()
+    fake = _FakeRedis()
+    config_manager.db_client = fake
+    integration_id = str(integration_v2.id)
+    key = f"integrationconfig.{integration_id}.pull_events"
+
+    await config_manager.delete_action_configuration(integration_id, "pull_events")
+
+    assert fake.data[key] == "null"
+    assert cm._GENERATION_KEY not in fake.data, "no counter traffic while generations are off"
+    assert await config_manager.get_action_configuration(integration_id, "pull_events") is None

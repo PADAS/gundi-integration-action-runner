@@ -91,3 +91,13 @@ DIAGNOSTIC_URL_ALLOWLIST = env.list("DIAGNOSTIC_URL_ALLOWLIST", [])
 # its callers should not (see app/services/url_policy.py for the caveats).
 EPHEMERAL_BASE_URL_BLOCK_PRIVATE_ADDRESSES = env.bool("EPHEMERAL_BASE_URL_BLOCK_PRIVATE_ADDRESSES", False)
 EPHEMERAL_BASE_URL_ALLOWLIST = env.list("EPHEMERAL_BASE_URL_ALLOWLIST", [])
+
+# Config cache: write absence sentinels with a Redis-issued generation
+# ("null:<epoch>:<n>:<hex>") instead of the bare "null". The generation lets a
+# concurrent delete's tombstone win over an in-flight reload's stale snapshot
+# and over the consumer's recovery writes (see config_manager). Off by default
+# because a rolling deployment runs old and new replicas side by side, and a
+# replica on a release without the tolerant reader parses anything but the
+# bare "null" as a configuration and fails every lookup of that action. Roll
+# a release with the reader out everywhere first, then turn this on.
+CONFIG_CACHE_SENTINEL_GENERATIONS = env.bool("CONFIG_CACHE_SENTINEL_GENERATIONS", False)
