@@ -306,7 +306,17 @@ class IntegrationConfigurationManager:
             return config  # a cached config, or a cached absence
         # If not found in the redis db, try reloading data from Gundi API
         integration_details = await self._reload_integration_from_gundi(integration_id, ttl)
-        return integration_details.get_action_config(action_id)
+        # Answer from the cache, not from the snapshot: a delete that landed
+        # during the reload's fetch left a tombstone the snapshot write
+        # preserved, and returning the fetched row anyway would have the
+        # runner execute the deleted action once.
+        config, _ = await self.read_cached_action_configuration(integration_id, action_id)
+        if config is not None:
+            return config
+        cached_absence = _ is not None
+        # Nothing cached at all (the reload's own write raced with something
+        # that removed the key): the snapshot is the best answer left.
+        return None if cached_absence else integration_details.get_action_config(action_id)
 
     async def read_cached_action_configuration(
             self, integration_id: str, action_id: str,
@@ -320,9 +330,9 @@ class IntegrationConfigurationManager:
         saw (replace_cached_entry / install_action_configuration_if_missing).
         The token must come from the very read that established the state,
         since a second read could observe a fresh tombstone from a concurrent
-        ActionConfigDeleted; and the full reload is off limits here because its
-        unconditional SETs of configured actions would overwrite a tombstone
-        written after the reload's own fetch."""
+        ActionConfigDeleted; and the full reload is off limits here because it
+        rewrites the cache from a snapshot before returning, so the token this
+        caller holds would no longer describe what the key contains."""
         key = self._get_action_config_key(integration_id, action_id)
         async for attempt in stamina.retry_context(**REDIS_RETRY):
             with attempt:

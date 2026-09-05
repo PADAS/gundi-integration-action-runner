@@ -94,7 +94,9 @@ async def test_get_action_configuration_from_gundi(
 
     assert action_config
     assert isinstance(action_config, IntegrationActionConfiguration)
-    mock_redis_empty.Redis.return_value.get.assert_called_once_with(f"integrationconfig.{integration_id}.{action_id}")
+    # Two reads: the miss, and the answer from the cache after the reload (a
+    # delete that landed during the fetch must win over the fetched row).
+    assert mock_redis_empty.Redis.return_value.get.call_count == 2
     mock_gundi_client_v2_class.return_value.get_integration_details.assert_called_once_with(integration_id)
 
 
@@ -563,6 +565,18 @@ async def test_reload_writes_absence_sentinels_for_unconfigured_actions(
         assert not snapshots[f"integrationconfig.{integration_id}.{action_id}"][3].startswith("null")
 
 
+async def _fetch_started_or_failed(task, fetch_started):
+    """Wait for a reload (or lookup) task to reach its portal fetch; if the task
+    fails before that, surface the failure instead of waiting forever."""
+    import asyncio
+    waiter = asyncio.ensure_future(fetch_started.wait())
+    done, _ = await asyncio.wait({task, waiter}, return_when=asyncio.FIRST_COMPLETED)
+    if task in done and not fetch_started.is_set():
+        waiter.cancel()
+        task.result()  # raises the task's exception
+        raise AssertionError("task finished without fetching")
+
+
 @pytest.fixture
 def generations_on(mocker):
     """Generated tombstones are opt-in until every replica runs a tolerant
@@ -762,10 +776,11 @@ async def test_read_cached_action_configuration_never_reloads_and_reports_what_t
     """The consumer's recovery compares-and-sets against what it saw in the
     cache, so its read must (a) come from one Redis GET, since a second read
     could observe a fresh tombstone from a concurrent ActionConfigDeleted, and
-    (b) never fall through to the full portal reload, whose unconditional SETs
-    of configured actions would overwrite a tombstone written after the
-    reload's fetch. Three answers, each with the exact stored value as the
-    token to compare-and-set against: a config, a sentinel, or nothing."""
+    (b) never fall through to the full portal reload: the recovery needs the
+    exact token the cache held when it looked, and a reload rewrites the cache
+    from a snapshot before returning. Three answers, each with the exact
+    stored value as the token to compare-and-set against: a config, a
+    sentinel, or nothing."""
     client = mock_redis_empty.Redis.return_value
     mocker.patch("app.services.config_manager.redis", mock_redis_empty)
     mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
@@ -1062,7 +1077,7 @@ async def test_reload_preserves_a_tombstone_written_while_its_fetch_was_in_fligh
     mocker.patch.object(manager, "_fetch_integration_from_gundi", slow_fetch)
 
     reload = asyncio.create_task(manager._reload_integration_from_gundi(integration_id))
-    await fetch_started.wait()
+    await _fetch_started_or_failed(reload, fetch_started)
     await manager.delete_action_configuration(integration_id, configured_action)  # the delete lands mid-fetch
     tombstone = fake.data[key]
     release_fetch.set()
@@ -1150,7 +1165,7 @@ async def test_reload_preserves_a_tombstone_from_a_later_epoch_even_with_a_lower
     mocker.patch.object(manager, "_fetch_integration_from_gundi", slow_fetch)
 
     reload = asyncio.create_task(manager._reload_integration_from_gundi(integration_id))
-    await fetch_started.wait()
+    await _fetch_started_or_failed(reload, fetch_started)
     fake.data.clear()  # the cache is flushed mid-fetch: counter, epoch and all
     await manager.delete_action_configuration(integration_id, configured_action)  # numbering restarts at 1
     tombstone = fake.data[key]
@@ -1182,3 +1197,37 @@ async def test_by_default_tombstones_are_the_bare_value_every_replica_can_read(i
     assert fake.data[key] == "null"
     assert cm._GENERATION_KEY not in fake.data, "no counter traffic while generations are off"
     assert await config_manager.get_action_configuration(integration_id, "pull_events") is None
+
+
+@pytest.mark.asyncio
+async def test_lookup_that_reloads_returns_the_cache_winner_not_the_fetched_row(generations_on, mocker, integration_v2):
+    """A lookup misses, reloads, and a delete lands during the reload's fetch.
+    The tombstone wins the cache race, but the reload's caller must not be
+    handed the pre-delete portal row anyway: the action runner would execute
+    the deleted action once, from a value the cache itself no longer holds.
+    After writing, the lookup answers from the cache."""
+    import asyncio
+    from app.services import config_manager as cm
+
+    manager = cm.IntegrationConfigurationManager()
+    fake = _FakeRedis()
+    manager.db_client = fake
+    integration_id = str(integration_v2.id)
+    configured_action = integration_v2.configurations[0].action.value
+
+    fetch_started = asyncio.Event()
+    release_fetch = asyncio.Event()
+
+    async def slow_fetch(_integration_id):
+        fetch_started.set()
+        await release_fetch.wait()
+        return integration_v2  # the pre-delete snapshot
+
+    mocker.patch.object(manager, "_fetch_integration_from_gundi", slow_fetch)
+
+    lookup = asyncio.create_task(manager.get_action_configuration(integration_id, configured_action))
+    await _fetch_started_or_failed(lookup, fetch_started)
+    await manager.delete_action_configuration(integration_id, configured_action)
+    release_fetch.set()
+
+    assert await lookup is None, "the cached tombstone, not the stale snapshot's row"

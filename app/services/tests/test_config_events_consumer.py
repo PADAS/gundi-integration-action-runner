@@ -270,12 +270,11 @@ async def test_action_config_updated_on_a_cold_cache_installs_the_fetched_row_on
         mocker, mock_config_manager, integration_v2,
 ):
     """Nothing cached for this action (cold cache or an expired sentinel). The
-    ordinary lookup would run the full portal reload, whose unconditional SETs
-    of configured actions can overwrite a tombstone written by a concurrent
-    ActionConfigDeleted after the reload's fetch; the update would then
-    persist that stale config. The recovery instead fetches the row without
-    touching the cache and installs it with SET NX, so anything written
-    meanwhile wins."""
+    ordinary lookup would run the full portal reload, which rewrites the cache
+    from a snapshot and would leave this handler without the "still missing"
+    state its conditional write depends on. The recovery instead fetches the
+    row without touching the cache and installs it with SET NX, so anything
+    written meanwhile (a config or a tombstone) wins."""
     from app.services import config_events_consumer
 
     existing = integration_v2.configurations[0]

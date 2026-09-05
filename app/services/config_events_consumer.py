@@ -60,9 +60,9 @@ async def handle_action_config_updated_event(event: ActionConfigUpdated):
         # One read of the cache, never a reload: every write below compares-and-
         # sets against exactly what this read saw. A second read could observe
         # a fresh tombstone written by a concurrent ActionConfigDeleted in
-        # between, and the full reload's unconditional SETs of configured
-        # actions could overwrite such a tombstone written after the reload's
-        # own fetch.
+        # between, and a reload rewrites the cache from a snapshot before
+        # returning, leaving this handler holding a token for a value that is
+        # gone.
         action_config, observed = await config_manager.read_cached_action_configuration(
             integration_id=integration_id,
             action_id=action_id
