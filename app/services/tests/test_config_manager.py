@@ -550,15 +550,17 @@ async def test_reload_writes_absence_sentinels_for_unconfigured_actions(
 
     await config_manager.get_integration(integration_id)
 
-    set_calls = {c.args[0]: c for c in mock_redis_empty.Redis.return_value.set.call_args_list}
-    snapshot_writes = {c.args[2]: c for c in mock_redis_empty.Redis.return_value.eval.call_args_list}
+    from app.services import config_manager as cm
+    evals = mock_redis_empty.Redis.return_value.eval.call_args_list
+    tombstones = {c.args[2]: c.args for c in evals if c.args[0] is cm._WRITE_TOMBSTONE_SCRIPT}
+    snapshots = {c.args[2]: c.args for c in evals if c.args[0] is cm._WRITE_SNAPSHOT_CONFIG_SCRIPT}
     for action_id in unconfigured:
-        call = set_calls[f"integrationconfig.{integration_id}.{action_id}"]
-        assert call.args[1].startswith("null:"), "an absence sentinel with a per-write generation"
-        assert call.kwargs.get("nx") is True, "absence sentinels must never replace an existing key"
+        _, numkeys, _, counter, _hex, _ttl, mode, _ = tombstones[f"integrationconfig.{integration_id}.{action_id}"]
+        assert (numkeys, counter, mode) == (2, cm._GENERATION_KEY, "missing"), \
+            "a Redis-issued generation, and never replacing an existing key"
     for action_id in configured:
         # Written through the snapshot script, which preserves a newer tombstone.
-        assert not snapshot_writes[f"integrationconfig.{integration_id}.{action_id}"].args[3].startswith("null")
+        assert not snapshots[f"integrationconfig.{integration_id}.{action_id}"][3].startswith("null")
 
 
 class _FakeRedis:
@@ -583,14 +585,29 @@ class _FakeRedis:
     async def ttl(self, key):
         return -1 if key in self.data else -2
 
-    async def eval(self, script, numkeys, key, *args):
+    async def eval(self, script, numkeys, *keys_and_args):
         import re
         from app.services import config_manager as cm
+        keys, args = keys_and_args[:numkeys], keys_and_args[numkeys:]
+        key = keys[0]
         current = self.data.get(key)
+        if script is cm._NEXT_GENERATION_SCRIPT:
+            self.data[key] = int(self.data.get(key, 0)) + 1
+            return self.data[key]
+        if script is cm._WRITE_TOMBSTONE_SCRIPT:
+            counter = keys[1]
+            hex_part, ttl, mode, expected = args
+            if mode == "missing" and current is not None:
+                return 0
+            if mode == "equals" and current != expected:
+                return 0
+            self.data[counter] = int(self.data.get(counter, 0)) + 1
+            self.data[key] = f"null:{self.data[counter]}:{hex_part}"
+            return 1
         if script is cm._WRITE_SNAPSHOT_CONFIG_SCRIPT:
-            value, fetch_started_ns, ttl = args
+            value, fetch_generation, ttl = args
             m = re.match(r"^null:(\d+):", current) if isinstance(current, str) else None
-            if m and int(m.group(1)) >= int(fetch_started_ns):
+            if m and int(m.group(1)) > int(fetch_generation):
                 return 0
             self.data[key] = value
             return 1
@@ -661,9 +678,13 @@ async def test_deleting_an_action_configuration_records_its_absence(
 
     await config_manager.delete_action_configuration(integration_id, "pull_events")
 
-    (key, value, ttl), _ = mock_redis_empty.Redis.return_value.set.call_args
-    assert (key, ttl) == (f"integrationconfig.{integration_id}.pull_events", ACTION_ABSENCE_SENTINEL_TTL_SECONDS)
-    assert value.startswith("null:")
+    from app.services import config_manager as cm
+    (script, numkeys, key, counter, _hex, ttl, mode, _), _ = mock_redis_empty.Redis.return_value.eval.call_args
+    assert script is cm._WRITE_TOMBSTONE_SCRIPT
+    assert (numkeys, key, counter, ttl, mode) == (
+        2, f"integrationconfig.{integration_id}.pull_events", cm._GENERATION_KEY, ACTION_ABSENCE_SENTINEL_TTL_SECONDS, "any",
+    )
+    assert not mock_redis_empty.Redis.return_value.set.called
     assert not mock_redis_empty.Redis.return_value.delete.called
 
 
@@ -676,17 +697,25 @@ async def test_every_absence_sentinel_write_has_its_own_generation(
     new sentinel in between and both read "null", the recovery could not tell
     the newer tombstone from the one it observed and would resurrect the
     deleted config, permanently. Each write carries a generation instead."""
-    mocker.patch("app.services.config_manager.redis", mock_redis_empty)
-    mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
+    import re
+    from app.services import config_manager as cm
+
     config_manager = IntegrationConfigurationManager()
+    fake = _FakeRedis()
+    config_manager.db_client = fake
     integration_id = str(integration_v2.id)
+    key = f"integrationconfig.{integration_id}.pull_events"
 
     await config_manager.delete_action_configuration(integration_id, "pull_events")
+    first = fake.data[key]
     await config_manager.delete_action_configuration(integration_id, "pull_events")
+    second = fake.data[key]
 
-    first, second = [c.args[1] for c in mock_redis_empty.Redis.return_value.set.call_args_list]
-    assert first != second
-    assert first.startswith("null:") and second.startswith("null:")
+    # The generation is issued by Redis (one INCR shared by every writer), so
+    # ordering holds across runner instances regardless of their clocks.
+    g1, g2 = (int(re.fullmatch(r"null:(\d+):[0-9a-f]{32}", v).group(1)) for v in (first, second))
+    assert g2 > g1
+    assert fake.data[cm._GENERATION_KEY] == g2
 
 
 @pytest.mark.parametrize("stored", [b"null", b"null:0123abcd"])
@@ -735,10 +764,44 @@ async def test_read_cached_action_configuration_never_reloads_and_reports_what_t
     client.get.return_value = async_return(None)
     assert await config_manager.read_cached_action_configuration(integration_id, "pull_observations") == (None, None)
     assert not mock_gundi_client_v2_class.return_value.get_integration_details.called, "never reloads"
+
+
+@pytest.mark.asyncio
+async def test_reload_absence_sentinels_expire_when_the_caller_asks_for_no_ttl(
+        mocker, mock_redis_empty, mock_gundi_client_v2_class, integration_v2,
+):
+    """The action path caches with ttl=None. A permanent sentinel is corrected
+    only by an ActionConfig* event for that action; if the Created event is
+    lost (the consumer swallows handler failures and acks), the action stays
+    "unconfigured" until someone flushes redis. A bounded sentinel misses
+    again after the TTL and the reload sees the portal's real config."""
+    from app.services import config_manager as cm
+
+    mocker.patch("app.services.config_manager.redis", mock_redis_empty)
+    mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
+    config_manager = IntegrationConfigurationManager()
+    integration_id = str(integration_v2.id)
+    configured = {c.action.value for c in integration_v2.configurations}
+    unconfigured = {a.value for a in integration_v2.type.actions} - configured
+
+    await config_manager.get_integration(integration_id, ttl=None)
+
+    evals = mock_redis_empty.Redis.return_value.eval.call_args_list
+    tombstones = {c.args[2]: c.args for c in evals if c.args[0] is cm._WRITE_TOMBSTONE_SCRIPT}
+    snapshots = {c.args[2]: c.args for c in evals if c.args[0] is cm._WRITE_SNAPSHOT_CONFIG_SCRIPT}
+    for action_id in unconfigured:
+        assert tombstones[f"integrationconfig.{integration_id}.{action_id}"][5] == ACTION_ABSENCE_SENTINEL_TTL_SECONDS
+    for action_id in configured:
+        # Real configs stay permanent: the events that change them invalidate them.
+        assert snapshots[f"integrationconfig.{integration_id}.{action_id}"][5] == ""
+
+
 @pytest.mark.asyncio
 async def test_reload_absence_sentinels_keep_an_explicit_caller_ttl(
         mocker, mock_redis_empty, mock_gundi_client_v2_class, integration_v2,
 ):
+    from app.services import config_manager as cm
+
     mocker.patch("app.services.config_manager.redis", mock_redis_empty)
     mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
     config_manager = IntegrationConfigurationManager()
@@ -748,9 +811,10 @@ async def test_reload_absence_sentinels_keep_an_explicit_caller_ttl(
 
     await config_manager.get_integration(integration_id, ttl=60)
 
-    set_calls = {c.args[0]: c for c in mock_redis_empty.Redis.return_value.set.call_args_list}
+    evals = mock_redis_empty.Redis.return_value.eval.call_args_list
+    tombstones = {c.args[2]: c.args for c in evals if c.args[0] is cm._WRITE_TOMBSTONE_SCRIPT}
     for action_id in unconfigured:
-        assert set_calls[f"integrationconfig.{integration_id}.{action_id}"].args[2] == 60
+        assert tombstones[f"integrationconfig.{integration_id}.{action_id}"][5] == 60
 
 
 @pytest.mark.asyncio
@@ -918,3 +982,114 @@ async def test_a_legacy_permanent_webhook_entry_gets_the_default_ttl_on_its_next
     assert (numkeys, key, ttl) == (1, f"integrationconfig.{integration_id}.webhook", WEBHOOK_CONFIG_DEFAULT_TTL_SECONDS)
     assert "TTL" in script and "EXPIRE" in script and "-1" in script
     assert not mock_gundi_client_v2_class.return_value.get_integration_details.called
+
+
+@pytest.mark.asyncio
+async def test_absence_sentinels_carry_a_redis_issued_generation(integration_v2):
+    """The reload compares a tombstone's generation with the one it took before
+    its portal fetch, to tell a tombstone written while the fetch was in flight
+    (preserve it) from one that predates the fetch (the portal is newer;
+    overwrite it). Both numbers come from one Redis counter, so the ordering
+    holds across runner instances whatever their clocks say."""
+    import re
+    from app.services import config_manager as cm
+
+    config_manager = IntegrationConfigurationManager()
+    fake = _FakeRedis()
+    config_manager.db_client = fake
+    integration_id = str(integration_v2.id)
+
+    await config_manager.delete_action_configuration(integration_id, "pull_events")
+
+    sentinel = fake.data[f"integrationconfig.{integration_id}.pull_events"]
+    m = re.fullmatch(r"null:(\d+):[0-9a-f]{32}", sentinel)
+    assert m, sentinel
+    assert int(m.group(1)) == fake.data[cm._GENERATION_KEY]
+    assert cm._is_absence_sentinel(sentinel) and cm._is_absence_sentinel(sentinel.encode())
+
+
+@pytest.mark.asyncio
+async def test_reload_preserves_a_tombstone_written_while_its_fetch_was_in_flight(mocker, integration_v2):
+    """_reload_integration_from_gundi takes a generation, fetches the portal,
+    then writes each configured action. A concurrent ActionConfigDeleted that
+    lands between the fetch and the write leaves a tombstone with a higher
+    generation; an unconditional SET would replace it with the stale config,
+    permanently (the delete race the consumer now avoids, reachable through
+    any ordinary cache miss). The write refuses to overwrite a tombstone whose
+    generation is above the reload's."""
+    import asyncio
+    from app.services import config_manager as cm
+
+    manager = cm.IntegrationConfigurationManager()
+    fake = _FakeRedis()
+    manager.db_client = fake
+    integration_id = str(integration_v2.id)
+    configured_action = integration_v2.configurations[0].action.value
+    key = f"integrationconfig.{integration_id}.{configured_action}"
+
+    fetch_started = asyncio.Event()
+    release_fetch = asyncio.Event()
+
+    async def slow_fetch(_integration_id):
+        fetch_started.set()
+        await release_fetch.wait()
+        return integration_v2  # the pre-delete snapshot
+
+    mocker.patch.object(manager, "_fetch_integration_from_gundi", slow_fetch)
+
+    reload = asyncio.create_task(manager._reload_integration_from_gundi(integration_id))
+    await fetch_started.wait()
+    await manager.delete_action_configuration(integration_id, configured_action)  # the delete lands mid-fetch
+    tombstone = fake.data[key]
+    release_fetch.set()
+    await reload
+
+    assert fake.data[key] == tombstone, "the newer tombstone (higher generation) wins over the stale snapshot"
+    assert await manager.get_action_configuration(integration_id, configured_action) is None
+
+
+@pytest.mark.asyncio
+async def test_reload_overwrites_a_sentinel_that_predates_its_fetch(mocker, integration_v2):
+    """A sentinel written before the reload took its generation is older than
+    the snapshot (the lost-Created case the sentinel TTL exists for): the
+    portal's row wins."""
+    from app.services import config_manager as cm
+
+    manager = cm.IntegrationConfigurationManager()
+    fake = _FakeRedis()
+    manager.db_client = fake
+    integration_id = str(integration_v2.id)
+    configured = integration_v2.configurations[0]
+    key = f"integrationconfig.{integration_id}.{configured.action.value}"
+    await manager.delete_action_configuration(integration_id, configured.action.value)  # predates the fetch
+    mocker.patch.object(manager, "_fetch_integration_from_gundi", AsyncMock(return_value=integration_v2))
+
+    await manager._reload_integration_from_gundi(integration_id)
+
+    assert fake.data[key] == configured.json()
+
+
+@pytest.mark.asyncio
+async def test_replace_cached_entry_with_absence_writes_a_fresh_expiring_tombstone(
+        mocker, mock_redis_empty, mock_gundi_client_v2_class, integration_v2,
+):
+    """The consumer's reconciliation, when the portal says the row is gone:
+    record the absence, but only over exactly the value it read."""
+    from app.services import config_manager as cm
+
+    client = mock_redis_empty.Redis.return_value
+    client.eval.return_value = async_return(1)
+    mocker.patch("app.services.config_manager.redis", mock_redis_empty)
+    mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
+    config_manager = IntegrationConfigurationManager()
+    integration_id = str(integration_v2.id)
+
+    won = await config_manager.replace_cached_entry_with_absence(integration_id, "pull_events", observed='{"id": "x"}')
+
+    assert won is True
+    (script, numkeys, key, counter, _hex, ttl, mode, expected), _ = client.eval.call_args
+    assert script is cm._WRITE_TOMBSTONE_SCRIPT
+    assert (numkeys, key, counter, ttl, mode, expected) == (
+        2, f"integrationconfig.{integration_id}.pull_events", cm._GENERATION_KEY,
+        ACTION_ABSENCE_SENTINEL_TTL_SECONDS, "equals", '{"id": "x"}',
+    )

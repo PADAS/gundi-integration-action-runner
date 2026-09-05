@@ -1,6 +1,5 @@
 import json
 import logging
-import time
 import uuid
 from typing import Optional, Tuple
 
@@ -27,22 +26,22 @@ logger = logging.getLogger(__name__)
 # action and, as a backstop, expire (see ACTION_ABSENCE_SENTINEL_TTL_SECONDS);
 # the webhook sentinel has no event and relies on its TTL alone.
 #
-# Every action sentinel write carries its own generation
-# ("null:<write time, ns>:<hex>"). Two readers depend on it. The consumer's
-# recovery reads the sentinel, fetches the portal, then replaces the sentinel
-# only if it is still the one it observed; were every sentinel the same bare
-# value, a concurrent ActionConfigDeleted's fresh tombstone would compare equal
-# and the recovery would resurrect the deleted config as a permanent key. The
-# reload compares the write time with the start of its own portal fetch, so a
-# tombstone written while the fetch was in flight is preserved over the stale
-# snapshot (see _WRITE_SNAPSHOT_CONFIG_SCRIPT). Sentinels written before
-# generations existed are the bare value and still read as absence.
+# Every action sentinel write carries its own generation ("null:<n>:<hex>"),
+# issued by one Redis counter (_GENERATION_KEY) inside the write itself. Two
+# readers depend on it. The consumer's recovery reads the sentinel, fetches
+# the portal, then replaces the sentinel only if it is still the one it
+# observed; were every sentinel the same bare value, a concurrent
+# ActionConfigDeleted's fresh tombstone would compare equal and the recovery
+# would resurrect the deleted config as a permanent key. The reload takes a
+# generation before its portal fetch and refuses to overwrite a tombstone with
+# a higher one: that tombstone was written while the fetch was in flight, so
+# it is newer than the snapshot (see _WRITE_SNAPSHOT_CONFIG_SCRIPT). Redis
+# hands out the numbers, so the ordering holds across runner instances
+# whatever their clocks say. Sentinels written before generations existed are
+# the bare value and still read as absence.
 _ABSENCE_SENTINEL_PREFIX = "null"
 _NO_WEBHOOK_CONFIG_SENTINEL = "null"
-
-
-def _new_absence_sentinel() -> str:
-    return f"{_ABSENCE_SENTINEL_PREFIX}:{time.time_ns()}:{uuid.uuid4().hex}"
+_GENERATION_KEY = "integrationconfig.generation"
 
 
 def _is_absence_sentinel(data) -> bool:
@@ -106,18 +105,39 @@ if redis.call('GET', KEYS[1]) == ARGV[1] then
 end
 return 0
 """
+# The next generation number. The reload takes one before its portal fetch so
+# every tombstone written during the fetch compares higher.
+_NEXT_GENERATION_SCRIPT = """
+return redis.call('INCR', KEYS[1])
+"""
+# Write an absence sentinel with a fresh generation, atomically with the INCR
+# that issues it (a generation taken separately could be written after a higher
+# one, breaking the ordering the reload relies on). KEYS[1] is the action key,
+# KEYS[2] the counter; ARGV[1] a hex nonce, ARGV[2] the TTL in seconds, ARGV[3]
+# the precondition ('any', 'missing', or 'equals' the value in ARGV[4]).
+_WRITE_TOMBSTONE_SCRIPT = """
+local current = redis.call('GET', KEYS[1])
+if ARGV[3] == 'missing' and current then
+    return 0
+end
+if ARGV[3] == 'equals' and current ~= ARGV[4] then
+    return 0
+end
+local generation = redis.call('INCR', KEYS[2])
+redis.call('SET', KEYS[1], 'null:' .. generation .. ':' .. ARGV[1], 'EX', ARGV[2])
+return 1
+"""
 # The reload's write of one configured action from its portal snapshot. Refuses
-# to overwrite an absence sentinel written at or after the fetch began: that is
-# a concurrent ActionConfigDeleted's tombstone, newer than the snapshot, and an
-# unconditional SET would resurrect the deleted config permanently. Anything
-# else (a real config, an older sentinel, nothing) is replaced by the snapshot,
-# which is the portal's truth as of the fetch. Clocks across runner instances
-# are assumed close relative to the length of a portal round trip.
+# to overwrite an absence sentinel whose generation is above the one the reload
+# took before its fetch: that is a concurrent ActionConfigDeleted's tombstone,
+# newer than the snapshot, and an unconditional SET would resurrect the deleted
+# config permanently. Anything else (a real config, an older sentinel, nothing)
+# is replaced by the snapshot, which is the portal's truth as of the fetch.
 _WRITE_SNAPSHOT_CONFIG_SCRIPT = """
 local current = redis.call('GET', KEYS[1])
 if current then
-    local written_ns = string.match(current, '^null:(%d+):')
-    if written_ns and tonumber(written_ns) >= tonumber(ARGV[2]) then
+    local generation = string.match(current, '^null:(%d+):')
+    if generation and tonumber(generation) > tonumber(ARGV[2]) then
         return 0
     end
 end
@@ -160,9 +180,19 @@ class IntegrationConfigurationManager:
                     integration_details = await gundi.get_integration_details(integration_id)
         return integration_details
 
+    async def _write_absence_sentinel(self, key: str, *, ttl: int, mode: str, expected: str = "") -> bool:
+        async for attempt in stamina.retry_context(**REDIS_RETRY):
+            with attempt:
+                written = await self.db_client.eval(
+                    _WRITE_TOMBSTONE_SCRIPT, 2, key, _GENERATION_KEY, uuid.uuid4().hex, ttl, mode, expected,
+                )
+        return bool(written)
+
     async def _reload_integration_from_gundi(self, integration_id: str, ttl=None) -> Integration:
         key = self._get_integration_key(integration_id)
-        fetch_started_ns = time.time_ns()
+        async for attempt in stamina.retry_context(**REDIS_RETRY):
+            with attempt:
+                fetch_generation = await self.db_client.eval(_NEXT_GENERATION_SCRIPT, 1, _GENERATION_KEY)
         integration_details = await self._fetch_integration_from_gundi(integration_id)
         integration = IntegrationSummary.from_integration(integration_details)
         await self.db_client.set(key, integration.json(), ttl)
@@ -178,22 +208,22 @@ class IntegrationConfigurationManager:
             configured.add(config.action.value)
             config_key = self._get_action_config_key(integration_id, config.action.value)
             await self.db_client.eval(
-                _WRITE_SNAPSHOT_CONFIG_SCRIPT, 1, config_key, config.json(), fetch_started_ns, ttl if ttl is not None else "",
+                _WRITE_SNAPSHOT_CONFIG_SCRIPT, 1, config_key, config.json(), fetch_generation, ttl if ttl is not None else "",
             )
-        # Sentinels are written with NX so they never replace a key that is
-        # already there. A reload reads the portal, then writes; if an
-        # ActionConfigCreated event for one of these actions lands in
-        # between, its config would otherwise be overwritten with a "null"
-        # that no later event corrects. With NX the event's write wins in
-        # either order: written first, it is left alone; written after, it
-        # replaces the sentinel as a plain SET. The sentinel also expires
+        # Sentinels are written only if the key is missing, so they never
+        # replace a key that is already there. A reload reads the portal, then
+        # writes; if an ActionConfigCreated event for one of these actions
+        # lands in between, its config would otherwise be overwritten with a
+        # "null" that no later event corrects. This way the event's write wins
+        # in either order: written first, it is left alone; written after, it
+        # replaces the sentinel. The sentinel also expires
         # (ACTION_ABSENCE_SENTINEL_TTL_SECONDS) for the case where that event
         # never arrives at all.
         sentinel_ttl = ttl if ttl is not None else ACTION_ABSENCE_SENTINEL_TTL_SECONDS
         for action in integration_details.type.actions or []:
             if action.value not in configured:
-                await self.db_client.set(
-                    self._get_action_config_key(integration_id, action.value), _new_absence_sentinel(), sentinel_ttl, nx=True,
+                await self._write_absence_sentinel(
+                    self._get_action_config_key(integration_id, action.value), ttl=sentinel_ttl, mode="missing",
                 )
         await self._cache_webhook_configuration(integration_id, integration_details.webhook_configuration, ttl)
         return integration_details
@@ -331,12 +361,9 @@ class IntegrationConfigurationManager:
         portal says the row is gone; the same exactness rule as
         replace_cached_entry applies."""
         key = self._get_action_config_key(integration_id, action_id)
-        async for attempt in stamina.retry_context(**REDIS_RETRY):
-            with attempt:
-                written = await self.db_client.eval(
-                    _REPLACE_CACHED_ENTRY_SCRIPT, 1, key, observed, _new_absence_sentinel(), ACTION_ABSENCE_SENTINEL_TTL_SECONDS,
-                )
-        return bool(written)
+        return await self._write_absence_sentinel(
+            key, ttl=ACTION_ABSENCE_SENTINEL_TTL_SECONDS, mode="equals", expected=observed,
+        )
 
     async def install_action_configuration_if_missing(
             self, integration_id: str, action_id: str, *, config: IntegrationActionConfiguration,
@@ -357,9 +384,7 @@ class IntegrationConfigurationManager:
         # which would then report the same absence. Bounded like the reload's
         # sentinels, so a Deleted that outlives its integration ages out.
         key = self._get_action_config_key(integration_id, action_id)
-        async for attempt in stamina.retry_context(**REDIS_RETRY):
-            with attempt:
-                await self.db_client.set(key, _new_absence_sentinel(), ACTION_ABSENCE_SENTINEL_TTL_SECONDS)
+        await self._write_absence_sentinel(key, ttl=ACTION_ABSENCE_SENTINEL_TTL_SECONDS, mode="any")
 
     async def get_integration(self, integration_id: str, ttl=None) -> IntegrationSummary:
         key = self._get_integration_key(integration_id)
