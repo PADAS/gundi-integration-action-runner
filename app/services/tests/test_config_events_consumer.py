@@ -463,3 +463,36 @@ async def test_action_config_updated_on_a_cached_config_stops_when_a_delete_wins
     assert mock_config_manager.replace_cached_entry.await_count == 1
     assert not mock_config_manager.install_action_configuration_if_missing.called
     assert not mock_config_manager.set_action_configuration.called
+
+
+@pytest.mark.asyncio
+async def test_action_config_updated_give_up_stops_when_the_re_read_shows_an_absence(
+        mocker, mock_config_manager, integration_v2, caplog,
+):
+    """The same rule as inside the loop applies after it: if the last attempt
+    lost to a delete, the reconciliation's re-read shows that fresh tombstone,
+    and fetching a (possibly stale) portal row to install over it would
+    resurrect the deleted configuration. No cached configuration on the
+    re-read means stop, without fetching or writing."""
+    from app.services import config_events_consumer
+
+    existing = integration_v2.configurations[0]
+    mock_config_manager.read_cached_action_configuration = AsyncMock(
+        side_effect=[(existing.copy(), existing.json())] * config_events_consumer.UPDATE_ATTEMPTS + [(None, "null:e:9:x")],
+    )
+    mock_config_manager.replace_cached_entry = AsyncMock(return_value=False)
+    mock_config_manager.replace_cached_entry_with_absence = AsyncMock(return_value=True)
+    mock_config_manager.install_action_configuration_if_missing = AsyncMock(return_value=True)
+    mock_config_manager._fetch_integration_from_gundi = AsyncMock(return_value=integration_v2)
+    mock_config_manager.set_action_configuration = AsyncMock()
+    mocker.patch.object(config_events_consumer, "config_manager", mock_config_manager)
+
+    await config_events_consumer.handle_action_config_updated_event(
+        _updated_event(str(integration_v2.id), existing.action.value, {"data": {"lookback_days": 2}})
+    )
+
+    assert not mock_config_manager._fetch_integration_from_gundi.called, "never fetch over a fresh tombstone"
+    assert not mock_config_manager.replace_cached_entry_with_absence.called
+    assert not mock_config_manager.install_action_configuration_if_missing.called
+    assert mock_config_manager.replace_cached_entry.await_count == config_events_consumer.UPDATE_ATTEMPTS
+    assert any("Gave up" in r.getMessage() for r in caplog.records)

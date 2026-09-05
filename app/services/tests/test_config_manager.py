@@ -555,8 +555,8 @@ async def test_reload_writes_absence_sentinels_for_unconfigured_actions(
     tombstones = {c.args[2]: c.args for c in evals if c.args[0] is cm._WRITE_TOMBSTONE_SCRIPT}
     snapshots = {c.args[2]: c.args for c in evals if c.args[0] is cm._WRITE_SNAPSHOT_CONFIG_SCRIPT}
     for action_id in unconfigured:
-        _, numkeys, _, counter, _hex, _ttl, mode, _ = tombstones[f"integrationconfig.{integration_id}.{action_id}"]
-        assert (numkeys, counter, mode) == (2, cm._GENERATION_KEY, "missing"), \
+        _, numkeys, _, counter, epoch_key, _hex, _ttl, mode, _, _ = tombstones[f"integrationconfig.{integration_id}.{action_id}"]
+        assert (numkeys, counter, epoch_key, mode) == (3, cm._GENERATION_KEY, cm._GENERATION_EPOCH_KEY, "missing"), \
             "a Redis-issued generation, and never replacing an existing key"
     for action_id in configured:
         # Written through the snapshot script, which preserves a newer tombstone.
@@ -591,24 +591,33 @@ class _FakeRedis:
         keys, args = keys_and_args[:numkeys], keys_and_args[numkeys:]
         key = keys[0]
         current = self.data.get(key)
+        def next_generation(counter, epoch_key, candidate_epoch):
+            # An epoch is valid only alongside its counter: a missing counter
+            # (flush, eviction) mints a new epoch, so restarted numbering is
+            # never compared with numbers from before the reset.
+            if counter not in self.data or epoch_key not in self.data:
+                self.data[epoch_key] = candidate_epoch
+            self.data[counter] = int(self.data.get(counter, 0)) + 1
+            return f"{self.data[epoch_key]}:{self.data[counter]}"
         if script is cm._NEXT_GENERATION_SCRIPT:
-            self.data[key] = int(self.data.get(key, 0)) + 1
-            return self.data[key]
+            counter, epoch_key = keys
+            return next_generation(counter, epoch_key, args[0])
         if script is cm._WRITE_TOMBSTONE_SCRIPT:
-            counter = keys[1]
-            hex_part, ttl, mode, expected = args
+            counter, epoch_key = keys[1], keys[2]
+            hex_part, ttl, mode, expected, candidate_epoch = args
             if mode == "missing" and current is not None:
                 return 0
             if mode == "equals" and current != expected:
                 return 0
-            self.data[counter] = int(self.data.get(counter, 0)) + 1
-            self.data[key] = f"null:{self.data[counter]}:{hex_part}"
+            self.data[key] = f"null:{next_generation(counter, epoch_key, candidate_epoch)}:{hex_part}"
             return 1
         if script is cm._WRITE_SNAPSHOT_CONFIG_SCRIPT:
-            value, fetch_generation, ttl = args
-            m = re.match(r"^null:(\d+):", current) if isinstance(current, str) else None
-            if m and int(m.group(1)) > int(fetch_generation):
-                return 0
+            value, fetch_token, ttl = args
+            m = re.match(r"^null:([^:]+):(\d+):", current) if isinstance(current, str) else None
+            if m:
+                fetch_epoch, fetch_generation = fetch_token.split(":")
+                if m.group(1) != fetch_epoch or int(m.group(2)) > int(fetch_generation):
+                    return 0
             self.data[key] = value
             return 1
         if script is cm._REPLACE_CACHED_ENTRY_SCRIPT:
@@ -679,10 +688,11 @@ async def test_deleting_an_action_configuration_records_its_absence(
     await config_manager.delete_action_configuration(integration_id, "pull_events")
 
     from app.services import config_manager as cm
-    (script, numkeys, key, counter, _hex, ttl, mode, _), _ = mock_redis_empty.Redis.return_value.eval.call_args
+    (script, numkeys, key, counter, epoch_key, _hex, ttl, mode, _, _), _ = mock_redis_empty.Redis.return_value.eval.call_args
     assert script is cm._WRITE_TOMBSTONE_SCRIPT
-    assert (numkeys, key, counter, ttl, mode) == (
-        2, f"integrationconfig.{integration_id}.pull_events", cm._GENERATION_KEY, ACTION_ABSENCE_SENTINEL_TTL_SECONDS, "any",
+    assert (numkeys, key, counter, epoch_key, ttl, mode) == (
+        3, f"integrationconfig.{integration_id}.pull_events", cm._GENERATION_KEY, cm._GENERATION_EPOCH_KEY,
+        ACTION_ABSENCE_SENTINEL_TTL_SECONDS, "any",
     )
     assert not mock_redis_empty.Redis.return_value.set.called
     assert not mock_redis_empty.Redis.return_value.delete.called
@@ -713,9 +723,10 @@ async def test_every_absence_sentinel_write_has_its_own_generation(
 
     # The generation is issued by Redis (one INCR shared by every writer), so
     # ordering holds across runner instances regardless of their clocks.
-    g1, g2 = (int(re.fullmatch(r"null:(\d+):[0-9a-f]{32}", v).group(1)) for v in (first, second))
-    assert g2 > g1
-    assert fake.data[cm._GENERATION_KEY] == g2
+    (e1, g1), (e2, g2) = (re.fullmatch(r"null:([0-9a-f]{32}):(\d+):[0-9a-f]{32}", v).groups() for v in (first, second))
+    assert e1 == e2 == fake.data[cm._GENERATION_EPOCH_KEY]
+    assert int(g2) > int(g1)
+    assert fake.data[cm._GENERATION_KEY] == int(g2)
 
 
 @pytest.mark.parametrize("stored", [b"null", b"null:0123abcd"])
@@ -790,7 +801,7 @@ async def test_reload_absence_sentinels_expire_when_the_caller_asks_for_no_ttl(
     tombstones = {c.args[2]: c.args for c in evals if c.args[0] is cm._WRITE_TOMBSTONE_SCRIPT}
     snapshots = {c.args[2]: c.args for c in evals if c.args[0] is cm._WRITE_SNAPSHOT_CONFIG_SCRIPT}
     for action_id in unconfigured:
-        assert tombstones[f"integrationconfig.{integration_id}.{action_id}"][5] == ACTION_ABSENCE_SENTINEL_TTL_SECONDS
+        assert tombstones[f"integrationconfig.{integration_id}.{action_id}"][6] == ACTION_ABSENCE_SENTINEL_TTL_SECONDS
     for action_id in configured:
         # Real configs stay permanent: the events that change them invalidate them.
         assert snapshots[f"integrationconfig.{integration_id}.{action_id}"][5] == ""
@@ -814,7 +825,7 @@ async def test_reload_absence_sentinels_keep_an_explicit_caller_ttl(
     evals = mock_redis_empty.Redis.return_value.eval.call_args_list
     tombstones = {c.args[2]: c.args for c in evals if c.args[0] is cm._WRITE_TOMBSTONE_SCRIPT}
     for action_id in unconfigured:
-        assert tombstones[f"integrationconfig.{integration_id}.{action_id}"][5] == 60
+        assert tombstones[f"integrationconfig.{integration_id}.{action_id}"][6] == 60
 
 
 @pytest.mark.asyncio
@@ -1002,9 +1013,13 @@ async def test_absence_sentinels_carry_a_redis_issued_generation(integration_v2)
     await config_manager.delete_action_configuration(integration_id, "pull_events")
 
     sentinel = fake.data[f"integrationconfig.{integration_id}.pull_events"]
-    m = re.fullmatch(r"null:(\d+):[0-9a-f]{32}", sentinel)
+    m = re.fullmatch(r"null:([0-9a-f]{32}):(\d+):[0-9a-f]{32}", sentinel)
     assert m, sentinel
-    assert int(m.group(1)) == fake.data[cm._GENERATION_KEY]
+    # <epoch>:<generation>: the epoch is minted whenever the counter is found
+    # missing, so numbering that restarted after a flush or eviction is never
+    # compared with numbers from before it.
+    assert m.group(1) == fake.data[cm._GENERATION_EPOCH_KEY]
+    assert int(m.group(2)) == fake.data[cm._GENERATION_KEY]
     assert cm._is_absence_sentinel(sentinel) and cm._is_absence_sentinel(sentinel.encode())
 
 
@@ -1087,9 +1102,50 @@ async def test_replace_cached_entry_with_absence_writes_a_fresh_expiring_tombsto
     won = await config_manager.replace_cached_entry_with_absence(integration_id, "pull_events", observed='{"id": "x"}')
 
     assert won is True
-    (script, numkeys, key, counter, _hex, ttl, mode, expected), _ = client.eval.call_args
+    (script, numkeys, key, counter, epoch_key, _hex, ttl, mode, expected, _), _ = client.eval.call_args
     assert script is cm._WRITE_TOMBSTONE_SCRIPT
-    assert (numkeys, key, counter, ttl, mode, expected) == (
-        2, f"integrationconfig.{integration_id}.pull_events", cm._GENERATION_KEY,
+    assert (numkeys, key, counter, epoch_key, ttl, mode, expected) == (
+        3, f"integrationconfig.{integration_id}.pull_events", cm._GENERATION_KEY, cm._GENERATION_EPOCH_KEY,
         ACTION_ABSENCE_SENTINEL_TTL_SECONDS, "equals", '{"id": "x"}',
     )
+
+
+@pytest.mark.asyncio
+async def test_reload_preserves_a_tombstone_from_a_later_epoch_even_with_a_lower_generation(mocker, integration_v2):
+    """The counter is an ordinary Redis key. If the cache is flushed (or the
+    counter evicted) while a reload is in flight, a delete that follows
+    numbers from 1 again; compared by number alone, that fresh tombstone would
+    look older than the reload's generation and be overwritten with the stale
+    snapshot. Numbering restarts mint a new epoch, and a tombstone from a
+    different epoch is preserved conservatively."""
+    import asyncio
+    from app.services import config_manager as cm
+
+    manager = cm.IntegrationConfigurationManager()
+    fake = _FakeRedis()
+    manager.db_client = fake
+    integration_id = str(integration_v2.id)
+    configured_action = integration_v2.configurations[0].action.value
+    key = f"integrationconfig.{integration_id}.{configured_action}"
+    for _ in range(5):  # the counter is well ahead when the reload takes its number
+        await manager.delete_action_configuration(integration_id, "some_other_action")
+
+    fetch_started = asyncio.Event()
+    release_fetch = asyncio.Event()
+
+    async def slow_fetch(_integration_id):
+        fetch_started.set()
+        await release_fetch.wait()
+        return integration_v2
+
+    mocker.patch.object(manager, "_fetch_integration_from_gundi", slow_fetch)
+
+    reload = asyncio.create_task(manager._reload_integration_from_gundi(integration_id))
+    await fetch_started.wait()
+    fake.data.clear()  # the cache is flushed mid-fetch: counter, epoch and all
+    await manager.delete_action_configuration(integration_id, configured_action)  # numbering restarts at 1
+    tombstone = fake.data[key]
+    release_fetch.set()
+    await reload
+
+    assert fake.data[key] == tombstone, "a tombstone from another epoch is never overwritten by a snapshot"

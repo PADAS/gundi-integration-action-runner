@@ -113,29 +113,36 @@ async def handle_action_config_updated_event(event: ActionConfigUpdated):
     # concurrent delete wrote a moment ago, and a later reload whose fetch
     # predates that delete would then resurrect the config. If this write
     # loses too, the cache holds a value newer than everything we saw; leave it.
-    reconciled = await _reconcile_from_portal(integration_id, action_id)
+    outcome = await _reconcile_from_portal(integration_id, action_id)
     logger.warning(
         f"Gave up applying ActionConfigUpdated for action '{action_id}' of integration "
         f"'{integration_id}' after {UPDATE_ATTEMPTS} attempts: the cached configuration kept changing "
-        f"underneath it. Reconciled the cache from the portal instead"
-        + ("." if reconciled else "; that write lost as well, leaving the newer cached value in place.")
+        f"underneath it; {outcome}."
     )
 
 
-async def _reconcile_from_portal(integration_id, action_id) -> bool:
-    _, observed = await config_manager.read_cached_action_configuration(
+async def _reconcile_from_portal(integration_id, action_id) -> str:
+    """One conditional write of the portal's truth over exactly what the cache
+    holds now. Returns a short description of what happened, for the log."""
+    action_config, observed = await config_manager.read_cached_action_configuration(
         integration_id=integration_id,
         action_id=action_id
     )
+    if action_config is None:
+        # The same rule as inside the loop: no cached configuration after a
+        # failed write means a newer delete (or an expired entry). Fetching a
+        # possibly stale portal row and installing it over that tombstone is
+        # the delete race this handler exists to prevent, so stop here.
+        return "the cache now records no configuration for it, so it was left alone"
     integration = await config_manager._fetch_integration_from_gundi(integration_id)
     row = integration.get_action_config(action_id)
     if row is None:
-        if observed is None:
-            return True  # nothing cached and nothing in the portal: already reconciled
-        return await config_manager.replace_cached_entry_with_absence(integration_id, action_id, observed=observed)
-    if observed is None:
-        return await config_manager.install_action_configuration_if_missing(integration_id, action_id, config=row)
-    return await config_manager.replace_cached_entry(integration_id, action_id, config=row, observed=observed)
+        written = await config_manager.replace_cached_entry_with_absence(integration_id, action_id, observed=observed)
+    else:
+        written = await config_manager.replace_cached_entry(integration_id, action_id, config=row, observed=observed)
+    if written:
+        return "reconciled it from the portal instead"
+    return "the reconciling write from the portal lost as well, leaving the newer cached value in place"
 
 
 def _apply_changes(action_config, changes: dict) -> None:

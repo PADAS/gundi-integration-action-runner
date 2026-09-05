@@ -26,22 +26,30 @@ logger = logging.getLogger(__name__)
 # action and, as a backstop, expire (see ACTION_ABSENCE_SENTINEL_TTL_SECONDS);
 # the webhook sentinel has no event and relies on its TTL alone.
 #
-# Every action sentinel write carries its own generation ("null:<n>:<hex>"),
-# issued by one Redis counter (_GENERATION_KEY) inside the write itself. Two
-# readers depend on it. The consumer's recovery reads the sentinel, fetches
-# the portal, then replaces the sentinel only if it is still the one it
-# observed; were every sentinel the same bare value, a concurrent
-# ActionConfigDeleted's fresh tombstone would compare equal and the recovery
-# would resurrect the deleted config as a permanent key. The reload takes a
-# generation before its portal fetch and refuses to overwrite a tombstone with
-# a higher one: that tombstone was written while the fetch was in flight, so
-# it is newer than the snapshot (see _WRITE_SNAPSHOT_CONFIG_SCRIPT). Redis
-# hands out the numbers, so the ordering holds across runner instances
-# whatever their clocks say. Sentinels written before generations existed are
-# the bare value and still read as absence.
+# Every action sentinel write carries its own generation
+# ("null:<epoch>:<n>:<hex>"), issued by one Redis counter (_GENERATION_KEY)
+# inside the write itself. Two readers depend on it. The consumer's recovery
+# reads the sentinel, fetches the portal, then replaces the sentinel only if it
+# is still the one it observed; were every sentinel the same bare value, a
+# concurrent ActionConfigDeleted's fresh tombstone would compare equal and the
+# recovery would resurrect the deleted config as a permanent key. The reload
+# takes a generation before its portal fetch and refuses to overwrite a
+# tombstone with a higher one: that tombstone was written while the fetch was
+# in flight, so it is newer than the snapshot (see
+# _WRITE_SNAPSHOT_CONFIG_SCRIPT). Redis hands out the numbers, so the ordering
+# holds across runner instances whatever their clocks say.
+#
+# The counter is an ordinary key: a flush or an eviction restarts it, and
+# numbers from after a restart must never be compared with numbers from before
+# it (a fresh tombstone numbered 1 would look older than an in-flight reload's
+# 100). So a generation is qualified by an epoch (_GENERATION_EPOCH_KEY), minted
+# whenever the counter or the epoch is found missing, and the reload preserves
+# any tombstone from an epoch other than its own. Sentinels written before
+# generations existed are the bare value and still read as absence.
 _ABSENCE_SENTINEL_PREFIX = "null"
 _NO_WEBHOOK_CONFIG_SENTINEL = "null"
 _GENERATION_KEY = "integrationconfig.generation"
+_GENERATION_EPOCH_KEY = "integrationconfig.generation.epoch"
 
 
 def _is_absence_sentinel(data) -> bool:
@@ -105,17 +113,32 @@ if redis.call('GET', KEYS[1]) == ARGV[1] then
 end
 return 0
 """
-# The next generation number. The reload takes one before its portal fetch so
-# every tombstone written during the fetch compares higher.
-_NEXT_GENERATION_SCRIPT = """
-return redis.call('INCR', KEYS[1])
+# Shared by the two scripts below: the current epoch, minting a new one (the
+# caller's candidate) when the counter or the epoch key is missing, then the
+# next number. Returns "<epoch>:<n>".
+_NEXT_GENERATION_LUA = """
+local function next_generation(counter_key, epoch_key, candidate_epoch)
+    local epoch = redis.call('GET', epoch_key)
+    if not epoch or redis.call('EXISTS', counter_key) == 0 then
+        epoch = candidate_epoch
+        redis.call('SET', epoch_key, epoch)
+    end
+    return epoch .. ':' .. redis.call('INCR', counter_key)
+end
+"""
+# The reload's generation, taken before its portal fetch so every tombstone
+# written during the fetch compares higher (within the same epoch). KEYS[1] the
+# counter, KEYS[2] the epoch key; ARGV[1] a candidate epoch.
+_NEXT_GENERATION_SCRIPT = _NEXT_GENERATION_LUA + """
+return next_generation(KEYS[1], KEYS[2], ARGV[1])
 """
 # Write an absence sentinel with a fresh generation, atomically with the INCR
 # that issues it (a generation taken separately could be written after a higher
 # one, breaking the ordering the reload relies on). KEYS[1] is the action key,
-# KEYS[2] the counter; ARGV[1] a hex nonce, ARGV[2] the TTL in seconds, ARGV[3]
-# the precondition ('any', 'missing', or 'equals' the value in ARGV[4]).
-_WRITE_TOMBSTONE_SCRIPT = """
+# KEYS[2] the counter, KEYS[3] the epoch key; ARGV[1] a hex nonce, ARGV[2] the
+# TTL in seconds, ARGV[3] the precondition ('any', 'missing', or 'equals' the
+# value in ARGV[4]), ARGV[5] a candidate epoch.
+_WRITE_TOMBSTONE_SCRIPT = _NEXT_GENERATION_LUA + """
 local current = redis.call('GET', KEYS[1])
 if ARGV[3] == 'missing' and current then
     return 0
@@ -123,22 +146,27 @@ end
 if ARGV[3] == 'equals' and current ~= ARGV[4] then
     return 0
 end
-local generation = redis.call('INCR', KEYS[2])
+local generation = next_generation(KEYS[2], KEYS[3], ARGV[5])
 redis.call('SET', KEYS[1], 'null:' .. generation .. ':' .. ARGV[1], 'EX', ARGV[2])
 return 1
 """
 # The reload's write of one configured action from its portal snapshot. Refuses
-# to overwrite an absence sentinel whose generation is above the one the reload
-# took before its fetch: that is a concurrent ActionConfigDeleted's tombstone,
-# newer than the snapshot, and an unconditional SET would resurrect the deleted
-# config permanently. Anything else (a real config, an older sentinel, nothing)
-# is replaced by the snapshot, which is the portal's truth as of the fetch.
+# to overwrite an absence sentinel from another epoch, or from this epoch with a
+# generation above the one the reload took before its fetch: that is a
+# concurrent ActionConfigDeleted's tombstone, newer than the snapshot, and an
+# unconditional SET would resurrect the deleted config permanently. Anything
+# else (a real config, an older sentinel, nothing) is replaced by the snapshot,
+# which is the portal's truth as of the fetch. ARGV[2] is the reload's
+# "<epoch>:<n>" token.
 _WRITE_SNAPSHOT_CONFIG_SCRIPT = """
 local current = redis.call('GET', KEYS[1])
 if current then
-    local generation = string.match(current, '^null:(%d+):')
-    if generation and tonumber(generation) > tonumber(ARGV[2]) then
-        return 0
+    local epoch, generation = string.match(current, '^null:([^:]+):(%d+):')
+    if epoch then
+        local fetch_epoch, fetch_generation = string.match(ARGV[2], '^([^:]+):(%d+)$')
+        if epoch ~= fetch_epoch or tonumber(generation) > tonumber(fetch_generation) then
+            return 0
+        end
     end
 end
 if ARGV[3] == '' then
@@ -184,7 +212,8 @@ class IntegrationConfigurationManager:
         async for attempt in stamina.retry_context(**REDIS_RETRY):
             with attempt:
                 written = await self.db_client.eval(
-                    _WRITE_TOMBSTONE_SCRIPT, 2, key, _GENERATION_KEY, uuid.uuid4().hex, ttl, mode, expected,
+                    _WRITE_TOMBSTONE_SCRIPT, 3, key, _GENERATION_KEY, _GENERATION_EPOCH_KEY,
+                    uuid.uuid4().hex, ttl, mode, expected, uuid.uuid4().hex,
                 )
         return bool(written)
 
@@ -192,7 +221,9 @@ class IntegrationConfigurationManager:
         key = self._get_integration_key(integration_id)
         async for attempt in stamina.retry_context(**REDIS_RETRY):
             with attempt:
-                fetch_generation = await self.db_client.eval(_NEXT_GENERATION_SCRIPT, 1, _GENERATION_KEY)
+                fetch_generation = await self.db_client.eval(
+                    _NEXT_GENERATION_SCRIPT, 2, _GENERATION_KEY, _GENERATION_EPOCH_KEY, uuid.uuid4().hex,
+                )
         integration_details = await self._fetch_integration_from_gundi(integration_id)
         integration = IntegrationSummary.from_integration(integration_details)
         await self.db_client.set(key, integration.json(), ttl)
