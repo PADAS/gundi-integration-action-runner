@@ -85,7 +85,7 @@ async def test_get_action_configuration_from_gundi(
 ):
     mocker.patch("app.services.config_manager.redis", mock_redis_empty)
     mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
-    _miss_once_then_serve_snapshot(mock_redis_empty.Redis.return_value, integration_v2)
+    _miss_until_the_snapshot_is_written(mock_redis_empty.Redis.return_value, integration_v2)
     config_manager = IntegrationConfigurationManager()
     integration_id = str(integration_v2.id)
     action_v2 = integration_v2.configurations[0].action
@@ -107,7 +107,7 @@ async def test_get_integration_details_with_empty_redis_db(
 ):
     mocker.patch("app.services.config_manager.redis", mock_redis_empty)
     mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
-    _miss_once_then_serve_snapshot(mock_redis_empty.Redis.return_value, integration_v2)
+    _miss_until_the_snapshot_is_written(mock_redis_empty.Redis.return_value, integration_v2)
     config_manager = IntegrationConfigurationManager()
     integration_id = str(integration_v2.id)
 
@@ -117,7 +117,9 @@ async def test_get_integration_details_with_empty_redis_db(
     assert isinstance(integration, Integration)
     assert len(integration.configurations) == len(integration_v2.configurations)
     assert integration.id == integration_v2.id
-    mock_gundi_client_v2_class.return_value.get_integration_details.assert_called_with(integration_id)
+    # One portal round trip: the summary miss reloads everything, and the
+    # action and webhook reads that follow hit the snapshot it wrote.
+    mock_gundi_client_v2_class.return_value.get_integration_details.assert_called_once_with(integration_id)
     for config in integration_v2.configurations:
         action_id = config.action.value
         mock_redis_empty.Redis.return_value.get.assert_any_call(f"integrationconfig.{integration_id}.{action_id}")
@@ -154,7 +156,7 @@ async def test_get_action_configuration_with_ttl(
 ):
     mocker.patch("app.services.config_manager.redis", mock_redis_empty)
     mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
-    _miss_once_then_serve_snapshot(mock_redis_empty.Redis.return_value, integration_v2)
+    _miss_until_the_snapshot_is_written(mock_redis_empty.Redis.return_value, integration_v2)
     config_manager = IntegrationConfigurationManager()
     integration_id = str(integration_v2.id)
     action_v2 = integration_v2.configurations[0].action
@@ -568,25 +570,42 @@ async def test_reload_writes_absence_sentinels_for_unconfigured_actions(
         assert not snapshots[f"integrationconfig.{integration_id}.{action_id}"][3].startswith("null")
 
 
-def _miss_once_then_serve_snapshot(client, integration):
-    """Make the stateless redis mock behave like Redis across a reload: the
-    first GET of a key misses, later GETs return what the reload's snapshot
-    would have written (a config's JSON, a bare sentinel for an unconfigured
-    action, the webhook sentinel). Lookups answer from the cache after a
-    reload, so the mock has to remember that the reload wrote."""
+def _miss_until_the_snapshot_is_written(client, integration):
+    """Make the stateless redis mock behave like Redis across a reload: every
+    GET misses until the reload has written its snapshot (the summary SET, or
+    a snapshot-script EVAL), and from then on every key answers with what that
+    snapshot holds (a config's JSON, a bare sentinel for an unconfigured action,
+    the webhook sentinel). One global miss, not one per key: a per-key miss
+    would let each first action read trigger another full reload and hide an
+    N+1 regression."""
+    from unittest.mock import DEFAULT
+    from app.services import config_manager as cm
+
     by_action = {c.action.value: c.json().encode() for c in integration.configurations}
-    seen = set()
+    state = {"populated": False}
 
     async def get(key):
-        if key not in seen:
-            seen.add(key)
+        if not state["populated"]:
             return None
-        action_id = key.rsplit(".", 1)[-1]
+        if key.startswith("integration."):
+            return cm.IntegrationSummary.from_integration(integration).json().encode()
         if key.endswith(".webhook"):
             return b"null"
-        return by_action.get(action_id, b"null")
+        return by_action.get(key.rsplit(".", 1)[-1], b"null")
+
+    def set_(key, *args, **kwargs):
+        if key.startswith("integration."):
+            state["populated"] = True
+        return DEFAULT  # the mock's own return value; calls are still recorded
+
+    def eval_(script, *args):
+        if script is cm._WRITE_SNAPSHOT_CONFIG_SCRIPT:
+            state["populated"] = True
+        return DEFAULT
 
     client.get.side_effect = get
+    client.set.side_effect = set_
+    client.eval.side_effect = eval_
 
 
 async def _fetch_started_or_failed(task, fetch_started):

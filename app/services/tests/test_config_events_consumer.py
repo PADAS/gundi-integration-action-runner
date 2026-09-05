@@ -575,3 +575,58 @@ async def test_action_config_created_on_a_cold_cache_installs_only_if_still_miss
     assert not mock_config_manager.replace_cached_entry.called
     installed = mock_config_manager.install_action_configuration_if_missing.await_args.kwargs["config"]
     assert installed.json() == existing.json()
+
+
+@pytest.mark.asyncio
+async def test_action_config_updated_reconciliation_keeps_trying_against_the_newest_token(
+        mocker, mock_config_manager, integration_v2, caplog,
+):
+    """A competing write that beats the reconciling compare-and-set is only
+    later in cache time, not necessarily newer portal state: a delayed older
+    Updated can land after the reconciliation fetched the final portal row.
+    Acknowledging the event there would leave that stale value permanent with
+    nothing to repair it. The reconciliation re-reads and retries against the
+    newest token, bounded, and reports at error level if it still loses."""
+    from app.services import config_events_consumer
+
+    existing = integration_v2.configurations[0]
+    n = config_events_consumer.UPDATE_ATTEMPTS
+    mock_config_manager.read_cached_action_configuration = AsyncMock(
+        side_effect=[(existing.copy(), existing.json())] * n + [(existing.copy(), '{"id": "t1"}'), (existing.copy(), '{"id": "t2"}')],
+    )
+    mock_config_manager.replace_cached_entry = AsyncMock(side_effect=[False] * n + [False, True])
+    mock_config_manager._fetch_integration_from_gundi = AsyncMock(return_value=integration_v2)
+    mock_config_manager.set_action_configuration = AsyncMock()
+    mocker.patch.object(config_events_consumer, "config_manager", mock_config_manager)
+
+    await config_events_consumer.handle_action_config_updated_event(
+        _updated_event(str(integration_v2.id), existing.action.value, {"data": {"lookback_days": 2}})
+    )
+
+    assert mock_config_manager.replace_cached_entry.await_count == n + 2
+    assert [c.kwargs["observed"] for c in mock_config_manager.replace_cached_entry.await_args_list[n:]] == ['{"id": "t1"}', '{"id": "t2"}']
+    assert mock_config_manager._fetch_integration_from_gundi.await_count == 1, "the portal row is final; fetch it once"
+    assert not any(r.levelname == "ERROR" for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_action_config_updated_reconciliation_that_keeps_losing_is_reported_as_an_error(
+        mocker, mock_config_manager, integration_v2, caplog,
+):
+    from app.services import config_events_consumer
+
+    existing = integration_v2.configurations[0]
+    mock_config_manager.read_cached_action_configuration = AsyncMock(return_value=(existing.copy(), existing.json()))
+    mock_config_manager.replace_cached_entry = AsyncMock(return_value=False)
+    mock_config_manager._fetch_integration_from_gundi = AsyncMock(return_value=integration_v2)
+    mock_config_manager.set_action_configuration = AsyncMock()
+    mocker.patch.object(config_events_consumer, "config_manager", mock_config_manager)
+
+    await config_events_consumer.handle_action_config_updated_event(
+        _updated_event(str(integration_v2.id), existing.action.value, {"data": {"lookback_days": 2}})
+    )
+
+    n = config_events_consumer.UPDATE_ATTEMPTS
+    assert mock_config_manager.replace_cached_entry.await_count == 2 * n, "the update's attempts, then the reconciliation's"
+    errors = [r.getMessage() for r in caplog.records if r.levelname == "ERROR"]
+    assert errors and "may be stale" in errors[-1]
