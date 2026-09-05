@@ -79,7 +79,10 @@ async def test_process_event_action_config_created_from_pubsub(
     )
 
     assert response.status_code == 200
-    assert mock_config_manager.set_action_configuration.called
+    # Created installs the portal row conditionally over what the cache held.
+    assert mock_config_manager._fetch_integration_from_gundi.called
+    assert mock_config_manager.replace_cached_entry.called
+    assert not mock_config_manager.set_action_configuration.called
 
 
 @pytest.mark.asyncio
@@ -495,3 +498,80 @@ async def test_action_config_updated_give_up_stops_when_the_re_read_shows_an_abs
     assert not mock_config_manager.install_action_configuration_if_missing.called
     assert mock_config_manager.replace_cached_entry.await_count == config_events_consumer.UPDATE_ATTEMPTS
     assert any("Gave up" in r.getMessage() for r in caplog.records)
+
+
+def _created_event(integration_id, config):
+    from gundi_core.events import ActionConfigCreated
+
+    return ActionConfigCreated.parse_obj({"payload": {**config.dict(), "integration": integration_id}})
+
+
+@pytest.mark.asyncio
+async def test_action_config_created_installs_the_portal_row_over_the_observed_sentinel(
+        mocker, mock_config_manager, integration_v2,
+):
+    """A delayed Created delivery can arrive after ActionConfigDeleted installed a
+    fresh tombstone; an unconditional SET would resurrect the deleted row
+    permanently. Created now reads the cache, fetches the portal (authoritative,
+    read after everything), and installs the portal row only over exactly what
+    the cache held."""
+    from app.services import config_events_consumer
+
+    existing = integration_v2.configurations[0]
+    mock_config_manager.read_cached_action_configuration = AsyncMock(return_value=(None, "null:e:3:x"))
+    mock_config_manager._fetch_integration_from_gundi = AsyncMock(return_value=integration_v2)
+    mock_config_manager.replace_cached_entry = AsyncMock(return_value=True)
+    mock_config_manager.install_action_configuration_if_missing = AsyncMock(return_value=True)
+    mock_config_manager.set_action_configuration = AsyncMock()
+    mocker.patch.object(config_events_consumer, "config_manager", mock_config_manager)
+
+    await config_events_consumer.handle_action_config_created_event(_created_event(str(integration_v2.id), existing))
+
+    assert not mock_config_manager.set_action_configuration.called, "never an unconditional write"
+    kwargs = mock_config_manager.replace_cached_entry.await_args.kwargs
+    assert kwargs["observed"] == "null:e:3:x"
+    assert kwargs["config"].json() == existing.json(), "the portal row, not the event payload"
+
+
+@pytest.mark.asyncio
+async def test_action_config_created_does_nothing_when_the_portal_no_longer_has_the_row(
+        mocker, mock_config_manager, integration_v2,
+):
+    from app.services import config_events_consumer
+
+    existing = integration_v2.configurations[0]
+    gone = integration_v2.copy(update={"configurations": []})
+    mock_config_manager.read_cached_action_configuration = AsyncMock(return_value=(None, "null:e:3:x"))
+    mock_config_manager._fetch_integration_from_gundi = AsyncMock(return_value=gone)
+    mock_config_manager.replace_cached_entry = AsyncMock(return_value=True)
+    mock_config_manager.install_action_configuration_if_missing = AsyncMock(return_value=True)
+    mock_config_manager.set_action_configuration = AsyncMock()
+    mocker.patch.object(config_events_consumer, "config_manager", mock_config_manager)
+
+    await config_events_consumer.handle_action_config_created_event(_created_event(str(integration_v2.id), existing))
+
+    assert not mock_config_manager.set_action_configuration.called
+    assert not mock_config_manager.replace_cached_entry.called
+    assert not mock_config_manager.install_action_configuration_if_missing.called
+
+
+@pytest.mark.asyncio
+async def test_action_config_created_on_a_cold_cache_installs_only_if_still_missing(
+        mocker, mock_config_manager, integration_v2,
+):
+    from app.services import config_events_consumer
+
+    existing = integration_v2.configurations[0]
+    mock_config_manager.read_cached_action_configuration = AsyncMock(return_value=(None, None))
+    mock_config_manager._fetch_integration_from_gundi = AsyncMock(return_value=integration_v2)
+    mock_config_manager.replace_cached_entry = AsyncMock(return_value=True)
+    mock_config_manager.install_action_configuration_if_missing = AsyncMock(return_value=True)
+    mock_config_manager.set_action_configuration = AsyncMock()
+    mocker.patch.object(config_events_consumer, "config_manager", mock_config_manager)
+
+    await config_events_consumer.handle_action_config_created_event(_created_event(str(integration_v2.id), existing))
+
+    assert not mock_config_manager.set_action_configuration.called
+    assert not mock_config_manager.replace_cached_entry.called
+    installed = mock_config_manager.install_action_configuration_if_missing.await_args.kwargs["config"]
+    assert installed.json() == existing.json()

@@ -943,6 +943,8 @@ def mock_config_manager(mocker, integration_v2):
         (integration_v2.configurations[0], integration_v2.configurations[0].json())
     )
     mock_config_manager.replace_cached_entry.return_value = async_return(True)
+    mock_config_manager.install_action_configuration_if_missing.return_value = async_return(True)
+    mock_config_manager._fetch_integration_from_gundi.return_value = async_return(integration_v2)
     mock_config_manager.set_integration.return_value = async_return(None)
     mock_config_manager.set_action_configuration.return_value = async_return(None)
     mock_config_manager.delete_integration.return_value = async_return(None)

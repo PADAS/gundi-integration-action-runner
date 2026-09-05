@@ -85,6 +85,7 @@ async def test_get_action_configuration_from_gundi(
 ):
     mocker.patch("app.services.config_manager.redis", mock_redis_empty)
     mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
+    _miss_once_then_serve_snapshot(mock_redis_empty.Redis.return_value, integration_v2)
     config_manager = IntegrationConfigurationManager()
     integration_id = str(integration_v2.id)
     action_v2 = integration_v2.configurations[0].action
@@ -106,6 +107,7 @@ async def test_get_integration_details_with_empty_redis_db(
 ):
     mocker.patch("app.services.config_manager.redis", mock_redis_empty)
     mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
+    _miss_once_then_serve_snapshot(mock_redis_empty.Redis.return_value, integration_v2)
     config_manager = IntegrationConfigurationManager()
     integration_id = str(integration_v2.id)
 
@@ -152,6 +154,7 @@ async def test_get_action_configuration_with_ttl(
 ):
     mocker.patch("app.services.config_manager.redis", mock_redis_empty)
     mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
+    _miss_once_then_serve_snapshot(mock_redis_empty.Redis.return_value, integration_v2)
     config_manager = IntegrationConfigurationManager()
     integration_id = str(integration_v2.id)
     action_v2 = integration_v2.configurations[0].action
@@ -166,7 +169,7 @@ async def test_get_action_configuration_with_ttl(
     # with the caller's TTL (the script preserves a newer tombstone, so this
     # write is an EVAL rather than a plain SET).
     snapshot_writes = {c.args[2]: c.args for c in mock_redis_empty.Redis.return_value.eval.call_args_list}
-    _, _, _, written_json, _, written_ttl = snapshot_writes[f"integrationconfig.{integration_id}.{action_id}"]
+    _, _, _, written_json, _, written_ttl, _ = snapshot_writes[f"integrationconfig.{integration_id}.{action_id}"]
     assert (written_json, written_ttl) == (action_config.json(), ttl)
     # Verify that integration was also saved with TTL
     mock_redis_empty.Redis.return_value.set.assert_any_call(
@@ -565,6 +568,27 @@ async def test_reload_writes_absence_sentinels_for_unconfigured_actions(
         assert not snapshots[f"integrationconfig.{integration_id}.{action_id}"][3].startswith("null")
 
 
+def _miss_once_then_serve_snapshot(client, integration):
+    """Make the stateless redis mock behave like Redis across a reload: the
+    first GET of a key misses, later GETs return what the reload's snapshot
+    would have written (a config's JSON, a bare sentinel for an unconfigured
+    action, the webhook sentinel). Lookups answer from the cache after a
+    reload, so the mock has to remember that the reload wrote."""
+    by_action = {c.action.value: c.json().encode() for c in integration.configurations}
+    seen = set()
+
+    async def get(key):
+        if key not in seen:
+            seen.add(key)
+            return None
+        action_id = key.rsplit(".", 1)[-1]
+        if key.endswith(".webhook"):
+            return b"null"
+        return by_action.get(action_id, b"null")
+
+    client.get.side_effect = get
+
+
 async def _fetch_started_or_failed(task, fetch_started):
     """Wait for a reload (or lookup) task to reach its portal fetch; if the task
     fails before that, surface the failure instead of waiting forever."""
@@ -637,12 +661,15 @@ class _FakeRedis:
                 self.data[key] = "null"  # the format every deployed replica can read
             return 1
         if script is cm._WRITE_SNAPSHOT_CONFIG_SCRIPT:
-            value, fetch_token, ttl = args
-            m = re.match(r"^null:([^:]+):(\d+):", current) if isinstance(current, str) else None
-            if m:
-                fetch_epoch, fetch_generation = fetch_token.split(":")
-                if m.group(1) != fetch_epoch or int(m.group(2)) > int(fetch_generation):
-                    return 0
+            value, fetch_token, ttl, generations_enabled = args
+            if isinstance(current, str) and current.startswith("null"):
+                m = re.match(r"^null:([^:]+):(\d+):", current)
+                if m:
+                    fetch_epoch, fetch_generation = fetch_token.split(":")
+                    if m.group(1) != fetch_epoch or int(m.group(2)) > int(fetch_generation):
+                        return 0
+                elif generations_enabled == "1":
+                    return 0  # a bare tombstone from a not-yet-enabled replica: cannot be ordered, so preserve it
             self.data[key] = value
             return 1
         if script is cm._REPLACE_CACHED_ENTRY_SCRIPT:
@@ -1231,3 +1258,75 @@ async def test_lookup_that_reloads_returns_the_cache_winner_not_the_fetched_row(
     release_fetch.set()
 
     assert await lookup is None, "the cached tombstone, not the stale snapshot's row"
+
+
+@pytest.mark.asyncio
+async def test_lookup_that_reloads_answers_absent_when_the_key_vanished_after_the_reload(generations_on, mocker, integration_v2):
+    """A second miss right after the reload means the key changed under it: a
+    concurrent IntegrationDeleted dropped every action key, or a tombstone
+    expired. The cache is authoritative after the reload; the fetched row is a
+    stale snapshot and returning it would execute stale configuration."""
+    from app.services import config_manager as cm
+
+    manager = cm.IntegrationConfigurationManager()
+    fake = _FakeRedis()
+    manager.db_client = fake
+    integration_id = str(integration_v2.id)
+    configured_action = integration_v2.configurations[0].action.value
+    key = f"integrationconfig.{integration_id}.{configured_action}"
+
+    async def fetch_then_drop(_integration_id):
+        return integration_v2
+
+    mocker.patch.object(manager, "_fetch_integration_from_gundi", fetch_then_drop)
+    original_eval = fake.eval
+
+    async def eval_then_drop(script, numkeys, *rest):
+        result = await original_eval(script, numkeys, *rest)
+        if script is cm._WRITE_SNAPSHOT_CONFIG_SCRIPT and rest[0] == key:
+            fake.data.pop(key, None)  # IntegrationDeleted lands right after the snapshot write
+        return result
+
+    fake.eval = eval_then_drop
+
+    assert await manager.get_action_configuration(integration_id, configured_action) is None
+
+
+@pytest.mark.asyncio
+async def test_reload_preserves_a_bare_tombstone_written_mid_fetch_while_generations_are_enabled(
+        generations_on, mocker, integration_v2,
+):
+    """Turning CONFIG_CACHE_SENTINEL_GENERATIONS on is itself a rolling restart:
+    for a while, replicas with the old value still write bare "null" tombstones
+    while enabled replicas write generations. A bare tombstone cannot be
+    ordered against the reload's generation, so an enabled reload preserves it
+    rather than risk overwriting a concurrent delete. The cost is bounded: a
+    bare sentinel that merely predates the fetch expires on its TTL and the
+    next miss reloads."""
+    import asyncio
+    from app.services import config_manager as cm
+
+    manager = cm.IntegrationConfigurationManager()
+    fake = _FakeRedis()
+    manager.db_client = fake
+    integration_id = str(integration_v2.id)
+    configured_action = integration_v2.configurations[0].action.value
+    key = f"integrationconfig.{integration_id}.{configured_action}"
+
+    fetch_started = asyncio.Event()
+    release_fetch = asyncio.Event()
+
+    async def slow_fetch(_integration_id):
+        fetch_started.set()
+        await release_fetch.wait()
+        return integration_v2
+
+    mocker.patch.object(manager, "_fetch_integration_from_gundi", slow_fetch)
+
+    reload = asyncio.create_task(manager._reload_integration_from_gundi(integration_id))
+    await _fetch_started_or_failed(reload, fetch_started)
+    fake.data[key] = "null"  # a not-yet-enabled replica handled the delete
+    release_fetch.set()
+    await reload
+
+    assert fake.data[key] == "null"

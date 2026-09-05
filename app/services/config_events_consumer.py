@@ -36,12 +36,35 @@ async def handle_integration_deleted_event(event: IntegrationDeleted):
 
 
 async def handle_action_config_created_event(event: ActionConfigCreated):
-    action_config = event.payload
-    await config_manager.set_action_configuration(
-        integration_id=action_config.integration,
-        action_id=action_config.action.value,
-        config=action_config
+    # Not the payload, and not unconditionally: a delayed Created can arrive
+    # after an ActionConfigDeleted installed a fresh tombstone, and a plain SET
+    # of the payload would resurrect the deleted row permanently. The portal is
+    # read after everything, so its row (or its absence) is the truth, and it
+    # is installed only over exactly what the cache held when we looked.
+    integration_id = event.payload.integration
+    action_id = event.payload.action.value
+    _, observed = await config_manager.read_cached_action_configuration(
+        integration_id=integration_id,
+        action_id=action_id
     )
+    integration = await config_manager._fetch_integration_from_gundi(integration_id)
+    row = integration.get_action_config(action_id)
+    if row is None:
+        # Deleted again already; the cache holds (or will get) the tombstone.
+        logger.info(
+            f"Ignoring ActionConfigCreated for action '{action_id}' of integration "
+            f"'{integration_id}': the portal no longer has a configuration for it."
+        )
+        return
+    if observed is None:
+        written = await config_manager.install_action_configuration_if_missing(integration_id, action_id, config=row)
+    else:
+        written = await config_manager.replace_cached_entry(integration_id, action_id, config=row, observed=observed)
+    if not written:
+        logger.info(
+            f"ActionConfigCreated for action '{action_id}' of integration '{integration_id}' "
+            "found a newer cached value and left it in place."
+        )
 
 
 # Deliveries run concurrently, so an update is a compare-and-set loop: read,

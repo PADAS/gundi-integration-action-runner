@@ -166,10 +166,14 @@ return 1
 # to overwrite an absence sentinel from another epoch, or from this epoch with a
 # generation above the one the reload took before its fetch: that is a
 # concurrent ActionConfigDeleted's tombstone, newer than the snapshot, and an
-# unconditional SET would resurrect the deleted config permanently. Anything
-# else (a real config, an older sentinel, nothing) is replaced by the snapshot,
-# which is the portal's truth as of the fetch. ARGV[2] is the reload's
-# "<epoch>:<n>" token.
+# unconditional SET would resurrect the deleted config permanently. While
+# generations are enabled (ARGV[4] == '1') a bare "null" is preserved as well:
+# enabling the setting is itself a rolling restart, and a not-yet-enabled
+# replica writes bare tombstones that cannot be ordered against the reload's
+# generation; a bare sentinel that merely predates the fetch expires on its
+# TTL and the next miss reloads. Anything else (a real config, an older
+# generated sentinel, nothing) is replaced by the snapshot, which is the
+# portal's truth as of the fetch. ARGV[2] is the reload's "<epoch>:<n>" token.
 _WRITE_SNAPSHOT_CONFIG_SCRIPT = """
 local current = redis.call('GET', KEYS[1])
 if current then
@@ -179,6 +183,8 @@ if current then
         if epoch ~= fetch_epoch or tonumber(generation) > tonumber(fetch_generation) then
             return 0
         end
+    elseif ARGV[4] == '1' and string.sub(current, 1, 4) == 'null' then
+        return 0
     end
 end
 if ARGV[3] == '' then
@@ -252,7 +258,8 @@ class IntegrationConfigurationManager:
             configured.add(config.action.value)
             config_key = self._get_action_config_key(integration_id, config.action.value)
             await self.db_client.eval(
-                _WRITE_SNAPSHOT_CONFIG_SCRIPT, 1, config_key, config.json(), fetch_generation, ttl if ttl is not None else "",
+                _WRITE_SNAPSHOT_CONFIG_SCRIPT, 1, config_key, config.json(), fetch_generation,
+                ttl if ttl is not None else "", "1" if settings.CONFIG_CACHE_SENTINEL_GENERATIONS else "0",
             )
         # Sentinels are written only if the key is missing, so they never
         # replace a key that is already there. A reload reads the portal, then
@@ -309,14 +316,12 @@ class IntegrationConfigurationManager:
         # Answer from the cache, not from the snapshot: a delete that landed
         # during the reload's fetch left a tombstone the snapshot write
         # preserved, and returning the fetched row anyway would have the
-        # runner execute the deleted action once.
+        # runner execute the deleted action once. Nothing cached at all right
+        # after the reload means the key changed under it (an IntegrationDeleted
+        # dropped every action key, or a tombstone expired); the snapshot is
+        # stale either way, so that reads as absent too.
         config, _ = await self.read_cached_action_configuration(integration_id, action_id)
-        if config is not None:
-            return config
-        cached_absence = _ is not None
-        # Nothing cached at all (the reload's own write raced with something
-        # that removed the key): the snapshot is the best answer left.
-        return None if cached_absence else integration_details.get_action_config(action_id)
+        return config
 
     async def read_cached_action_configuration(
             self, integration_id: str, action_id: str,
