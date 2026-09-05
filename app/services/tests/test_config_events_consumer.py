@@ -605,7 +605,9 @@ async def test_action_config_updated_reconciliation_keeps_trying_against_the_new
 
     assert mock_config_manager.replace_cached_entry.await_count == n + 2
     assert [c.kwargs["observed"] for c in mock_config_manager.replace_cached_entry.await_args_list[n:]] == ['{"id": "t1"}', '{"id": "t2"}']
-    assert mock_config_manager._fetch_integration_from_gundi.await_count == 1, "the portal row is final; fetch it once"
+    # A lost compare-and-set means the portal may have moved too (the write
+    # that won came from a newer event): re-fetch on every retry.
+    assert mock_config_manager._fetch_integration_from_gundi.await_count == 2
     assert not any(r.levelname == "ERROR" for r in caplog.records)
 
 
@@ -630,3 +632,87 @@ async def test_action_config_updated_reconciliation_that_keeps_losing_is_reporte
     assert mock_config_manager.replace_cached_entry.await_count == 2 * n, "the update's attempts, then the reconciliation's"
     errors = [r.getMessage() for r in caplog.records if r.levelname == "ERROR"]
     assert errors and "may be stale" in errors[-1]
+
+
+@pytest.mark.asyncio
+async def test_action_config_updated_reconciliation_refetches_the_portal_on_every_retry(
+        mocker, mock_config_manager, integration_v2,
+):
+    """Reusing the first portal snapshot across retries would let the loop write
+    stale row A over row B after B's Created/Updated landed in both the portal
+    and the cache and made the first compare-and-set lose."""
+    from app.services import config_events_consumer
+
+    existing = integration_v2.configurations[0]
+    row_a = existing
+    row_b = existing.copy(update={"data": {**existing.data, "lookback_days": 42}})
+    portal_a = integration_v2
+    portal_b = integration_v2.copy(update={"configurations": [row_b] + list(integration_v2.configurations[1:])})
+    n = config_events_consumer.UPDATE_ATTEMPTS
+    mock_config_manager.read_cached_action_configuration = AsyncMock(
+        side_effect=[(existing.copy(), existing.json())] * n + [(existing.copy(), "token-1"), (row_b.copy(), row_b.json())],
+    )
+    mock_config_manager.replace_cached_entry = AsyncMock(side_effect=[False] * n + [False, True])
+    mock_config_manager._fetch_integration_from_gundi = AsyncMock(side_effect=[portal_a, portal_b])
+    mock_config_manager.set_action_configuration = AsyncMock()
+    mocker.patch.object(config_events_consumer, "config_manager", mock_config_manager)
+
+    await config_events_consumer.handle_action_config_updated_event(
+        _updated_event(str(integration_v2.id), existing.action.value, {"data": {"lookback_days": 2}})
+    )
+
+    final = mock_config_manager.replace_cached_entry.await_args.kwargs
+    assert final["observed"] == row_b.json()
+    assert final["config"].json() == row_b.json(), "the portal as re-read on the retry, not the first snapshot"
+
+
+@pytest.mark.asyncio
+async def test_action_config_created_that_loses_its_write_reconciles_when_the_winner_is_a_config(
+        mocker, mock_config_manager, integration_v2,
+):
+    """A failed Created compare-and-set is not proof that the winner is newer
+    portal state: a delayed older Updated can land after this handler's read.
+    Re-read the winner; if it is a configuration, run the same bounded fresh-
+    portal reconciliation the Updated handler uses."""
+    from app.services import config_events_consumer
+
+    existing = integration_v2.configurations[0]
+    stale = existing.copy(update={"data": {**existing.data, "lookback_days": 1}})
+    mock_config_manager.read_cached_action_configuration = AsyncMock(
+        side_effect=[(None, "null:e:1:x"), (stale.copy(), stale.json())],
+    )
+    mock_config_manager._fetch_integration_from_gundi = AsyncMock(return_value=integration_v2)
+    mock_config_manager.replace_cached_entry = AsyncMock(side_effect=[False, True])
+    mock_config_manager.install_action_configuration_if_missing = AsyncMock(return_value=True)
+    mock_config_manager.set_action_configuration = AsyncMock()
+    mocker.patch.object(config_events_consumer, "config_manager", mock_config_manager)
+
+    await config_events_consumer.handle_action_config_created_event(_created_event(str(integration_v2.id), existing))
+
+    assert mock_config_manager.replace_cached_entry.await_count == 2
+    second = mock_config_manager.replace_cached_entry.await_args_list[1].kwargs
+    assert second["observed"] == stale.json()
+    assert second["config"].json() == existing.json(), "the portal row over the stale winner"
+
+
+@pytest.mark.asyncio
+async def test_action_config_created_that_loses_its_write_stops_when_the_winner_is_a_tombstone(
+        mocker, mock_config_manager, integration_v2,
+):
+    from app.services import config_events_consumer
+
+    existing = integration_v2.configurations[0]
+    mock_config_manager.read_cached_action_configuration = AsyncMock(
+        side_effect=[(None, "null:e:1:x"), (None, "null:e:2:y")],
+    )
+    mock_config_manager._fetch_integration_from_gundi = AsyncMock(return_value=integration_v2)
+    mock_config_manager.replace_cached_entry = AsyncMock(return_value=False)
+    mock_config_manager.install_action_configuration_if_missing = AsyncMock(return_value=True)
+    mock_config_manager.set_action_configuration = AsyncMock()
+    mocker.patch.object(config_events_consumer, "config_manager", mock_config_manager)
+
+    await config_events_consumer.handle_action_config_created_event(_created_event(str(integration_v2.id), existing))
+
+    assert mock_config_manager.replace_cached_entry.await_count == 1
+    assert mock_config_manager._fetch_integration_from_gundi.await_count == 1, "no second fetch over a fresh tombstone"
+    assert not mock_config_manager.install_action_configuration_if_missing.called

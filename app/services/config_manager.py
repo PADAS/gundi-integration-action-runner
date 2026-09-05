@@ -64,6 +64,18 @@ def _is_absence_sentinel(data) -> bool:
     if isinstance(data, bytes):
         data = data.decode()
     return data == _ABSENCE_SENTINEL_PREFIX or data.startswith(_ABSENCE_SENTINEL_PREFIX + ":")
+
+
+def _is_unorderable_token(observed: str) -> bool:
+    """A bare "null" while generations are enabled. During the rolling restart
+    that enables them, a not-yet-enabled replica can still write a bare "null"
+    for a delete, and a compare-and-set that observed a bare "null" earlier
+    cannot tell that fresh delete from the one it saw; equality would resurrect
+    it. So while the setting is on, a bare sentinel is not a token anyone may
+    write over: the caller's re-read treats it as an absence and stops, and the
+    sentinel's TTL takes it from there. With the setting off every replica
+    writes bare sentinels and there is nothing to tell apart."""
+    return settings.CONFIG_CACHE_SENTINEL_GENERATIONS and observed == _ABSENCE_SENTINEL_PREFIX
 # Default expiry for the webhook key (the config itself or the absence
 # sentinel) when the caller asks for no TTL, which the action path does. There
 # is no WebhookConfig* event to invalidate that key on, no consumer handler
@@ -408,6 +420,8 @@ class IntegrationConfigurationManager:
         fresh tombstone from a concurrent ActionConfigDeleted, or nothing, and
         the caller must not overwrite it. Permanent, like every real
         configuration."""
+        if _is_unorderable_token(observed):
+            return False
         key = self._get_action_config_key(integration_id, action_id)
         async for attempt in stamina.retry_context(**REDIS_RETRY):
             with attempt:
@@ -419,6 +433,8 @@ class IntegrationConfigurationManager:
         still holds `observed`. The consumer's reconciliation uses it when the
         portal says the row is gone; the same exactness rule as
         replace_cached_entry applies."""
+        if _is_unorderable_token(observed):
+            return False
         key = self._get_action_config_key(integration_id, action_id)
         return await self._write_absence_sentinel(
             key, ttl=ACTION_ABSENCE_SENTINEL_TTL_SECONDS, mode="equals", expected=observed,

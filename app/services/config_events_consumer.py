@@ -61,10 +61,16 @@ async def handle_action_config_created_event(event: ActionConfigCreated):
     else:
         written = await config_manager.replace_cached_entry(integration_id, action_id, config=row, observed=observed)
     if not written:
-        logger.info(
+        # The winner is later in cache time, not necessarily newer portal state
+        # (a delayed older Updated can land after the read above). Reconcile the
+        # way the Updated handler does: fresh portal row over the newest token,
+        # bounded, stopping if the winner is a tombstone.
+        reconciled, outcome = await _reconcile_from_portal(integration_id, action_id)
+        message = (
             f"ActionConfigCreated for action '{action_id}' of integration '{integration_id}' "
-            "found a newer cached value and left it in place."
+            f"lost to a concurrent write; {outcome}."
         )
+        (logger.info if reconciled else logger.error)(message)
 
 
 # Deliveries run concurrently, so an update is a compare-and-set loop: read,
@@ -157,9 +163,10 @@ async def _reconcile_from_portal(integration_id, action_id):
     """Write the portal's truth over exactly what the cache holds, retrying
     against the newest token when a competing write lands in between (that
     write is later in cache time, not necessarily newer portal state), for
-    up to UPDATE_ATTEMPTS. The portal row is read once: it is final. Returns
-    (reconciled, description) for the log."""
-    integration = None
+    up to UPDATE_ATTEMPTS. The portal is re-read on every retry: the write
+    that won may have come from a newer event whose row is also in the portal
+    now, and reusing the first snapshot would write stale state over it.
+    Returns (reconciled, description) for the log."""
     for _ in range(UPDATE_ATTEMPTS):
         action_config, observed = await config_manager.read_cached_action_configuration(
             integration_id=integration_id,
@@ -171,8 +178,7 @@ async def _reconcile_from_portal(integration_id, action_id):
             # a possibly stale portal row and installing it over that tombstone
             # is the delete race this handler exists to prevent, so stop here.
             return True, "the cache now records no configuration for it, so it was left alone"
-        if integration is None:
-            integration = await config_manager._fetch_integration_from_gundi(integration_id)
+        integration = await config_manager._fetch_integration_from_gundi(integration_id)
         row = integration.get_action_config(action_id)
         if row is None:
             written = await config_manager.replace_cached_entry_with_absence(integration_id, action_id, observed=observed)

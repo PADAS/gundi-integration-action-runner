@@ -1349,3 +1349,48 @@ async def test_reload_preserves_a_bare_tombstone_written_mid_fetch_while_generat
     await reload
 
     assert fake.data[key] == "null"
+
+
+@pytest.mark.asyncio
+async def test_compare_and_set_over_a_bare_sentinel_is_refused_while_generations_are_enabled(
+        generations_on, mocker, mock_redis_empty, mock_gundi_client_v2_class, integration_v2, pull_observations_config_as_json,
+):
+    """During the rolling restart that enables generations, a not-yet-enabled
+    replica can still write a bare "null" for a delete. A recovery that read a
+    bare "null" earlier cannot tell that fresh delete from the one it saw, so
+    an equality compare-and-set would resurrect it. While the setting is on,
+    a bare sentinel is not a token anyone may write over; the caller's re-read
+    then treats it as an absence and stops, and the sentinel's TTL takes it
+    from there."""
+    client = mock_redis_empty.Redis.return_value
+    client.eval.return_value = async_return(1)
+    mocker.patch("app.services.config_manager.redis", mock_redis_empty)
+    mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
+    config_manager = IntegrationConfigurationManager()
+    integration_id = str(integration_v2.id)
+    config = IntegrationActionConfiguration.parse_raw(pull_observations_config_as_json)
+
+    assert await config_manager.replace_cached_entry(integration_id, "pull_observations", config=config, observed="null") is False
+    assert await config_manager.replace_cached_entry_with_absence(integration_id, "pull_observations", observed="null") is False
+    assert not client.eval.called, "refused client-side; nothing is written"
+
+    # A generated sentinel is a proper token and proceeds as usual.
+    assert await config_manager.replace_cached_entry(integration_id, "pull_observations", config=config, observed="null:e:3:x") is True
+    assert client.eval.called
+
+
+@pytest.mark.asyncio
+async def test_compare_and_set_over_a_bare_sentinel_proceeds_while_generations_are_off(
+        mocker, mock_redis_empty, mock_gundi_client_v2_class, integration_v2, pull_observations_config_as_json,
+):
+    # With generations off every replica writes bare sentinels and the old
+    # behavior (and its known race) is what we have; nothing to refuse.
+    client = mock_redis_empty.Redis.return_value
+    client.eval.return_value = async_return(1)
+    mocker.patch("app.services.config_manager.redis", mock_redis_empty)
+    mocker.patch("app.services.config_manager.GundiClient", mock_gundi_client_v2_class)
+    config_manager = IntegrationConfigurationManager()
+    config = IntegrationActionConfiguration.parse_raw(pull_observations_config_as_json)
+
+    assert await config_manager.replace_cached_entry(str(integration_v2.id), "pull_observations", config=config, observed="null") is True
+    assert client.eval.called
