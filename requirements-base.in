@@ -13,7 +13,8 @@ gundi-core~=1.11.1
 gundi-client-v2[redis]~=3.7.0
 # httpx is imported directly by app/services/*; must stay on the 0.28 line gundi-client-v2 3.x requires
 httpx~=0.28.1
-stamina~=23.2.0
+# 24.3 is the first release whose `on=` accepts a predicate (app/services/retry_policies.py)
+stamina~=24.3.0
 redis~=5.0.1
 gcloud-aio-pubsub~=6.0.0
 click~=8.1.7

@@ -9,13 +9,11 @@ directly are out of scope.
 """
 import datetime
 from typing import List
-import httpx
 import stamina
 from gundi_client_v2.client import GundiClient, GundiDataSenderClient
 
-from app import settings
-
 from .activity_logger import ephemeral_run
+from .retry_policies import is_transient_gundi_error
 
 
 class EphemeralWriteBlocked(RuntimeError):
@@ -55,7 +53,7 @@ def _block_if_ephemeral(op: str) -> None:
 # hangs should turn background processing on or shorten this policy; the
 # tests in test_gundi_api.py pin the loop-overhead bound.
 GUNDI_API_RETRY = dict(
-    on=httpx.HTTPError,
+    on=is_transient_gundi_error,
     attempts=6,
     timeout=120.0,
     wait_initial=2.0,
@@ -73,7 +71,7 @@ async def _get_gundi_api_key(integration_id):
     # letting this reach the portal would 404 and then stamina would retry
     # for up to 5 minutes with the portal-facing request thread held.
     _block_if_ephemeral("_get_gundi_api_key")
-    async with GundiClient(token_cache_url=settings.GUNDI_TOKEN_CACHE_URL) as gundi_client:
+    async with GundiClient() as gundi_client:
         return await gundi_client.get_integration_api_key(
             integration_id=integration_id
         )

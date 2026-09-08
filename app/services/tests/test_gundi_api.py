@@ -241,8 +241,10 @@ async def test_config_manager_reload_uses_the_shared_gundi_retry_policy(
 
     await IntegrationConfigurationManager().get_integration(str(integration_v2.id))
 
-    http_policies = [c.kwargs for c in spy.call_args_list if c.kwargs.get("on") is httpx.HTTPError]
-    assert http_policies, "expected the reload to retry on httpx.HTTPError"
+    from app.services.retry_policies import is_transient_gundi_error
+
+    http_policies = [c.kwargs for c in spy.call_args_list if c.kwargs.get("on") is is_transient_gundi_error]
+    assert http_policies, "expected the reload to retry on transient Gundi errors"
     assert all(kw == GUNDI_API_RETRY for kw in http_policies), http_policies
 
 

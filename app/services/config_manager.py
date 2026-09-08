@@ -232,7 +232,7 @@ class IntegrationConfigurationManager:
         # and spin GUNDI_API_RETRY for up to two minutes on the request (the
         # same guard, for the same reason, as gundi._get_gundi_api_key).
         _block_if_ephemeral("IntegrationConfigurationManager reload")
-        async with GundiClient(token_cache_url=settings.GUNDI_TOKEN_CACHE_URL) as gundi:
+        async with GundiClient() as gundi:
             async for attempt in stamina.retry_context(**GUNDI_API_RETRY):
                 with attempt:
                     integration_details = await gundi.get_integration_details(integration_id)

@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import json
+import sys
 
 import httpx
 import pydantic
@@ -2160,12 +2161,22 @@ def _clear_gundi_client_caches():
     Since gundi-client-v2 3.7 every GundiClient in a process shares one OAuth
     token per set of credentials; without this, a token minted in one test would
     be served to the clients built in the next. The OIDC discovery cache is
-    cleared for the same reason.
+    cleared for the same reason. The module-level portal client in
+    action_runner is a singleton that also keeps the token on the instance, and
+    get_access_token consults that before the shared cache, so it is reset too.
     """
     from gundi_client_v2 import auth, token_cache
 
-    token_cache.clear_token_cache()
-    auth.clear_discovery_cache()
+    def _clear():
+        token_cache.clear_token_cache()
+        auth.clear_discovery_cache()
+        action_runner = sys.modules.get("app.services.action_runner")
+        if action_runner is not None:
+            never = datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
+            action_runner._portal.cached_token = None
+            action_runner._portal.cached_token_expires_at = never
+            action_runner._portal.cached_token_refresh_expires_at = never
+
+    _clear()
     yield
-    token_cache.clear_token_cache()
-    auth.clear_discovery_cache()
+    _clear()
