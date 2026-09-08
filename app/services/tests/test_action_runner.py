@@ -697,6 +697,89 @@ async def test_execute_action_with_handler_error(
     assert event.payload.server_response_body == str(expected_error.response.text)
 
 
+def _gundi_api_error_from_httpx(status_code: int, body: str) -> Exception:
+    """How gundi-client-v2 3.x raises a non-2xx: GundiAPIError(status, body)
+    with httpx's status error, which holds the request and response, as the
+    cause (errors.raise_for_status)."""
+    import httpx
+    from gundi_client_v2.errors import GundiAPIError
+
+    request = httpx.Request("POST", "https://sensors.api.test.gundiservice.org/v2/observations/", content=b'[{"source": "x"}]')
+    response = httpx.Response(status_code, text=body, request=request)
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        try:
+            raise GundiAPIError(status_code=status_code, detail=body) from e
+        except GundiAPIError as wrapped:
+            return wrapped
+
+
+@pytest.mark.asyncio
+async def test_execute_action_reports_gundi_api_error_with_response_details(
+        mocker, mock_gundi_client_v2, integration_v2, mock_config_manager, mock_publish_event,
+):
+    """A handler's send_*_to_gundi fails with a Sensors API 400. The activity
+    log must still carry the request URL and the response status and body,
+    now that the client wraps httpx's error, and the text must name Gundi,
+    not the provider."""
+    exc = _gundi_api_error_from_httpx(400, '{"observations": ["recorded_at is required"]}')
+    handler = AsyncMock(side_effect=exc)
+    del handler.action_title
+    mocker.patch("app.services.action_runner.action_handlers", {"pull_observations": (handler, MockPullActionConfiguration, None)})
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+
+    response = api_client.post(
+        "/v1/actions/execute/",
+        json={"integration_id": str(integration_v2.id), "action_id": "pull_observations"},
+    )
+
+    assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+    details = response.json()["detail"]
+    assert details["error_type"] == "gundi"
+    assert details["error"].startswith("Gundi API request failed")
+    assert "Authentication failed" not in details["error"]
+    assert details["request_url"] == "https://sensors.api.test.gundiservice.org/v2/observations/"
+    assert details["server_response_status"] == 400
+    assert details["server_response_body"] == '{"observations": ["recorded_at is required"]}'
+    event = mock_publish_event.mock_calls[0].kwargs["event"]
+    assert event.payload.server_response_status == 400
+    assert event.payload.server_response_body == '{"observations": ["recorded_at is required"]}'
+    assert event.payload.request_url == "https://sensors.api.test.gundiservice.org/v2/observations/"
+
+
+@pytest.mark.asyncio
+async def test_execute_action_reports_gundi_auth_failure_as_gundi_side(
+        mocker, mock_gundi_client_v2, integration_v2, mock_config_manager, mock_publish_event,
+):
+    """A wrong GUNDI_OAUTH_CLIENT_SECRET surfaces from the handler's portal
+    call as AuthenticationError(401). It must not read as the provider
+    rejecting the integration's credentials."""
+    from gundi_client_v2.errors import AuthenticationError
+
+    handler = AsyncMock(side_effect=AuthenticationError("Token request failed: HTTP 401", status_code=401, error="invalid_client"))
+    del handler.action_title
+    mocker.patch("app.services.action_runner.action_handlers", {"pull_observations": (handler, MockPullActionConfiguration, None)})
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+
+    response = api_client.post(
+        "/v1/actions/execute/",
+        json={"integration_id": str(integration_v2.id), "action_id": "pull_observations"},
+    )
+
+    details = response.json()["detail"]
+    assert details["error_type"] == "gundi"
+    assert details["error"].startswith("Could not authenticate with Gundi")
+    assert "(HTTP 401)" in details["error"]
+    assert details.get("server_response_status") is None  # no Gundi response to report; the status is in the text
+
+
 _EPHEMERAL_SECRET = "ephemeral-token-abc123"
 
 

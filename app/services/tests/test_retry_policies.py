@@ -47,6 +47,8 @@ def _discovery_failure(cause):
     AuthenticationError("keycloak 503", status_code=503),
     AuthenticationError("keycloak rate limit", status_code=429),
     _discovery_failure(httpx.ConnectError("keycloak unreachable")),  # OIDC discovery, network
+    _discovery_failure(_status_error(503)),  # OIDC discovery endpoint down during a Keycloak restart
+    _discovery_failure(_status_error(429)),
     httpx.ConnectError("portal unreachable"),
     httpx.ReadTimeout("timed out"),
     _status_error(503),

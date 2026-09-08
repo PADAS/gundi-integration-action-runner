@@ -1,6 +1,5 @@
-# Root conftest: runs before pytest imports the `app` package (whose __init__
-# loads app.settings), so this is the only place an environment default can be
-# set ahead of settings.
+# Root conftest: runs before pytest imports anything under app/, so an
+# environment default set here is in place before app.settings loads.
 import os
 
 # Tests share Gundi OAuth tokens within the process only. The runner's default

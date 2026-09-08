@@ -1,7 +1,6 @@
 import logging
 import logging.config
 import sys
-from urllib.parse import parse_qs, urlparse
 
 from environs import Env
 
@@ -16,6 +15,7 @@ env.read_env()
 from gundi_client_v2 import settings as gundi_client_settings  # noqa: E402
 from gundi_client_v2.errors import TokenCacheConfigError  # noqa: E402
 from gundi_client_v2.token_cache import token_cache_from_url  # noqa: E402
+from redis.connection import parse_url as _parse_redis_url  # noqa: E402
 
 LOGGING_LEVEL = env.str("LOGGING_LEVEL", "INFO")
 
@@ -76,14 +76,14 @@ def default_token_cache_url(host: str, port: int, db: int) -> str:
 def _require_explicit_redis_db(url: str) -> None:
     """A redis:// URL must name its database as a number: redis-py maps a
     missing or non-numeric path (``redis://host:6379``, ``redis://host/tokens``)
-    to db 0 without a word, which is the runner's state database."""
-    parsed = urlparse(url)
-    if parsed.scheme not in ("redis", "rediss"):
+    to db 0 without a word, which is the runner's state database. Judged with
+    redis-py's own parser so the check is by construction what it will do
+    (``/2/`` is db 2; ``?db=3`` beats the path)."""
+    if not url.startswith(("redis://", "rediss://")):
         return
-    db = parsed.path.lstrip("/") or (parse_qs(parsed.query).get("db") or [""])[0]
-    if not db.isdigit():
+    if _parse_redis_url(url).get("db") is None:
         raise ValueError(
-            "a redis:// token cache URL must end in a numeric database index "
+            "a redis:// token cache URL must name a numeric database index "
             "(e.g. redis://host:6379/2); a missing or non-numeric one would land "
             "tokens in db 0, the state database"
         )

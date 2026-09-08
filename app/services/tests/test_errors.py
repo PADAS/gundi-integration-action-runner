@@ -16,6 +16,8 @@ from app.services.errors import (
     format_classified_error,
     format_error_message,
     source_status_code,
+    GUNDI_API_ERROR_TITLE,
+    GUNDI_AUTH_ERROR_TITLE,
 )
 
 
@@ -210,20 +212,26 @@ def test_source_status_code_reads_every_carrier(exc, expected):
 
 
 @pytest.mark.parametrize(
-    "exc,expected_type",
+    "exc,expected_title",
     [
-        (GundiAPIError(status_code=401, detail="bad api key"), "auth"),
-        (GundiAPIError(status_code=429), "rate_limit"),
-        (GundiAPIError(status_code=503), "bad_response"),
+        (GundiAPIError(status_code=401, detail="bad api key"), GUNDI_API_ERROR_TITLE),
+        (GundiAPIError(status_code=429), GUNDI_API_ERROR_TITLE),
+        (GundiAPIError(status_code=503), GUNDI_API_ERROR_TITLE),
+        (AuthenticationError("Token request failed: HTTP 401", status_code=401, error="invalid_client"), GUNDI_AUTH_ERROR_TITLE),
+        (AuthenticationError("keycloak unreachable", transport=True), GUNDI_AUTH_ERROR_TITLE),
     ],
 )
-def test_classify_error_reads_gundi_client_status(exc, expected_type):
-    """A Sensors API 429 after the retries are exhausted must still read as a
-    rate limit, not a generic GundiAPIError, now that the client wraps it."""
+def test_classify_error_reports_gundi_client_failures_as_gundi_side(exc, expected_title):
+    """A 401 from Gundi or its identity provider is the runner's OAuth
+    configuration, not the provider's credentials: never the provider's
+    "Authentication failed" title, but the status is still carried so the
+    ephemeral path can forward it."""
     classified = classify_error(exc)
     assert classified is not None
-    assert classified.error_type == expected_type
+    assert classified.error_type == "gundi"
+    assert classified.title == expected_title
     assert classified.status_code == exc.status_code
+    assert "provider" not in format_classified_error(classified).lower()
 
 
 @pytest.mark.parametrize("junk", ["401", True, 4.01, None])

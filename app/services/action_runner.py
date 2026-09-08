@@ -9,6 +9,7 @@ from typing import Optional
 import pydantic
 import stamina
 from gundi_client_v2 import GundiClient
+from gundi_client_v2.errors import GundiAPIError
 from gundi_core.schemas.v2 import Integration
 
 from app.actions import action_handlers, get_action_handler_by_data_type
@@ -271,20 +272,34 @@ async def _handle_error(
     # Extract additional request/response details if available.
     # httpx exceptions expose .request as a property that raises RuntimeError
     # when the error was constructed without one — treat that as "no request".
-    try:
-        request = getattr(exc, "request", None)
-    except RuntimeError:
-        request = None
+    def _request_of(e):
+        try:
+            return getattr(e, "request", None)
+        except RuntimeError:
+            return None
+
+    request = _request_of(exc)
+    response = getattr(exc, "response", None)  # bool(response) on status errors returns False
+    if request is None and response is None and exc.__cause__ is not None:
+        # gundi-client-v2 3.x wraps a non-2xx as GundiAPIError, which carries
+        # neither, and chains httpx's error as the cause: read it from there.
+        request = _request_of(exc.__cause__)
+        response = getattr(exc.__cause__, "response", None)
     if request is not None:
         error_details.update({
             "request_verb": str(request.method),
             "request_url": str(request.url),
             "request_data": str(getattr(request, "content", getattr(request, "body", None)) or "")
         })
-    if (response := getattr(exc, "response", None)) is not None:  # bool(response) on status errors returns False
+    if response is not None:
         error_details.update({
             "server_response_status": getattr(response, "status_code", None),
             "server_response_body": str(getattr(response, "text", getattr(response, "content", None)) or "")
+        })
+    elif isinstance(exc, GundiAPIError):
+        error_details.update({
+            "server_response_status": exc.status_code,
+            "server_response_body": exc.detail or "",
         })
 
     await publish_event(

@@ -45,20 +45,40 @@ def test_token_cache_db_defaults_next_to_state_and_config_dbs():
     assert settings.REDIS_TOKEN_CACHE_DB == 2
 
 
-def test_settings_url_is_the_derived_default_or_the_env_override():
-    override = os.environ.get("GUNDI_TOKEN_CACHE_URL")
-    if override is not None:
-        assert settings.GUNDI_TOKEN_CACHE_URL == validated_token_cache_url(override)
-    else:
-        assert settings.GUNDI_TOKEN_CACHE_URL == default_token_cache_url(
-            settings.REDIS_HOST, settings.REDIS_PORT, settings.REDIS_TOKEN_CACHE_DB
-        )
+def _settings_in_subprocess(env_overrides: dict, probe: str) -> str:
+    """Run ``probe`` in a fresh interpreter with the runner's env adjusted, so
+    a settings value can be checked without reloading the settings module in
+    this process (a reload re-runs env.read_env()). Returns the last stdout
+    line; the settings module logs to stdout, so a warning may precede it."""
+    env = {k: v for k, v in os.environ.items() if k not in ("GUNDI_TOKEN_CACHE_URL", "REDIS_HOST", "REDIS_PORT", "REDIS_TOKEN_CACHE_DB")}
+    env.update(env_overrides)
+    result = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, timeout=60, env=env)
+    assert result.returncode == 0, result.stderr
+    return result.stdout.strip().splitlines()[-1]
+
+
+def test_settings_derive_the_url_from_redis_settings_when_not_overridden():
+    line = _settings_in_subprocess(
+        {"REDIS_HOST": "cache.internal", "REDIS_PORT": "6380", "REDIS_TOKEN_CACHE_DB": "7"},
+        "from app import settings; print(settings.REDIS_TOKEN_CACHE_DB, settings.GUNDI_TOKEN_CACHE_URL)",
+    )
+    assert line == "7 redis://cache.internal:6380/7"
+
+
+def test_settings_honour_the_env_override():
+    line = _settings_in_subprocess(
+        {"GUNDI_TOKEN_CACHE_URL": "file:///var/cache/gundi-tokens"},
+        "from app import settings; print(settings.GUNDI_TOKEN_CACHE_URL)",
+    )
+    assert line == "file:///var/cache/gundi-tokens"
 
 
 @pytest.mark.parametrize("good", [
     "redis://localhost:6379/2",
+    "redis://localhost:6379/2/",           # redis-py reads db 2
     "rediss://cache.internal:6380/0",
     "redis://localhost:6379?db=3",
+    "redis://[::1]:6379/2",
     "file:///var/cache/gundi-tokens",
 ])
 def test_validated_token_cache_url_keeps_a_usable_url(good):
@@ -95,11 +115,6 @@ def test_runner_url_is_installed_as_the_client_library_default():
     assert client_settings.GUNDI_TOKEN_CACHE_URL == settings.GUNDI_TOKEN_CACHE_URL
 
 
-def _expected_backend():
-    # None when there is no backend (the pytest default; see conftest).
-    return token_cache_from_url(settings.GUNDI_TOKEN_CACHE_URL)
-
-
 def _backend_signature(backend):
     """What a backend points at, comparable across instances. The conftest
     fixture clears the library's memoized backends between tests, so a client
@@ -131,9 +146,12 @@ def test_bare_client_reads_the_installed_url_at_construction_time(monkeypatch):
     assert _backend_signature(client._token_store._backend) == ("redis", "::1", 6379, 9)
 
 
-def test_portal_client_is_bare_and_shares_the_token_cache_backend():
+def test_portal_client_is_bare_env_driven():
     """Credentials must stay env-driven: bareness is what lets
-    GUNDI_USERNAME/GUNDI_PASSWORD select the password grant."""
+    GUNDI_USERNAME/GUNDI_PASSWORD select the password grant. (The backend it
+    shares is not asserted here: tests run with no backend, see conftest; the
+    subprocess test below covers that the URL is installed before the portal
+    client is built.)"""
     from app.services.action_runner import _portal
 
     assert isinstance(_portal, GundiClient)
@@ -141,26 +159,25 @@ def test_portal_client_is_bare_and_shares_the_token_cache_backend():
     assert _portal.password == client_settings.GUNDI_PASSWORD
     assert _portal.client_id == client_settings.OAUTH_CLIENT_ID
     assert _portal.client_secret == client_settings.OAUTH_CLIENT_SECRET
-    assert _backend_signature(_portal._token_store._backend) == _backend_signature(_expected_backend())
 
 
 def test_settings_load_before_connector_code_runs():
     """app.actions executes the connector's handlers module at import. A
     GundiClient() built at module scope there must already see the runner's
     token cache URL, so importing app.actions alone has to load app.settings
-    (and install the URL) first. A subprocess, so nothing here is pre-imported."""
+    (and install the URL) first; the portal client built at import must then
+    hold the Redis backend. A subprocess, so nothing here is pre-imported."""
     probe = (
         "import sys; import app.actions; "
         "assert 'app.settings' in sys.modules, 'app.settings not loaded by app.actions'; "
         "from app import settings; from gundi_client_v2 import settings as cs; "
-        "assert cs.GUNDI_TOKEN_CACHE_URL == settings.GUNDI_TOKEN_CACHE_URL; print('ok')"
+        "assert cs.GUNDI_TOKEN_CACHE_URL == settings.GUNDI_TOKEN_CACHE_URL == 'redis://cache.internal:6380/7'; "
+        "from app.services.action_runner import _portal; "
+        "kw = _portal._token_store._backend._client.connection_pool.connection_kwargs; "
+        "print(kw['host'], kw['port'], kw['db'])"
     )
-    result = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, timeout=60)
-
-    assert result.returncode == 0, result.stderr
-    # The settings module logs to stdout; a warning about an unusable override
-    # in the developer's environment may precede the probe's own line.
-    assert result.stdout.strip().splitlines()[-1] == "ok"
+    line = _settings_in_subprocess({"REDIS_HOST": "cache.internal", "REDIS_PORT": "6380", "REDIS_TOKEN_CACHE_DB": "7"}, probe)
+    assert line == "cache.internal 6380 7"
 
 
 def test_portal_singleton_token_is_reset_between_tests():

@@ -1,7 +1,7 @@
 """Retry policies shared across the service layer.
 
-Kept in a leaf module (no app imports) so config_manager and state can both
-use REDIS_RETRY without importing each other. GUNDI_API_RETRY lives in
+Kept in a leaf module (imports only .errors, itself a leaf) so config_manager
+and state can both use REDIS_RETRY without importing each other. GUNDI_API_RETRY lives in
 gundi.py next to the helpers it decorates.
 
 Iterate stamina with `async for`: its synchronous iterator sleeps with
@@ -12,14 +12,15 @@ import httpx
 from gundi_client_v2.errors import AuthenticationError, GundiAPIError
 from redis.exceptions import RedisError
 
+from .errors import source_status_code
+
 REDIS_RETRY = dict(on=RedisError, attempts=5, wait_initial=1.0, wait_max=30, wait_jitter=3.0)
 
 
-def _retryable_status(status_code) -> bool:
-    # No status: the request never got an answer (transport failure, malformed
-    # body). 429 and 5xx are the server's problem for now. Any other 4xx is a
+def _retryable_status(status_code: int) -> bool:
+    # 429 and 5xx are the server's problem for now. Any other status is a
     # definite answer that will not change on the next attempt.
-    return status_code is None or status_code == 429 or status_code >= 500
+    return status_code == 429 or status_code >= 500
 
 
 def is_transient_gundi_error(exc: BaseException) -> bool:
@@ -33,22 +34,20 @@ def is_transient_gundi_error(exc: BaseException) -> bool:
     integration, rejected credentials) and a permanent OAuth misconfiguration
     fail at once instead of six times.
     """
-    if isinstance(exc, httpx.HTTPStatusError):
-        return _retryable_status(exc.response.status_code)
-    if isinstance(exc, httpx.HTTPError):
-        return True
-    if isinstance(exc, GundiAPIError):
-        return _retryable_status(exc.status_code)
-    if isinstance(exc, AuthenticationError):
-        # A status-less AuthenticationError is usually permanent: no token URL or
-        # credentials configured, a malformed token response. Only a token
-        # endpoint that never answered (``transport``), or OIDC discovery that
-        # failed on the network (wrapped without the flag; the cause is httpx's
-        # transport error), is worth another attempt.
+    if isinstance(exc, AuthenticationError) and exc.status_code is None:
+        # No status from the token endpoint. ``transport``: it never answered.
+        # OIDC discovery failures are wrapped without the flag, with httpx's
+        # error as the cause: judge that by its status, or retry a transport
+        # failure. Anything else (no token URL or credentials configured, a
+        # malformed token response) is permanent.
         if exc.transport:
             return True
-        if exc.status_code is None:
-            cause = exc.__cause__
-            return isinstance(cause, httpx.HTTPError) and not isinstance(cause, httpx.HTTPStatusError)
-        return exc.status_code == 429 or exc.status_code >= 500
+        cause = exc.__cause__
+        if isinstance(cause, httpx.HTTPStatusError):
+            return _retryable_status(cause.response.status_code)
+        return isinstance(cause, httpx.HTTPError)
+    if isinstance(exc, (httpx.HTTPError, GundiAPIError, AuthenticationError)):
+        status_code = source_status_code(exc)
+        # An httpx error without a status is a transport failure.
+        return True if status_code is None else _retryable_status(status_code)
     return False

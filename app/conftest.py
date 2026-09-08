@@ -8,7 +8,7 @@ import pydantic
 import pytest
 from unittest.mock import MagicMock
 # GUNDI_TOKEN_CACHE_URL is defaulted to "" for tests in the root conftest.py,
-# which runs before the `app` package (and with it app.settings) is imported.
+# which runs before anything under app/ (and with it app.settings) is imported.
 from app import settings
 from gcloud.aio import pubsub
 from gundi_core.schemas.v2 import Integration, IntegrationSummary
