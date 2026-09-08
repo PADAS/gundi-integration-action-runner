@@ -4,14 +4,15 @@
 aiohttp
 environs~=9.5.0
 pydantic~=1.10.15
-fastapi~=0.103.2
+# fastapi ~=0.115 (starlette >=0.40): gundi-client-v2 3.x needs httpx 0.28, and
+# starlette <0.37's TestClient passes app= to httpx.Client, which httpx 0.28 removed.
+fastapi~=0.115.0
 uvicorn~=0.23.2
 gundi-core~=1.11.1
-gundi-client-v2~=2.4.0
-# httpx is imported directly by app/services/*; ~=0.24.1 keeps the resolver on
-# gundi-client-v2 2.4.0 — 2.4.1 requires httpx 0.28, which breaks the TestClient
-# shipped with starlette 0.27 (pinned via fastapi~=0.103.2)
-httpx~=0.24.1
+# [redis]: backend for the shared OAuth token cache (see GUNDI_TOKEN_CACHE_URL in app/settings/base.py)
+gundi-client-v2[redis]~=3.7.0
+# httpx is imported directly by app/services/*; must stay on the 0.28 line gundi-client-v2 3.x requires
+httpx~=0.28.1
 stamina~=23.2.0
 redis~=5.0.1
 gcloud-aio-pubsub~=6.0.0

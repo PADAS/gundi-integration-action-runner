@@ -60,6 +60,17 @@ REDIS_HOST = env.str("REDIS_HOST", "localhost")
 REDIS_PORT = env.int("REDIS_PORT", 6379)
 REDIS_STATE_DB = env.int("REDIS_STATE_DB", 0)
 REDIS_CONFIGS_DB = env.int("REDIS_CONFIGS_DB", 1)  # ToDo: define a convention for DB numbers across services
+REDIS_TOKEN_CACHE_DB = env.int("REDIS_TOKEN_CACHE_DB", 2)
+
+# Shared OAuth token cache (gundi-client-v2 >= 3.7). Every GundiClient the runner
+# builds shares one token per set of credentials, in process memory and in this
+# backend, so replicas stop minting a fresh Keycloak token per portal call.
+# Defaults to the runner's Redis, next to the state (0) and config (1) databases.
+# Override with a redis://, rediss:// or file:///dir URL; set it to an empty
+# string to share tokens within the process only.
+GUNDI_TOKEN_CACHE_URL = env.str(
+    "GUNDI_TOKEN_CACHE_URL", f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_TOKEN_CACHE_DB}"
+)
 
 
 REGISTER_ON_START = env.bool("REGISTER_ON_START", False)

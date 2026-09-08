@@ -13,6 +13,8 @@ import httpx
 import stamina
 from gundi_client_v2.client import GundiClient, GundiDataSenderClient
 
+from app import settings
+
 from .activity_logger import ephemeral_run
 
 
@@ -71,7 +73,7 @@ async def _get_gundi_api_key(integration_id):
     # letting this reach the portal would 404 and then stamina would retry
     # for up to 5 minutes with the portal-facing request thread held.
     _block_if_ephemeral("_get_gundi_api_key")
-    async with GundiClient() as gundi_client:
+    async with GundiClient(token_cache_url=settings.GUNDI_TOKEN_CACHE_URL) as gundi_client:
         return await gundi_client.get_integration_api_key(
             integration_id=integration_id
         )

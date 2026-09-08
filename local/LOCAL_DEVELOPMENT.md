@@ -16,7 +16,7 @@ Inside the `local` directory, do these things:
 
 Create a copy of `.env.local.example` and name it `.env.local`
 
-Edit the `.env.local` file and set the `KEYCLOAK_CLIENT_SECRET` to a secret from the stage environment (Ask the Gundi Team)
+Edit the `.env.local` file and set the `GUNDI_OAUTH_CLIENT_SECRET` to a secret from the stage environment (Ask the Gundi Team)
 
 **Build and Run**
 

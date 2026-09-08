@@ -2151,3 +2151,21 @@ def mock_webhook_request_payload_for_fixed_schema():
         "lat": -2.3828796,
         "lon": 35.3380609,
     }
+
+
+@pytest.fixture(autouse=True)
+def _clear_gundi_client_caches():
+    """Keep gundi-client-v2's process-wide caches test-isolated.
+
+    Since gundi-client-v2 3.7 every GundiClient in a process shares one OAuth
+    token per set of credentials; without this, a token minted in one test would
+    be served to the clients built in the next. The OIDC discovery cache is
+    cleared for the same reason.
+    """
+    from gundi_client_v2 import auth, token_cache
+
+    token_cache.clear_token_cache()
+    auth.clear_discovery_cache()
+    yield
+    token_cache.clear_token_cache()
+    auth.clear_discovery_cache()

@@ -28,7 +28,7 @@ from .errors import classify_error, format_classified_error, source_status_code,
 from .url_policy import validate_outbound_url
 from .gundi import EphemeralWriteBlocked
 
-_portal = GundiClient()
+_portal = GundiClient(token_cache_url=settings.GUNDI_TOKEN_CACHE_URL)
 config_manager = IntegrationConfigurationManager()
 state_manager = IntegrationStateManager()
 logger = logging.getLogger(__name__)
