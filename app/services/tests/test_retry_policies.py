@@ -31,13 +31,22 @@ def _status_error(status_code):
     )
 
 
+def _discovery_failure(cause):
+    """How gundi_client_v2.auth wraps an OIDC discovery failure: no status, no
+    transport flag, the httpx error as the cause."""
+    exc = AuthenticationError(f"OIDC discovery failed: {cause}")
+    exc.__cause__ = cause
+    return exc
+
+
 @pytest.mark.parametrize("exc", [
     GundiAPIError(status_code=503, detail="upstream unavailable"),
     GundiAPIError(status_code=502),
     GundiAPIError(status_code=429, detail="slow down"),
     AuthenticationError("keycloak unreachable", transport=True),
     AuthenticationError("keycloak 503", status_code=503),
-    AuthenticationError("malformed token response"),  # no status: never answered properly
+    AuthenticationError("keycloak rate limit", status_code=429),
+    _discovery_failure(httpx.ConnectError("keycloak unreachable")),  # OIDC discovery, network
     httpx.ConnectError("portal unreachable"),
     httpx.ReadTimeout("timed out"),
     _status_error(503),
@@ -52,6 +61,11 @@ def test_transient_failures_are_retried(exc):
     GundiAPIError(status_code=403),
     AuthenticationError("invalid_client", status_code=401, error="invalid_client"),
     AuthenticationError("invalid_grant", status_code=400, error="invalid_grant", refresh_token_rejected=True),
+    # Status-less and not a transport failure: permanent misconfiguration.
+    AuthenticationError("No token URL configured"),
+    AuthenticationError("No credentials configured"),
+    AuthenticationError("malformed token response"),
+    _discovery_failure(_status_error(404)),  # OIDC discovery document missing
     _status_error(404),
     ValueError("not an HTTP problem at all"),
 ])

@@ -3,6 +3,7 @@ import asyncio
 import aiohttp
 import httpx
 import pytest
+from gundi_client_v2.errors import AuthenticationError, GundiAPIError
 
 from app.services.errors import (
     IntegrationError,
@@ -197,11 +198,32 @@ def test_classify_builtin_timeout_as_connectivity():
         (_http_status_error(404), 404),
         (IntegrationAuthError("nope", status_code=401), 401),
         (IntegrationAuthError("nope"), None),
+        # gundi-client-v2 3.x wraps the Gundi API's non-2xx (no .response on it)
+        (GundiAPIError(status_code=429, detail="slow down"), 429),
+        (AuthenticationError("invalid_client", status_code=401, error="invalid_client"), 401),
+        (AuthenticationError("keycloak unreachable", transport=True), None),
         (ValueError("no response here"), None),
     ],
 )
 def test_source_status_code_reads_every_carrier(exc, expected):
     assert source_status_code(exc) == expected
+
+
+@pytest.mark.parametrize(
+    "exc,expected_type",
+    [
+        (GundiAPIError(status_code=401, detail="bad api key"), "auth"),
+        (GundiAPIError(status_code=429), "rate_limit"),
+        (GundiAPIError(status_code=503), "bad_response"),
+    ],
+)
+def test_classify_error_reads_gundi_client_status(exc, expected_type):
+    """A Sensors API 429 after the retries are exhausted must still read as a
+    rate limit, not a generic GundiAPIError, now that the client wraps it."""
+    classified = classify_error(exc)
+    assert classified is not None
+    assert classified.error_type == expected_type
+    assert classified.status_code == exc.status_code
 
 
 @pytest.mark.parametrize("junk", ["401", True, 4.01, None])

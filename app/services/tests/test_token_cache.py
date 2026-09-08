@@ -9,10 +9,14 @@ never lets an unusable URL take the service down.
 
 The tests read the loaded settings rather than reloading the settings module
 against a patched environment: a reload re-runs env.read_env(), so a
-developer's repo .env would leak into the assertions.
+developer's repo .env would leak into the assertions. Under pytest the runner
+is configured for in-process sharing only (conftest sets GUNDI_TOKEN_CACHE_URL
+to ""), so the Redis-backend assertions build their URLs explicitly.
 """
 import logging
 import os
+import subprocess
+import sys
 
 import pytest
 from gundi_client_v2 import GundiClient
@@ -51,7 +55,12 @@ def test_settings_url_is_the_derived_default_or_the_env_override():
         )
 
 
-@pytest.mark.parametrize("good", ["redis://localhost:6379/2", "rediss://cache.internal:6380/0", "file:///var/cache/gundi-tokens"])
+@pytest.mark.parametrize("good", [
+    "redis://localhost:6379/2",
+    "rediss://cache.internal:6380/0",
+    "redis://localhost:6379?db=3",
+    "file:///var/cache/gundi-tokens",
+])
 def test_validated_token_cache_url_keeps_a_usable_url(good):
     assert validated_token_cache_url(good) == good
 
@@ -62,9 +71,11 @@ def test_validated_token_cache_url_empty_means_in_process_only():
 
 
 @pytest.mark.parametrize("bad", [
-    "localhost:6379",           # no scheme: TokenCacheConfigError
-    "redis://::1:6379/2",       # unbracketed IPv6: redis-py ValueError
-    "file://relative/dir",      # file URL with a host: TokenCacheConfigError
+    "localhost:6379",                 # no scheme: TokenCacheConfigError
+    "redis://::1:6379/2",             # unbracketed IPv6: redis-py ValueError
+    "file://relative/dir",            # file URL with a host: TokenCacheConfigError
+    "redis://localhost:6379/tokens",  # redis-py would silently use db 0, the state database
+    "redis://localhost:6379",         # no database at all: same
 ])
 def test_validated_token_cache_url_falls_back_to_memory_with_one_warning(bad, caplog):
     """The portal client is built at import, so a URL the client cannot parse
@@ -85,7 +96,7 @@ def test_runner_url_is_installed_as_the_client_library_default():
 
 
 def _expected_backend():
-    # None when the developer opted out of a backend.
+    # None when there is no backend (the pytest default; see conftest).
     return token_cache_from_url(settings.GUNDI_TOKEN_CACHE_URL)
 
 
@@ -102,13 +113,22 @@ def _backend_signature(backend):
     return (type(backend).__name__, vars(backend))
 
 
-def test_bare_client_uses_the_runner_token_cache_backend():
+def test_default_url_builds_a_redis_backend_on_the_named_db():
+    backend = token_cache_from_url(default_token_cache_url("cache.internal", 6380, 7))
+
+    assert _backend_signature(backend) == ("redis", "cache.internal", 6380, 7)
+
+
+def test_bare_client_reads_the_installed_url_at_construction_time(monkeypatch):
     """``_token_store._backend`` is gundi-client-v2 internal API; if this breaks
     on an upgrade, re-check that the library still reads its settings module
-    for the constructor default."""
+    for the constructor default (that is what lets the runner configure every
+    GundiClient() in the process from app.settings)."""
+    monkeypatch.setattr(client_settings, "GUNDI_TOKEN_CACHE_URL", "redis://[::1]:6379/9")
+
     client = GundiClient(oauth_client_id="svc", oauth_token_url="https://auth.example.com/token")
 
-    assert _backend_signature(client._token_store._backend) == _backend_signature(_expected_backend())
+    assert _backend_signature(client._token_store._backend) == ("redis", "::1", 6379, 9)
 
 
 def test_portal_client_is_bare_and_shares_the_token_cache_backend():
@@ -124,10 +144,23 @@ def test_portal_client_is_bare_and_shares_the_token_cache_backend():
     assert _backend_signature(_portal._token_store._backend) == _backend_signature(_expected_backend())
 
 
-def test_default_backend_is_redis():
-    if os.environ.get("GUNDI_TOKEN_CACHE_URL") is not None:
-        pytest.skip("GUNDI_TOKEN_CACHE_URL is overridden in this environment")
-    assert isinstance(_expected_backend(), RedisTokenCache)
+def test_settings_load_before_connector_code_runs():
+    """app.actions executes the connector's handlers module at import. A
+    GundiClient() built at module scope there must already see the runner's
+    token cache URL, so importing app.actions alone has to load app.settings
+    (and install the URL) first. A subprocess, so nothing here is pre-imported."""
+    probe = (
+        "import sys; import app.actions; "
+        "assert 'app.settings' in sys.modules, 'app.settings not loaded by app.actions'; "
+        "from app import settings; from gundi_client_v2 import settings as cs; "
+        "assert cs.GUNDI_TOKEN_CACHE_URL == settings.GUNDI_TOKEN_CACHE_URL; print('ok')"
+    )
+    result = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, timeout=60)
+
+    assert result.returncode == 0, result.stderr
+    # The settings module logs to stdout; a warning about an unusable override
+    # in the developer's environment may precede the probe's own line.
+    assert result.stdout.strip().splitlines()[-1] == "ok"
 
 
 def test_portal_singleton_token_is_reset_between_tests():

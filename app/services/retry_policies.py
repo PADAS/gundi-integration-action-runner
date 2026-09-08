@@ -30,12 +30,25 @@ def is_transient_gundi_error(exc: BaseException) -> bool:
     ``httpx.HTTPError``, which is all these policies used to retry on, so a
     transient 503 or a Keycloak outage would otherwise fail on the first
     attempt. Transport failures, 429 and 5xx get another try; a 4xx (a missing
-    integration, rejected credentials) fails at once instead of six times.
+    integration, rejected credentials) and a permanent OAuth misconfiguration
+    fail at once instead of six times.
     """
     if isinstance(exc, httpx.HTTPStatusError):
         return _retryable_status(exc.response.status_code)
     if isinstance(exc, httpx.HTTPError):
         return True
-    if isinstance(exc, (GundiAPIError, AuthenticationError)):
+    if isinstance(exc, GundiAPIError):
         return _retryable_status(exc.status_code)
+    if isinstance(exc, AuthenticationError):
+        # A status-less AuthenticationError is usually permanent: no token URL or
+        # credentials configured, a malformed token response. Only a token
+        # endpoint that never answered (``transport``), or OIDC discovery that
+        # failed on the network (wrapped without the flag; the cause is httpx's
+        # transport error), is worth another attempt.
+        if exc.transport:
+            return True
+        if exc.status_code is None:
+            cause = exc.__cause__
+            return isinstance(cause, httpx.HTTPError) and not isinstance(cause, httpx.HTTPStatusError)
+        return exc.status_code == 429 or exc.status_code >= 500
     return False

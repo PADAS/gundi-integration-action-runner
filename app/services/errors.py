@@ -2,6 +2,7 @@ import asyncio
 from typing import NamedTuple, Optional
 
 import aiohttp
+from gundi_client_v2.errors import AuthenticationError, GundiAPIError
 import httpx
 
 
@@ -98,7 +99,8 @@ CONNECTIVITY_EXCEPTIONS = (
 def source_status_code(exc: Exception) -> Optional[int]:
     """The HTTP status the third party answered with, if the exception carries one.
 
-    Three shapes carry it: `IntegrationError.status_code`, aiohttp's
+    Four shapes carry it: `IntegrationError.status_code`, gundi-client-v2's
+    `GundiAPIError` / `AuthenticationError` `.status_code`, aiohttp's
     `ClientResponseError.status`, and the duck-typed `.response.status_code`
     (httpx.HTTPStatusError, requests.HTTPError, and anything else that keeps
     the response on the exception). This is the single reader shared by the
@@ -114,6 +116,11 @@ def source_status_code(exc: Exception) -> Optional[int]:
         code = getattr(exc, "status_code", None)
     elif isinstance(exc, aiohttp.ClientResponseError):
         code = exc.status
+    elif isinstance(exc, (GundiAPIError, AuthenticationError)):
+        # gundi-client-v2 3.x wraps the Gundi API's non-2xx responses (and the
+        # token endpoint's) instead of letting httpx's error escape: the status
+        # is on the wrapper, and there is no `.response`.
+        code = exc.status_code
     else:
         # getattr chain: non-HTTP exceptions have no .response attribute.
         code = getattr(getattr(exc, "response", None), "status_code", None)

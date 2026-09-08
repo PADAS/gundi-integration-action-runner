@@ -1,14 +1,21 @@
 import logging
 import logging.config
 import sys
+from urllib.parse import parse_qs, urlparse
 
 from environs import Env
-from gundi_client_v2 import settings as gundi_client_settings
-from gundi_client_v2.errors import TokenCacheConfigError
-from gundi_client_v2.token_cache import token_cache_from_url
 
 env = Env()
 env.read_env()
+
+# Imported after read_env(): gundi_client_v2.settings loads a .env of its own
+# (walking up from the current directory) and environs never overrides a key
+# that is already set, so whichever loader runs first wins. The runner's, which
+# walks up from this file, keeps precedence as it had before the client was
+# imported here.
+from gundi_client_v2 import settings as gundi_client_settings  # noqa: E402
+from gundi_client_v2.errors import TokenCacheConfigError  # noqa: E402
+from gundi_client_v2.token_cache import token_cache_from_url  # noqa: E402
 
 LOGGING_LEVEL = env.str("LOGGING_LEVEL", "INFO")
 
@@ -66,6 +73,22 @@ def default_token_cache_url(host: str, port: int, db: int) -> str:
     return f"redis://{host}:{port}/{db}"
 
 
+def _require_explicit_redis_db(url: str) -> None:
+    """A redis:// URL must name its database as a number: redis-py maps a
+    missing or non-numeric path (``redis://host:6379``, ``redis://host/tokens``)
+    to db 0 without a word, which is the runner's state database."""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("redis", "rediss"):
+        return
+    db = parsed.path.lstrip("/") or (parse_qs(parsed.query).get("db") or [""])[0]
+    if not db.isdigit():
+        raise ValueError(
+            "a redis:// token cache URL must end in a numeric database index "
+            "(e.g. redis://host:6379/2); a missing or non-numeric one would land "
+            "tokens in db 0, the state database"
+        )
+
+
 def validated_token_cache_url(url: str) -> str:
     """Return ``url`` if gundi-client-v2 can build a token cache backend from
     it, else "" (tokens shared within the process only) after one warning.
@@ -79,6 +102,7 @@ def validated_token_cache_url(url: str) -> str:
     if not url:
         return ""
     try:
+        _require_explicit_redis_db(url)
         token_cache_from_url(url)
     except (TokenCacheConfigError, ValueError) as e:
         # Log the failure, not the URL: a redis:// URL may carry a password.

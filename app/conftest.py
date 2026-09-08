@@ -7,6 +7,8 @@ import httpx
 import pydantic
 import pytest
 from unittest.mock import MagicMock
+# GUNDI_TOKEN_CACHE_URL is defaulted to "" for tests in the root conftest.py,
+# which runs before the `app` package (and with it app.settings) is imported.
 from app import settings
 from gcloud.aio import pubsub
 from gundi_core.schemas.v2 import Integration, IntegrationSummary
@@ -2172,10 +2174,8 @@ def _clear_gundi_client_caches():
         auth.clear_discovery_cache()
         action_runner = sys.modules.get("app.services.action_runner")
         if action_runner is not None:
-            never = datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
+            # The expiry stamps are only read when a token is present.
             action_runner._portal.cached_token = None
-            action_runner._portal.cached_token_expires_at = never
-            action_runner._portal.cached_token_refresh_expires_at = never
 
     _clear()
     yield

@@ -1145,6 +1145,32 @@ async def test_ephemeral_run_error_does_not_leak_request_or_response_bodies(
 
 
 @pytest.mark.asyncio
+async def test_ephemeral_run_forwards_gundi_client_status(
+        mocker, mock_gundi_client_v2, mock_config_manager,
+        mock_publish_event, mock_ephemeral_action_handlers, mock_reference_action_handler,
+):
+    """gundi-client-v2 3.x reports a non-2xx Gundi response as GundiAPIError
+    (status on the wrapper, no .response), so the runner has to read it there
+    for cdip's upstream_status to match what Gundi answered."""
+    from gundi_client_v2.errors import GundiAPIError
+
+    mock_reference_action_handler.side_effect = GundiAPIError(
+        status_code=401, detail=f'{{"error": "bad api key {_EPHEMERAL_SECRET}"}}',
+    )
+    mocker.patch("app.services.action_runner.action_handlers", mock_ephemeral_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+
+    resp = api_client.post("/v1/actions/execute/", json=_ephemeral_body())
+
+    assert resp.status_code == 401
+    assert _EPHEMERAL_SECRET not in resp.text
+    assert not mock_publish_event.called
+
+
+@pytest.mark.asyncio
 async def test_ephemeral_run_rejects_background_execution(
         mocker, mock_gundi_client_v2, mock_config_manager,
         mock_publish_event, mock_ephemeral_action_handlers, mock_reference_action_handler,
