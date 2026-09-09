@@ -8,6 +8,7 @@ cover code that routes through these helpers — handlers that construct
 directly are out of scope.
 """
 import datetime
+import hashlib
 import logging
 import time
 from typing import Awaitable, Callable, List, TypeVar
@@ -29,35 +30,61 @@ logger = logging.getLogger(__name__)
 # call: every call builds its own client, adopts the shared token, is
 # rejected, evicts it and mints a replacement that is rejected in turn. That
 # is a large amplification aimed at the IdP during an incident, where the
-# shared cache had made it about one request per token lifetime. One forced
-# refresh per process per cooldown bounds it. Per process, so replicas heal
-# independently, and a genuine early invalidation still heals on the first
-# 401: a healthy process has not forced a refresh recently.
-FORCE_REFRESH_COOLDOWN_SECONDS = 60.0
-_last_forced_refresh = None
-_cooldown_warned = False
+# shared cache had made it about one request per token lifetime.
+#
+# The throttle keys on WHICH token was rejected, not merely on how recently a
+# replacement happened. A call holding some older token can always ask for a
+# replacement, because a sibling that already fetched one heals it for free
+# (the client adopts the shared entry without an IdP request) — a plain
+# elapsed-time throttle would block exactly that, failing calls the process
+# had already healed. Only a 401 on the replacement itself is reported as it
+# stands, and only until the cooldown lapses, so a token minted before a fault
+# was fixed is eventually retried rather than leaving the process stuck.
+REPLACEMENT_RETRY_COOLDOWN_SECONDS = 60.0
+_last_replacement = None
+_last_replacement_at = 0.0
+_replacement_warned = False
 
 
-def reset_force_refresh_cooldown() -> None:
-    """Forget the last forced refresh. For tests; the cooldown is process state."""
-    global _last_forced_refresh, _cooldown_warned
-    _last_forced_refresh = None
-    _cooldown_warned = False
+def reset_token_replacement_state() -> None:
+    """Forget the last token replacement. For tests; this is process state."""
+    global _last_replacement, _last_replacement_at, _replacement_warned
+    _last_replacement = None
+    _last_replacement_at = 0.0
+    _replacement_warned = False
 
 
-def _claim_forced_refresh() -> bool:
-    """Take the process's one forced refresh for this cooldown, if it is free.
+def _token_fingerprint(client) -> "str | None":
+    """A hash of the access token the client is holding, or None if it has none.
 
-    Synchronous between the read and the write, so concurrent coroutines
-    cannot both claim it.
+    Hashed rather than kept: an access token is a bearer credential, and module
+    state can surface in a traceback or a repr.
+
+    Anything that is not a string reads as "no token" rather than raising: this
+    runs inside an except block handling the caller's 401, and a TypeError here
+    would replace that with a confusing one.
     """
-    global _last_forced_refresh, _cooldown_warned
-    now = time.monotonic()
-    if _last_forced_refresh is not None and now - _last_forced_refresh < FORCE_REFRESH_COOLDOWN_SECONDS:
+    token = getattr(getattr(client, "cached_token", None), "access_token", None)
+    if not isinstance(token, str) or not token:
+        return None
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _is_the_recent_replacement(fingerprint) -> bool:
+    """True when this is the token the last replacement produced and that was
+    recent, so replacing it again would only mint another rejected token."""
+    if fingerprint is None or fingerprint != _last_replacement:
         return False
-    _last_forced_refresh = now
-    _cooldown_warned = False
-    return True
+    return time.monotonic() - _last_replacement_at < REPLACEMENT_RETRY_COOLDOWN_SECONDS
+
+
+def _remember_replacement(fingerprint) -> None:
+    """Record what the refresh produced. Called only once it has succeeded: a
+    refresh that raised (the IdP is down) replaced nothing."""
+    global _last_replacement, _last_replacement_at, _replacement_warned
+    _last_replacement = fingerprint
+    _last_replacement_at = time.monotonic()
+    _replacement_warned = False
 
 
 class EphemeralWriteBlocked(RuntimeError):
@@ -89,29 +116,32 @@ async def with_fresh_token_on_401(client: GundiClient, call: Callable[[], Awaita
     qualifies: an ``AuthenticationError`` 401 is the token endpoint rejecting
     the credentials themselves, and no new token will change that.
 
-    Replacing is rate-limited per process (FORCE_REFRESH_COOLDOWN_SECONDS): a
-    portal that rejects every token must not turn each portal call into an IdP
-    request. Past the limit the 401 is simply reported, which is what it means.
+    Replacing is throttled per process, keyed on the rejected token: a portal
+    that rejects every token must not turn each portal call into an IdP
+    request. A 401 on the replacement itself is reported as it stands, which
+    is what it means; a 401 on any other token still asks, because the ask is
+    free whenever a sibling has already fetched a replacement to adopt.
     """
     try:
         return await call()
     except GundiAPIError as e:
         if e.status_code != 401:
             raise
-        if not _claim_forced_refresh():
-            # A replacement token was fetched moments ago and this 401 is on
-            # that one: minting another would not help the caller and would
-            # aim the retry at the IdP. Warn once per cooldown, not once per
-            # call: a scheduled pull would otherwise warn on every tick.
-            global _cooldown_warned
-            if not _cooldown_warned:
-                _cooldown_warned = True
+        if _is_the_recent_replacement(_token_fingerprint(client)):
+            # This 401 is on the token the last replacement produced: minting
+            # another would not help the caller and would aim the retry at the
+            # IdP. Warn once per replacement, not once per call, or a scheduled
+            # pull warns on every tick (as _skip_invalid_config avoids doing).
+            global _replacement_warned
+            if not _replacement_warned:
+                _replacement_warned = True
                 logger.warning(
-                    "Gundi answered 401 again within %ss of replacing the OAuth token; "
-                    "reporting these instead of fetching another.", FORCE_REFRESH_COOLDOWN_SECONDS,
+                    "Gundi answered 401 on the OAuth token that replaced the last rejected one; "
+                    "reporting these as they stand for up to %ss.", REPLACEMENT_RETRY_COOLDOWN_SECONDS,
                 )
             raise
     await client.get_auth_header(force_refresh_token=True)
+    _remember_replacement(_token_fingerprint(client))
     return await call()
 
 

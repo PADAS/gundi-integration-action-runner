@@ -7,6 +7,7 @@ which is all the policies retried on before the 3.7 upgrade, so a transient
 simulated failures with httpx errors, stayed green.
 """
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import httpx
@@ -163,6 +164,8 @@ def _portal_rejecting_the_token_once(mocker, method: str, then):
     to evict the rejected token from the shared cache and fetch a new one."""
     client = mocker.MagicMock()
     setattr(client, method, AsyncMock(side_effect=[GundiAPIError(status_code=401, detail="Invalid token."), then]))
+    # As the real client holds it: the throttle reads the rejected token from here.
+    client.cached_token = SimpleNamespace(access_token="rejected-token")
     client.get_auth_header = AsyncMock(return_value={"authorization": "Bearer fresh"})
     client.__aenter__ = AsyncMock(return_value=client)
     client.__aexit__ = AsyncMock(return_value=None)
@@ -207,6 +210,31 @@ async def test_registration_replaces_a_rejected_token(no_backoff, mocker):
 
     client.get_auth_header.assert_awaited_once_with(force_refresh_token=True)
     assert client.register_integration_type.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_a_failed_refresh_does_not_spend_the_replacement_window(mocker):
+    """When the IdP is unreachable, get_auth_header raises and no token was
+    replaced. The next 401 must still be allowed to try, or one unlucky
+    moment silences the recovery path for the whole cooldown and the log
+    would blame a replacement that never happened."""
+    from app.services import gundi
+
+    client = mocker.MagicMock()
+    client.cached_token = SimpleNamespace(access_token="t0")
+    client.get_auth_header = AsyncMock(side_effect=[
+        AuthenticationError("keycloak unreachable", transport=True),
+        {"authorization": "Bearer fresh"},
+    ])
+    call = AsyncMock(side_effect=[
+        GundiAPIError(status_code=401), GundiAPIError(status_code=401), "ok",
+    ])
+
+    with pytest.raises(AuthenticationError):
+        await gundi.with_fresh_token_on_401(client, call)
+    assert await gundi.with_fresh_token_on_401(client, call) == "ok"
+
+    assert client.get_auth_header.await_count == 2
 
 
 @pytest.mark.asyncio

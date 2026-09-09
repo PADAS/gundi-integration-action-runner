@@ -2178,8 +2178,8 @@ def _clear_gundi_client_caches():
             action_runner._portal.cached_token = None
         gundi_helpers = sys.modules.get("app.services.gundi")
         if gundi_helpers is not None:
-            # with_fresh_token_on_401 rate-limits forced refreshes per process.
-            gundi_helpers.reset_force_refresh_cooldown()
+            # with_fresh_token_on_401 throttles token replacement per process.
+            gundi_helpers.reset_token_replacement_state()
 
     _clear()
     yield
