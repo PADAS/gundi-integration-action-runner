@@ -2,6 +2,11 @@ import asyncio
 from typing import NamedTuple, Optional
 
 import aiohttp
+# app.settings before gundi_client_v2: importing anything from the library's
+# package runs its .env loader, and the first loader wins per key (see
+# app/settings/base.py). Every service module that imports the library does
+# this, so the ordering holds however a module is reached first.
+from app import settings  # noqa: F401
 from gundi_client_v2.errors import AuthenticationError, GundiAPIError
 import httpx
 

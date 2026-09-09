@@ -6,6 +6,7 @@ which is all the policies retried on before the 3.7 upgrade, so a transient
 503 or a Keycloak outage failed on the first attempt while the suite, which
 simulated failures with httpx errors, stayed green.
 """
+import asyncio
 from unittest.mock import AsyncMock
 
 import httpx
@@ -31,12 +32,27 @@ def _status_error(status_code):
     )
 
 
-def _discovery_failure(cause):
-    """How gundi_client_v2.auth wraps an OIDC discovery failure: no status, no
-    transport flag, the httpx error as the cause."""
-    exc = AuthenticationError(f"OIDC discovery failed: {cause}")
-    exc.__cause__ = cause
-    return exc
+def _discovery_failure(outcome):
+    """An OIDC discovery failure exactly as gundi_client_v2.auth wraps it (no
+    status, no transport flag, httpx's error as the cause), produced by the
+    library's own discovery call against an IdP that answers ``outcome``: an
+    HTTP status, or an exception the transport raises."""
+    from gundi_client_v2 import auth
+
+    def idp(request):
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return httpx.Response(outcome)
+
+    async def discover():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(idp)) as session:
+            await auth.discover_token_endpoint(session, "https://auth.example.org/realms/x")
+
+    try:
+        asyncio.run(discover())
+    except AuthenticationError as e:
+        return e
+    raise AssertionError("discover_token_endpoint did not raise")
 
 
 @pytest.mark.parametrize("exc", [
@@ -47,8 +63,8 @@ def _discovery_failure(cause):
     AuthenticationError("keycloak 503", status_code=503),
     AuthenticationError("keycloak rate limit", status_code=429),
     _discovery_failure(httpx.ConnectError("keycloak unreachable")),  # OIDC discovery, network
-    _discovery_failure(_status_error(503)),  # OIDC discovery endpoint down during a Keycloak restart
-    _discovery_failure(_status_error(429)),
+    _discovery_failure(503),  # OIDC discovery endpoint down during a Keycloak restart
+    _discovery_failure(429),
     httpx.ConnectError("portal unreachable"),
     httpx.ReadTimeout("timed out"),
     _status_error(503),
@@ -67,7 +83,7 @@ def test_transient_failures_are_retried(exc):
     AuthenticationError("No token URL configured"),
     AuthenticationError("No credentials configured"),
     AuthenticationError("malformed token response"),
-    _discovery_failure(_status_error(404)),  # OIDC discovery document missing
+    _discovery_failure(404),  # OIDC discovery document missing
     _status_error(404),
     ValueError("not an HTTP problem at all"),
 ])
@@ -139,3 +155,77 @@ async def test_registration_does_not_retry_a_rejected_registration(no_backoff, m
         await self_registration.register_integration_in_gundi(gundi_client=client, type_slug="acme_tracker")
 
     assert client.register_integration_type.await_count == 1
+
+
+def _portal_rejecting_the_token_once(mocker, method: str, then):
+    """A GundiClient whose ``method`` answers 401 once, then ``then``; its
+    get_auth_header is what the runner must call, with force_refresh_token,
+    to evict the rejected token from the shared cache and fetch a new one."""
+    client = mocker.MagicMock()
+    setattr(client, method, AsyncMock(side_effect=[GundiAPIError(status_code=401, detail="Invalid token."), then]))
+    client.get_auth_header = AsyncMock(return_value={"authorization": "Bearer fresh"})
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=None)
+    return client
+
+
+@pytest.mark.asyncio
+async def test_api_key_lookup_replaces_a_rejected_token(mocker):
+    from app.services import gundi
+
+    client = _portal_rejecting_the_token_once(mocker, "get_integration_api_key", "k")
+    mocker.patch.object(gundi, "GundiClient", mocker.MagicMock(return_value=client))
+
+    assert await gundi._get_gundi_api_key("abc-123") == "k"
+
+    client.get_auth_header.assert_awaited_once_with(force_refresh_token=True)
+    assert client.get_integration_api_key.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_config_reload_replaces_a_rejected_token(mocker, integration_v2):
+    from app.services import config_manager
+
+    client = _portal_rejecting_the_token_once(mocker, "get_integration_details", integration_v2)
+    mocker.patch.object(config_manager, "GundiClient", mocker.MagicMock(return_value=client))
+
+    manager = config_manager.IntegrationConfigurationManager()
+    assert await manager._fetch_integration_from_gundi(str(integration_v2.id)) is integration_v2
+
+    client.get_auth_header.assert_awaited_once_with(force_refresh_token=True)
+    assert client.get_integration_details.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_registration_replaces_a_rejected_token(no_backoff, mocker):
+    from app.services import self_registration
+
+    mocker.patch.object(self_registration, "action_handlers", {})
+    client = _portal_rejecting_the_token_once(mocker, "register_integration_type", {"id": "1"})
+
+    assert await self_registration.register_integration_in_gundi(gundi_client=client, type_slug="acme_tracker") == {"id": "1"}
+
+    client.get_auth_header.assert_awaited_once_with(force_refresh_token=True)
+    assert client.register_integration_type.await_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exc", [
+    GundiAPIError(status_code=403, detail="forbidden"),
+    GundiAPIError(status_code=503),
+    AuthenticationError("invalid_client", status_code=401, error="invalid_client"),
+])
+async def test_only_an_api_401_is_read_as_a_rejected_token(mocker, exc):
+    """A 403 is a permission answer, a 5xx belongs to the retry policy, and a
+    401 from the token endpoint means the credentials, not a stale token."""
+    from app.services.gundi import with_fresh_token_on_401
+
+    client = mocker.MagicMock()
+    client.get_auth_header = AsyncMock()
+    call = AsyncMock(side_effect=exc)
+
+    with pytest.raises(type(exc)):
+        await with_fresh_token_on_401(client, call)
+
+    assert call.await_count == 1
+    assert not client.get_auth_header.await_count

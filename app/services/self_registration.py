@@ -20,6 +20,7 @@ from app.settings import (
 )
 from .core import ActionTypeEnum
 from app.webhooks.core import get_webhook_handler, GenericJsonTransformConfig
+from .gundi import with_fresh_token_on_401
 from .retry_policies import is_transient_gundi_error
 
 logger = logging.getLogger(__name__)
@@ -120,6 +121,8 @@ async def register_integration_in_gundi(gundi_client, type_slug=None, type_name=
         on=is_transient_gundi_error, wait_initial=datetime.timedelta(seconds=1), attempts=3
     ):
         with attempt:
-            response = await gundi_client.register_integration_type(data)
+            response = await with_fresh_token_on_401(
+                gundi_client, lambda: gundi_client.register_integration_type(data)
+            )
     logger.info(f"Registering integration type '{integration_type_slug}'...DONE")
     return response

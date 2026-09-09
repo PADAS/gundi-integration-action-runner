@@ -20,6 +20,7 @@ from app.services.action_scheduler import trigger_action
 from app.api_schemas import IntegrationState
 from app.services.action_runner import execute_action
 from app.services.errors import IntegrationAuthError
+from gundi_client_v2.errors import AuthenticationError, GundiAPIError
 from app.services.utils import find_config_for_action
 
 api_client = TestClient(app)
@@ -712,26 +713,25 @@ def _gundi_api_error_from_httpx(status_code: int, body: str, url: str = "https:/
     raise AssertionError("raise_for_status did not raise")
 
 
-def _auth_error_from_token_post(secret: str) -> Exception:
-    """An AuthenticationError as gundi_client_v2.auth raises it for a rejected
-    token request: chained from httpx's status error, whose request body is the
-    token POST carrying the client secret."""
-    import httpx
+async def _auth_error_from_token_post(secret: str) -> Exception:
+    """An AuthenticationError exactly as gundi_client_v2.auth raises it for a
+    rejected token request: through the library's own token POST, so the
+    shape (status, error code, httpx's error chained as the cause, its
+    request body carrying the client secret) cannot drift from what the
+    client produces. The redaction guarantee under test only means something
+    while the secret really is on the chained request, so that is checked."""
+    from gundi_client_v2 import auth
     from gundi_client_v2.errors import AuthenticationError
 
-    request = httpx.Request(
-        "POST", "https://auth.example.org/realms/x/protocol/openid-connect/token",
-        content=f"client_id=cdip-integrations&client_secret={secret}&grant_type=client_credentials".encode(),
-    )
-    response = httpx.Response(401, text='{"error": "invalid_client"}', request=request)
+    transport = httpx.MockTransport(lambda request: httpx.Response(401, text='{"error": "invalid_client"}'))
+    payload = {"client_id": "cdip-integrations", "client_secret": secret, "grant_type": "client_credentials"}
     try:
-        response.raise_for_status()
-    except httpx.HTTPStatusError as e:
-        try:
-            raise AuthenticationError("Token request failed: HTTP 401", status_code=401, error="invalid_client") from e
-        except AuthenticationError as wrapped:
-            return wrapped
-    raise AssertionError("unreachable")
+        async with httpx.AsyncClient(transport=transport) as session:
+            await auth._post_token(session, "https://auth.example.org/realms/x/protocol/openid-connect/token", payload)
+    except AuthenticationError as e:
+        assert secret in e.__cause__.request.content.decode(), "the token POST no longer carries the secret"
+        return e
+    raise AssertionError("_post_token did not raise")
 
 
 @pytest.mark.asyncio
@@ -779,7 +779,7 @@ async def test_execute_action_reports_gundi_auth_failure_as_gundi_side(
     rejecting the integration's credentials, and the token request chained
     under it must not be published."""
 
-    handler = AsyncMock(side_effect=_auth_error_from_token_post("SUPERSECRET-client-secret"))
+    handler = AsyncMock(side_effect=await _auth_error_from_token_post("SUPERSECRET-client-secret"))
     del handler.action_title
     mocker.patch("app.services.action_runner.action_handlers", {"pull_observations": (handler, MockPullActionConfiguration, None)})
     mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
@@ -1295,18 +1295,23 @@ async def test_ephemeral_run_error_does_not_leak_request_or_response_bodies(
 
 
 @pytest.mark.asyncio
-async def test_ephemeral_run_forwards_gundi_client_status(
+@pytest.mark.parametrize("gundi_failure, title", [
+    (GundiAPIError(status_code=401, detail=f'{{"error": "bad api key {_EPHEMERAL_SECRET}"}}'),
+     "Gundi API request failed"),
+    (AuthenticationError(f"Token request failed: HTTP 401 {_EPHEMERAL_SECRET}", status_code=401, error="invalid_client"),
+     "Could not authenticate with Gundi"),
+], ids=["api", "auth"])
+async def test_ephemeral_run_does_not_forward_a_gundi_side_status(
         mocker, mock_gundi_client_v2, mock_config_manager,
         mock_publish_event, mock_ephemeral_action_handlers, mock_reference_action_handler,
+        gundi_failure, title,
 ):
-    """gundi-client-v2 3.x reports a non-2xx Gundi response as GundiAPIError
-    (status on the wrapper, no .response), so the runner has to read it there
-    for cdip's upstream_status to match what Gundi answered."""
-    from gundi_client_v2.errors import GundiAPIError
-
-    mock_reference_action_handler.side_effect = GundiAPIError(
-        status_code=401, detail=f'{{"error": "bad api key {_EPHEMERAL_SECRET}"}}',
-    )
+    """A Gundi-side failure during a draft run (the runner's own OAuth
+    client rejected, a portal outage) is not the source system's verdict:
+    forwarded as the response status, a Gundi 401 would read in the portal
+    as the provider rejecting the draft's credentials. The body names Gundi
+    and the status stays the runner's generic failure."""
+    mock_reference_action_handler.side_effect = gundi_failure
     mocker.patch("app.services.action_runner.action_handlers", mock_ephemeral_action_handlers)
     mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
     mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
@@ -1315,7 +1320,8 @@ async def test_ephemeral_run_forwards_gundi_client_status(
 
     resp = api_client.post("/v1/actions/execute/", json=_ephemeral_body())
 
-    assert resp.status_code == 401
+    assert resp.status_code == 500
+    assert resp.json()["detail"]["error"].startswith(title)
     assert _EPHEMERAL_SECRET not in resp.text
     assert not mock_publish_event.called
 

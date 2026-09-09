@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 
+import httpx
 import pytest
 from gundi_client_v2 import GundiClient
 from gundi_client_v2 import settings as client_settings
@@ -78,7 +79,12 @@ def _settings_in_subprocess(env_overrides: dict, probe: str) -> str:
     return result.stdout.strip().splitlines()[-1]
 
 
-@pytest.mark.parametrize("entry_point", ["app.main", "app.register", "app.services.action_runner", "app.services.config_manager", "app.services.webhooks"])
+@pytest.mark.parametrize("entry_point", [
+    "app.main", "app.register", "app.services.action_runner", "app.services.config_manager", "app.services.webhooks",
+    # Leaf modules that import gundi_client_v2.errors: reaching the library's
+    # package runs its .env loader, so they must load the runner's first too.
+    "app.services.errors", "app.services.retry_policies", "app.services.gundi",
+])
 def test_runner_settings_load_before_the_client_library(entry_point):
     """Both the runner and gundi-client-v2 load a .env through environs'
     read_env(), and the first loader wins per key. app/settings/base.py imports
@@ -228,3 +234,85 @@ def test_portal_singleton_token_is_reset_between_tests():
 
     assert _portal.cached_token is None
     _portal.cached_token = "leaked-if-seen-by-the-next-test"
+
+
+def _api_and_idp(issued_tokens, accepted):
+    """A MockTransport standing in for Keycloak and the Gundi API: the token
+    endpoint hands out ``issued_tokens`` in order; the API answers 401 to any
+    bearer not in ``accepted`` (a set the test edits to invalidate a token
+    server-side) and a 200 api-key body otherwise."""
+    issued = iter(issued_tokens)
+    calls = {"token": 0, "api": 0}
+
+    def handler(request):
+        if request.url.path.endswith("/token"):
+            calls["token"] += 1
+            return httpx.Response(200, json={
+                "access_token": next(issued), "token_type": "Bearer", "expires_in": 1800,
+                "refresh_token": "r", "refresh_expires_in": 3600,
+            })
+        calls["api"] += 1
+        bearer = request.headers.get("authorization", "").split(" ")[-1]
+        if bearer not in accepted:
+            return httpx.Response(401, json={"detail": "Invalid token."})
+        return httpx.Response(200, json={"api_key": "k"})
+
+    return httpx.MockTransport(handler), calls
+
+
+def _replica(transport):
+    """A bare, memory-only client, as the runner builds them, talking over ``transport``."""
+    client = GundiClient(
+        base_url="https://api.example.org", oauth_client_id="svc", oauth_client_secret="s",
+        oauth_token_url="https://auth.example.org/realms/x/protocol/openid-connect/token",
+        token_cache_url="",
+    )
+    client._session = httpx.AsyncClient(transport=transport)
+    return client
+
+
+@pytest.mark.asyncio
+async def test_a_token_the_api_rejects_is_replaced_for_every_client():
+    """The shared cache judges a token by its expiry only, and the client
+    refreshes only on the API's login redirect, never on a 401. So a token
+    Keycloak invalidated early (a restart, a session revocation) would be
+    served to every replica for the rest of its lifetime, and every portal
+    call would fail with a 401 that the retry policy rightly treats as
+    final. Before the shared cache each call minted a fresh token and
+    self-healed. The runner's portal calls must evict the rejected token,
+    fetch a replacement once and retry; a replica that then hits the same
+    401 adopts the replacement instead of minting a third token."""
+    from app.services.gundi import with_fresh_token_on_401
+
+    accepted = {"stale"}
+    transport, calls = _api_and_idp(["stale", "fresh"], accepted)
+    first, second = _replica(transport), _replica(transport)
+
+    assert await first.get_integration_api_key("i") == "k"  # mints "stale", shared
+    accepted.clear(); accepted.add("fresh")  # Keycloak invalidates it
+
+    assert await with_fresh_token_on_401(second, lambda: second.get_integration_api_key("i")) == "k"
+    assert await with_fresh_token_on_401(first, lambda: first.get_integration_api_key("i")) == "k"
+
+    assert calls["token"] == 2, "the second replica must adopt the replacement, not mint a third token"
+    assert first.cached_token.access_token == second.cached_token.access_token == "fresh"
+
+
+@pytest.mark.asyncio
+async def test_a_token_rejected_after_replacement_is_final():
+    """One replacement per call: if the fresh token is rejected too, the 401
+    is the answer (and the retry policy does not retry it)."""
+    from gundi_client_v2.errors import GundiAPIError
+
+    from app.services.gundi import with_fresh_token_on_401
+    from app.services.retry_policies import is_transient_gundi_error
+
+    transport, calls = _api_and_idp(["stale", "fresh", "third"], accepted=set())
+    client = _replica(transport)
+
+    with pytest.raises(GundiAPIError) as info:
+        await with_fresh_token_on_401(client, lambda: client.get_integration_api_key("i"))
+
+    assert info.value.status_code == 401
+    assert calls == {"token": 2, "api": 2}
+    assert is_transient_gundi_error(info.value) is False

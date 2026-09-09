@@ -8,12 +8,17 @@ cover code that routes through these helpers — handlers that construct
 directly are out of scope.
 """
 import datetime
-from typing import List
+from typing import Awaitable, Callable, List, TypeVar
 import stamina
+# app.settings before gundi_client_v2 (see app/services/errors.py).
+from app import settings  # noqa: F401
 from gundi_client_v2.client import GundiClient, GundiDataSenderClient
+from gundi_client_v2.errors import GundiAPIError
 
 from .activity_logger import ephemeral_run
 from .retry_policies import is_transient_gundi_error
+
+T = TypeVar("T")
 
 
 class EphemeralWriteBlocked(RuntimeError):
@@ -25,6 +30,33 @@ def _block_if_ephemeral(op: str) -> None:
         raise EphemeralWriteBlocked(
             f"{op} is not allowed on the ephemeral (draft-integration) path"
         )
+
+
+async def with_fresh_token_on_401(client: GundiClient, call: Callable[[], Awaitable[T]]) -> T:
+    """Run one portal call; if Gundi answers 401, replace the token and retry once.
+
+    Since gundi-client-v2 3.7 every client shares one OAuth token per set of
+    credentials, judged live by its expiry alone, and the client only fetches
+    a new one on the API's login redirect, never on a 401. A token Keycloak
+    invalidated early (a restart, a session revocation) would otherwise be
+    served to every replica until it expires, failing every portal call with
+    a 401 that the retry policy rightly treats as final. Before the shared
+    cache each call minted its own token, so this healed itself.
+
+    ``force_refresh_token`` evicts the shared entry (or adopts a replacement a
+    sibling already fetched) and gets a fresh token, so the first replica to
+    see the 401 heals the fleet; the others adopt without an IdP call. One
+    replacement per call: a second 401 is the answer. Only ``GundiAPIError``
+    qualifies: an ``AuthenticationError`` 401 is the token endpoint rejecting
+    the credentials themselves, and no new token will change that.
+    """
+    try:
+        return await call()
+    except GundiAPIError as e:
+        if e.status_code != 401:
+            raise
+    await client.get_auth_header(force_refresh_token=True)
+    return await call()
 
 
 # One retry policy for every request-time Gundi API call (the send helpers
@@ -67,13 +99,12 @@ async def _get_gundi_api_key(integration_id):
     # send helpers below, and a second policy nested inside the first restarts
     # the inner six attempts on each outer attempt (36 portal calls, many
     # minutes of sleep) for a portal that keeps failing.
-    # An ephemeral run's synthetic integration has no persisted api key —
-    # letting this reach the portal would 404 and then stamina would retry
-    # for up to 5 minutes with the portal-facing request thread held.
+    # An ephemeral run's synthetic integration has no portal row: letting
+    # this reach the portal would 404 for an integration that does not exist.
     _block_if_ephemeral("_get_gundi_api_key")
     async with GundiClient() as gundi_client:
-        return await gundi_client.get_integration_api_key(
-            integration_id=integration_id
+        return await with_fresh_token_on_401(
+            gundi_client, lambda: gundi_client.get_integration_api_key(integration_id=integration_id)
         )
 
 
