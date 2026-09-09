@@ -1,11 +1,14 @@
 import asyncio
 import datetime
 import json
+import sys
 
 import httpx
 import pydantic
 import pytest
 from unittest.mock import MagicMock
+# GUNDI_TOKEN_CACHE_URL is defaulted to "" for tests in the root conftest.py,
+# which runs before anything under app/ (and with it app.settings) is imported.
 from app import settings
 from gcloud.aio import pubsub
 from gundi_core.schemas.v2 import Integration, IntegrationSummary
@@ -2151,3 +2154,29 @@ def mock_webhook_request_payload_for_fixed_schema():
         "lat": -2.3828796,
         "lon": 35.3380609,
     }
+
+
+@pytest.fixture(autouse=True)
+def _clear_gundi_client_caches():
+    """Keep gundi-client-v2's process-wide caches test-isolated.
+
+    Since gundi-client-v2 3.7 every GundiClient in a process shares one OAuth
+    token per set of credentials; without this, a token minted in one test would
+    be served to the clients built in the next. The OIDC discovery cache is
+    cleared for the same reason. The module-level portal client in
+    action_runner is a singleton that also keeps the token on the instance, and
+    get_access_token consults that before the shared cache, so it is reset too.
+    """
+    from gundi_client_v2 import auth, token_cache
+
+    def _clear():
+        token_cache.clear_token_cache()
+        auth.clear_discovery_cache()
+        action_runner = sys.modules.get("app.services.action_runner")
+        if action_runner is not None:
+            # The expiry stamps are only read when a token is present.
+            action_runner._portal.cached_token = None
+
+    _clear()
+    yield
+    _clear()

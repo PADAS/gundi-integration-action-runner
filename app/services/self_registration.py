@@ -3,7 +3,6 @@ import datetime
 import logging
 
 import stamina
-import httpx
 
 from app.actions import (
     action_handlers,
@@ -21,6 +20,7 @@ from app.settings import (
 )
 from .core import ActionTypeEnum
 from app.webhooks.core import get_webhook_handler, GenericJsonTransformConfig
+from .retry_policies import is_transient_gundi_error
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +117,7 @@ async def register_integration_in_gundi(gundi_client, type_slug=None, type_name=
     logger.info(f"Registering '{integration_type_slug}' with actions: '{actions}'")
     # Register the integration type and actions in Gundi
     async for attempt in stamina.retry_context(
-        on=httpx.HTTPError, wait_initial=datetime.timedelta(seconds=1), attempts=3
+        on=is_transient_gundi_error, wait_initial=datetime.timedelta(seconds=1), attempts=3
     ):
         with attempt:
             response = await gundi_client.register_integration_type(data)

@@ -7,8 +7,10 @@ from fastapi import FastAPI, Request, status, BackgroundTasks
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from app.routers import actions, webhooks, config_events
+# app.settings first: the routers pull in gundi_client_v2, which loads a .env of
+# its own, and the first loader wins per key (see app/settings/base.py).
 import app.settings as settings
+from app.routers import actions, webhooks, config_events
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.services.action_runner import execute_action, _portal

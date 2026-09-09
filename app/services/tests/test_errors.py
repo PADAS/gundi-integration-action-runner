@@ -3,6 +3,7 @@ import asyncio
 import aiohttp
 import httpx
 import pytest
+from gundi_client_v2.errors import AuthenticationError, GundiAPIError
 
 from app.services.errors import (
     IntegrationError,
@@ -15,6 +16,8 @@ from app.services.errors import (
     format_classified_error,
     format_error_message,
     source_status_code,
+    GUNDI_API_ERROR_TITLE,
+    GUNDI_AUTH_ERROR_TITLE,
 )
 
 
@@ -197,11 +200,38 @@ def test_classify_builtin_timeout_as_connectivity():
         (_http_status_error(404), 404),
         (IntegrationAuthError("nope", status_code=401), 401),
         (IntegrationAuthError("nope"), None),
+        # gundi-client-v2 3.x wraps the Gundi API's non-2xx (no .response on it)
+        (GundiAPIError(status_code=429, detail="slow down"), 429),
+        (AuthenticationError("invalid_client", status_code=401, error="invalid_client"), 401),
+        (AuthenticationError("keycloak unreachable", transport=True), None),
         (ValueError("no response here"), None),
     ],
 )
 def test_source_status_code_reads_every_carrier(exc, expected):
     assert source_status_code(exc) == expected
+
+
+@pytest.mark.parametrize(
+    "exc,expected_title",
+    [
+        (GundiAPIError(status_code=401, detail="bad api key"), GUNDI_API_ERROR_TITLE),
+        (GundiAPIError(status_code=429), GUNDI_API_ERROR_TITLE),
+        (GundiAPIError(status_code=503), GUNDI_API_ERROR_TITLE),
+        (AuthenticationError("Token request failed: HTTP 401", status_code=401, error="invalid_client"), GUNDI_AUTH_ERROR_TITLE),
+        (AuthenticationError("keycloak unreachable", transport=True), GUNDI_AUTH_ERROR_TITLE),
+    ],
+)
+def test_classify_error_reports_gundi_client_failures_as_gundi_side(exc, expected_title):
+    """A 401 from Gundi or its identity provider is the runner's OAuth
+    configuration, not the provider's credentials: never the provider's
+    "Authentication failed" title, but the status is still carried so the
+    ephemeral path can forward it."""
+    classified = classify_error(exc)
+    assert classified is not None
+    assert classified.error_type == "gundi"
+    assert classified.title == expected_title
+    assert classified.status_code == exc.status_code
+    assert "provider" not in format_classified_error(classified).lower()
 
 
 @pytest.mark.parametrize("junk", ["401", True, 4.01, None])

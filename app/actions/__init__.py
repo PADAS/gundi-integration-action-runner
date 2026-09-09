@@ -1,3 +1,9 @@
+# Settings first: discover_actions() below executes the connector's handlers
+# module at import, and app.settings installs the shared token cache URL into
+# gundi-client-v2's settings, so a GundiClient() built at module scope there
+# only picks it up if this runs first. Done here rather than in app/__init__
+# so lightweight imports (app.services.utils, app.actions.core) stay light.
+from app import settings  # noqa: F401
 from .core import *
 
 

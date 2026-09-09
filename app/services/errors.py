@@ -2,6 +2,7 @@ import asyncio
 from typing import NamedTuple, Optional
 
 import aiohttp
+from gundi_client_v2.errors import AuthenticationError, GundiAPIError
 import httpx
 
 
@@ -78,6 +79,13 @@ class IntegrationConfigurationError(IntegrationError):
     default_title = "Invalid configuration"
 
 
+# Titles for failures of the runner's own requests to Gundi (raised by
+# gundi-client-v2). Kept apart from the provider titles above: a Gundi 401 is
+# the runner's OAuth configuration, not the source's credentials.
+GUNDI_API_ERROR_TITLE = "Gundi API request failed"
+GUNDI_AUTH_ERROR_TITLE = "Could not authenticate with Gundi"
+
+
 class ClassifiedError(NamedTuple):
     error_type: str
     title: str
@@ -98,7 +106,8 @@ CONNECTIVITY_EXCEPTIONS = (
 def source_status_code(exc: Exception) -> Optional[int]:
     """The HTTP status the third party answered with, if the exception carries one.
 
-    Three shapes carry it: `IntegrationError.status_code`, aiohttp's
+    Four shapes carry it: `IntegrationError.status_code`, gundi-client-v2's
+    `GundiAPIError` / `AuthenticationError` `.status_code`, aiohttp's
     `ClientResponseError.status`, and the duck-typed `.response.status_code`
     (httpx.HTTPStatusError, requests.HTTPError, and anything else that keeps
     the response on the exception). This is the single reader shared by the
@@ -114,6 +123,11 @@ def source_status_code(exc: Exception) -> Optional[int]:
         code = getattr(exc, "status_code", None)
     elif isinstance(exc, aiohttp.ClientResponseError):
         code = exc.status
+    elif isinstance(exc, (GundiAPIError, AuthenticationError)):
+        # gundi-client-v2 3.x wraps the Gundi API's non-2xx responses (and the
+        # token endpoint's) instead of letting httpx's error escape: the status
+        # is on the wrapper, and there is no `.response`.
+        code = exc.status_code
     else:
         # getattr chain: non-HTTP exceptions have no .response attribute.
         code = getattr(getattr(exc, "response", None), "status_code", None)
@@ -125,10 +139,12 @@ def source_status_code(exc: Exception) -> Optional[int]:
 def classify_error(exc: Exception) -> Optional[ClassifiedError]:
     """Classify a third-party failure for consistent activity-log reporting.
 
-    Explicitly raised `IntegrationError` subclasses always win. Otherwise fall
-    back to heuristics based on signals the action runner already reads
-    (`exc.response.status_code`, exception type). Returns None when the error
-    can't be classified — callers keep the generic format.
+    Explicitly raised `IntegrationError` subclasses always win. A failure of
+    the runner's own call to Gundi (gundi-client-v2's errors) is reported as
+    such, never with a provider title. Otherwise fall back to heuristics based
+    on signals the action runner already reads (`exc.response.status_code`,
+    exception type). Returns None when the error can't be classified — callers
+    keep the generic format.
     """
     status_code = source_status_code(exc)
     if isinstance(exc, IntegrationError):
@@ -143,6 +159,13 @@ def classify_error(exc: Exception) -> Optional[ClassifiedError]:
     # text (URL plus a "For more information check: ..." line) — only the
     # first line is useful as a short, human-first message.
     first_line = (str(exc).splitlines() or [""])[0]
+    if isinstance(exc, (GundiAPIError, AuthenticationError)):
+        # Raised by gundi-client-v2: the runner's own request to Gundi, or to
+        # Gundi's identity provider, failed. Not a verdict from the provider,
+        # so none of the provider titles below, which would send an operator
+        # to the source's credentials when the fault is on the Gundi side.
+        title = GUNDI_AUTH_ERROR_TITLE if isinstance(exc, AuthenticationError) else GUNDI_API_ERROR_TITLE
+        return ClassifiedError("gundi", title, first_line, status_code)
     if status_code in (401, 403):
         return ClassifiedError("auth", IntegrationAuthError.default_title, first_line, status_code)
     if status_code == 429:

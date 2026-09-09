@@ -9,11 +9,11 @@ directly are out of scope.
 """
 import datetime
 from typing import List
-import httpx
 import stamina
 from gundi_client_v2.client import GundiClient, GundiDataSenderClient
 
 from .activity_logger import ephemeral_run
+from .retry_policies import is_transient_gundi_error
 
 
 class EphemeralWriteBlocked(RuntimeError):
@@ -53,7 +53,7 @@ def _block_if_ephemeral(op: str) -> None:
 # hangs should turn background processing on or shorten this policy; the
 # tests in test_gundi_api.py pin the loop-overhead bound.
 GUNDI_API_RETRY = dict(
-    on=httpx.HTTPError,
+    on=is_transient_gundi_error,
     attempts=6,
     timeout=120.0,
     wait_initial=2.0,
