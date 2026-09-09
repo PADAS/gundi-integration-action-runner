@@ -6,6 +6,7 @@ which is all the policies retried on before the 3.7 upgrade, so a transient
 503 or a Keycloak outage failed on the first attempt while the suite, which
 simulated failures with httpx errors, stayed green.
 """
+import asyncio
 from unittest.mock import AsyncMock
 
 import httpx
@@ -31,12 +32,27 @@ def _status_error(status_code):
     )
 
 
-def _discovery_failure(cause):
-    """How gundi_client_v2.auth wraps an OIDC discovery failure: no status, no
-    transport flag, the httpx error as the cause."""
-    exc = AuthenticationError(f"OIDC discovery failed: {cause}")
-    exc.__cause__ = cause
-    return exc
+def _discovery_failure(outcome):
+    """An OIDC discovery failure exactly as gundi_client_v2.auth wraps it (no
+    status, no transport flag, httpx's error as the cause), produced by the
+    library's own discovery call against an IdP that answers ``outcome``: an
+    HTTP status, or an exception the transport raises."""
+    from gundi_client_v2 import auth
+
+    def idp(request):
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return httpx.Response(outcome)
+
+    async def discover():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(idp)) as session:
+            await auth.discover_token_endpoint(session, "https://auth.example.org/realms/x")
+
+    try:
+        asyncio.run(discover())
+    except AuthenticationError as e:
+        return e
+    raise AssertionError("discover_token_endpoint did not raise")
 
 
 @pytest.mark.parametrize("exc", [
@@ -47,8 +63,8 @@ def _discovery_failure(cause):
     AuthenticationError("keycloak 503", status_code=503),
     AuthenticationError("keycloak rate limit", status_code=429),
     _discovery_failure(httpx.ConnectError("keycloak unreachable")),  # OIDC discovery, network
-    _discovery_failure(_status_error(503)),  # OIDC discovery endpoint down during a Keycloak restart
-    _discovery_failure(_status_error(429)),
+    _discovery_failure(503),  # OIDC discovery endpoint down during a Keycloak restart
+    _discovery_failure(429),
     httpx.ConnectError("portal unreachable"),
     httpx.ReadTimeout("timed out"),
     _status_error(503),
@@ -67,7 +83,7 @@ def test_transient_failures_are_retried(exc):
     AuthenticationError("No token URL configured"),
     AuthenticationError("No credentials configured"),
     AuthenticationError("malformed token response"),
-    _discovery_failure(_status_error(404)),  # OIDC discovery document missing
+    _discovery_failure(404),  # OIDC discovery document missing
     _status_error(404),
     ValueError("not an HTTP problem at all"),
 ])

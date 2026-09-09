@@ -6,10 +6,19 @@ the config-model whitelist in `action_runner.execute_action`). Guards only
 cover code that routes through these helpers — handlers that construct
 `GundiDataSenderClient`, an `httpx.AsyncClient`, or a PubSub publisher
 directly are out of scope.
+
+A token the Gundi API rejects with a 401 is replaced by gundi-client-v2 itself
+since 3.7.1 (PADAS/gundi-client#61): it retries the request once with a fresh
+token, throttled per credential identity so a portal that rejects everything
+cannot turn each call into a token request. The runner needs nothing of its own
+for that, and a second layer here would fire exactly when the client's
+replacement had already been rejected, which is the case not to retry.
 """
 import datetime
 from typing import List
 import stamina
+# app.settings before gundi_client_v2 (see app/services/errors.py).
+from app import settings  # noqa: F401
 from gundi_client_v2.client import GundiClient, GundiDataSenderClient
 
 from .activity_logger import ephemeral_run
@@ -67,9 +76,8 @@ async def _get_gundi_api_key(integration_id):
     # send helpers below, and a second policy nested inside the first restarts
     # the inner six attempts on each outer attempt (36 portal calls, many
     # minutes of sleep) for a portal that keeps failing.
-    # An ephemeral run's synthetic integration has no persisted api key —
-    # letting this reach the portal would 404 and then stamina would retry
-    # for up to 5 minutes with the portal-facing request thread held.
+    # An ephemeral run's synthetic integration has no portal row: letting
+    # this reach the portal would 404 for an integration that does not exist.
     _block_if_ephemeral("_get_gundi_api_key")
     async with GundiClient() as gundi_client:
         return await gundi_client.get_integration_api_key(

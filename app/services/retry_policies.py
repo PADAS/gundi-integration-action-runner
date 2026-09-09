@@ -1,13 +1,16 @@
 """Retry policies shared across the service layer.
 
-Kept in a leaf module (imports only .errors, itself a leaf) so config_manager
-and state can both use REDIS_RETRY without importing each other. GUNDI_API_RETRY lives in
-gundi.py next to the helpers it decorates.
+Kept in a leaf module (imports only .errors, which loads app.settings and
+gundi_client_v2's errors) so config_manager and state can both use REDIS_RETRY
+without importing each other. GUNDI_API_RETRY lives in gundi.py next to the
+helpers it decorates.
 
 Iterate stamina with `async for`: its synchronous iterator sleeps with
 time.sleep, which inside a coroutine stalls the whole event loop for the
 length of the back-off.
 """
+# app.settings before gundi_client_v2 (see app/services/errors.py).
+from app import settings  # noqa: F401
 import httpx
 from gundi_client_v2.errors import AuthenticationError, GundiAPIError
 from redis.exceptions import RedisError

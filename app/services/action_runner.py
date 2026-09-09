@@ -14,7 +14,7 @@ from gundi_core.schemas.v2 import Integration
 # wins per key (see app/settings/base.py).
 from app import settings
 from gundi_client_v2 import GundiClient
-from gundi_client_v2.errors import GundiAPIError
+from gundi_client_v2.errors import AuthenticationError, GundiAPIError
 
 from app.actions import action_handlers, get_action_handler_by_data_type
 from fastapi import status
@@ -183,17 +183,23 @@ def _ephemeral_status_for(exc: Exception, fallback: int) -> int:
     Forward the source system's verdict so cdip's upstream_status matches it
     and the portal can tell bad credentials from a broken source. The status
     is read by errors.source_status_code, the same reader the classifier
-    uses, so the body text and the response status always agree; an
-    IntegrationAuthError with no explicit code is still a 401. Only 4xx/5xx
+    uses, so wherever a status is forwarded it is the one the text names; an
+    IntegrationAuthError with no explicit code is still a 401. A Gundi-side
+    failure is the one case where the two differ on purpose: see below. Only 4xx/5xx
     are forwarded: statuses below 400 are not failures the portal can
     classify (a redirect surfaced by raise_for_status with redirects off is
     the common one), and anything outside the HTTP range is a connector bug,
     not a status the runner should answer with. A connector's
     IntegrationConfigurationError is not a source verdict either: it is a
-    422, the request was understood but its content cannot be acted on.
-    Everything else keeps the caller's `fallback` (500 for a handler
-    exception, 504 for a timeout).
+    422, the request was understood but its content cannot be acted on. Nor
+    is a Gundi-side failure (the runner's own OAuth client rejected, a portal
+    outage): forwarded, a Gundi 401 would read in the portal as the provider
+    rejecting the draft's credentials, so it keeps the fallback and the body
+    names Gundi. Everything else keeps the caller's `fallback` (500 for a
+    handler exception, 504 for a timeout).
     """
+    if isinstance(exc, (GundiAPIError, AuthenticationError)):
+        return fallback
     source_status = source_status_code(exc)
     if source_status is None and isinstance(exc, IntegrationError) and exc.error_type == "auth":
         return status.HTTP_401_UNAUTHORIZED
@@ -281,17 +287,15 @@ async def _handle_error(
         except RuntimeError:
             return None
 
-    request = _request_of(exc)
-    response = getattr(exc, "response", None)  # bool(response) on status errors returns False
-    if isinstance(exc, GundiAPIError) and request is None and response is None and exc.__cause__ is not None:
-        # gundi-client-v2 3.x wraps a non-2xx Gundi response as GundiAPIError,
-        # which carries neither, and chains httpx's error as the cause: read it
-        # from there. Only for that type. An AuthenticationError's cause is the
-        # token POST, whose body holds the client secret or password, and a
-        # connector's `raise IntegrationAuthError(...) from e` may chain a
-        # provider login; neither request may reach the activity log.
-        request = _request_of(exc.__cause__)
-        response = getattr(exc.__cause__, "response", None)
+    # gundi-client-v2 3.x wraps a non-2xx Gundi response as GundiAPIError,
+    # which carries neither, and chains httpx's error as the cause: read them
+    # from there. Only for that type: an AuthenticationError's cause is the
+    # token POST, whose body holds the client secret or password, and a
+    # connector's `raise IntegrationAuthError(...) from e` may chain a provider
+    # login; neither request may reach the activity log.
+    carrier = exc.__cause__ if isinstance(exc, GundiAPIError) else exc
+    request = _request_of(carrier)
+    response = getattr(carrier, "response", None)  # bool(response) on status errors returns False
     if request is not None:
         error_details.update({
             "request_verb": str(request.method),

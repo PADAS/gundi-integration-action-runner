@@ -13,6 +13,7 @@ developer's repo .env would leak into the assertions. Under pytest the runner
 is configured for in-process sharing only (conftest sets GUNDI_TOKEN_CACHE_URL
 to ""), so the Redis-backend assertions build their URLs explicitly.
 """
+import itertools
 import logging
 import os
 import pathlib
@@ -20,6 +21,7 @@ import subprocess
 import sys
 import tempfile
 
+import httpx
 import pytest
 from gundi_client_v2 import GundiClient
 from gundi_client_v2 import settings as client_settings
@@ -78,7 +80,12 @@ def _settings_in_subprocess(env_overrides: dict, probe: str) -> str:
     return result.stdout.strip().splitlines()[-1]
 
 
-@pytest.mark.parametrize("entry_point", ["app.main", "app.register", "app.services.action_runner", "app.services.config_manager", "app.services.webhooks"])
+@pytest.mark.parametrize("entry_point", [
+    "app.main", "app.register", "app.services.action_runner", "app.services.config_manager", "app.services.webhooks",
+    # Leaf modules that import gundi_client_v2.errors: reaching the library's
+    # package runs its .env loader, so they must load the runner's first too.
+    "app.services.errors", "app.services.retry_policies", "app.services.gundi",
+])
 def test_runner_settings_load_before_the_client_library(entry_point):
     """Both the runner and gundi-client-v2 load a .env through environs'
     read_env(), and the first loader wins per key. app/settings/base.py imports
@@ -228,3 +235,54 @@ def test_portal_singleton_token_is_reset_between_tests():
 
     assert _portal.cached_token is None
     _portal.cached_token = "leaked-if-seen-by-the-next-test"
+
+
+def _idp_and_api(accepted):
+    """A transport standing in for the IdP and the Gundi API: the token endpoint
+    issues a distinct token per call, and the API answers 401 to any bearer
+    outside ``accepted`` — the shape of a token the IdP invalidated early."""
+    issued = (f"tok-{n}" for n in itertools.count())
+    calls = {"token": 0, "api": 0}
+
+    def handler(request):
+        if request.url.path.endswith("/token"):
+            calls["token"] += 1
+            return httpx.Response(200, json={
+                "access_token": next(issued), "token_type": "Bearer", "expires_in": 1800,
+                "refresh_token": "r", "refresh_expires_in": 3600,
+            })
+        calls["api"] += 1
+        bearer = request.headers.get("authorization", "").split(" ")[-1]
+        if bearer not in accepted:
+            return httpx.Response(401, json={"detail": "Invalid token."})
+        return httpx.Response(200, json={"api_key": "k"})
+
+    return httpx.MockTransport(handler), calls
+
+
+@pytest.mark.asyncio
+async def test_a_portal_token_the_api_rejects_is_replaced_by_the_client(mocker):
+    """The runner carries no 401 workaround of its own: gundi-client-v2 3.7.1
+    replaces a token the API rejects with a plain 401 and retries once
+    (PADAS/gundi-client#61). This pins both halves of relying on that — that
+    the pinned client still does it, and that a runner portal call goes
+    through the client path that does — so dropping either is a test failure
+    rather than a stale token served to every replica until it expires.
+    """
+    from app.services import gundi as gundi_helpers
+
+    transport, calls = _idp_and_api(accepted={"tok-1"})
+
+    def build_client():
+        client = GundiClient(
+            base_url="https://api.example.org", oauth_client_id="svc", oauth_client_secret="s",
+            oauth_token_url="https://auth.example.org/realms/x/protocol/openid-connect/token",
+            token_cache_url="",
+        )
+        client._session = httpx.AsyncClient(transport=transport)
+        return client
+
+    mocker.patch.object(gundi_helpers, "GundiClient", build_client)
+
+    assert await gundi_helpers._get_gundi_api_key("abc-123") == "k"
+    assert calls == {"token": 2, "api": 2}, "one replacement, one retry"

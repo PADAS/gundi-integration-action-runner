@@ -2,6 +2,11 @@ import asyncio
 from typing import NamedTuple, Optional
 
 import aiohttp
+# app.settings before gundi_client_v2: importing anything from the library's
+# package runs its .env loader, and the first loader wins per key (see
+# app/settings/base.py). Every service module that imports the library does
+# this, so the ordering holds however a module is reached first.
+from app import settings  # noqa: F401
 from gundi_client_v2.errors import AuthenticationError, GundiAPIError
 import httpx
 
@@ -111,8 +116,15 @@ def source_status_code(exc: Exception) -> Optional[int]:
     `ClientResponseError.status`, and the duck-typed `.response.status_code`
     (httpx.HTTPStatusError, requests.HTTPError, and anything else that keeps
     the response on the exception). This is the single reader shared by the
-    classifier and the ephemeral status forwarding, so the text and the HTTP
-    status the runner returns can never disagree about which status they saw.
+    classifier and the ephemeral status forwarding, so wherever a status is
+    forwarded at all, it is the one the text names.
+
+    The one deliberate divergence is a Gundi-side failure, where the text
+    keeps Gundi's status ("Gundi API request failed (HTTP 401)") while the
+    ephemeral response carries the runner's own: Gundi's verdict is named in
+    the text, and forwarding it as the status would read in the portal as the
+    provider rejecting the draft's credentials (action_runner
+    ._ephemeral_status_for).
 
     Connectors are free to pre-set `status_code` on their own exception
     hierarchies, so it is not trusted to be an int: anything else (a "401"
