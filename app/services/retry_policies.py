@@ -37,15 +37,12 @@ def is_transient_gundi_error(exc: BaseException) -> bool:
     if isinstance(exc, AuthenticationError) and exc.status_code is None:
         # No status from the token endpoint. ``transport``: it never answered.
         # OIDC discovery failures are wrapped without the flag, with httpx's
-        # error as the cause: judge that by its status, or retry a transport
-        # failure. Anything else (no token URL or credentials configured, a
-        # malformed token response) is permanent.
+        # error as the cause: judge the cause by the same rules. Anything else
+        # (no token URL or credentials configured, a malformed token response)
+        # has no httpx cause and is permanent.
         if exc.transport:
             return True
-        cause = exc.__cause__
-        if isinstance(cause, httpx.HTTPStatusError):
-            return _retryable_status(cause.response.status_code)
-        return isinstance(cause, httpx.HTTPError)
+        return exc.__cause__ is not None and is_transient_gundi_error(exc.__cause__)
     if isinstance(exc, (httpx.HTTPError, GundiAPIError, AuthenticationError)):
         status_code = source_status_code(exc)
         # An httpx error without a status is a transport failure.

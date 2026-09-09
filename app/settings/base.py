@@ -7,11 +7,16 @@ from environs import Env
 env = Env()
 env.read_env()
 
-# Imported after read_env(): gundi_client_v2.settings loads a .env of its own
-# (walking up from the current directory) and environs never overrides a key
-# that is already set, so whichever loader runs first wins. The runner's, which
-# walks up from this file, keeps precedence as it had before the client was
-# imported here.
+# Imported after read_env(). gundi_client_v2.settings loads a .env of its own,
+# walking up from the current working directory, while the runner's read_env()
+# above walks up from this file; environs never overrides a key that is already
+# set, so whichever loader runs first wins per key. The entry points (app.main,
+# app.register, app.services.action_runner and the service modules) import
+# app.settings before anything from gundi_client_v2, so the runner's .env wins
+# there (pinned by a test). A module imported on its own that reaches
+# gundi_client_v2 first lets the client's loader go first; the two only differ
+# when the process runs from a directory outside the repo tree, or from one with
+# its own .env, while another .env sits at the repo root.
 from gundi_client_v2 import settings as gundi_client_settings  # noqa: E402
 from gundi_client_v2.errors import TokenCacheConfigError  # noqa: E402
 from gundi_client_v2.token_cache import token_cache_from_url  # noqa: E402

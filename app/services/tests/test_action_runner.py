@@ -697,22 +697,41 @@ async def test_execute_action_with_handler_error(
     assert event.payload.server_response_body == str(expected_error.response.text)
 
 
-def _gundi_api_error_from_httpx(status_code: int, body: str) -> Exception:
-    """How gundi-client-v2 3.x raises a non-2xx: GundiAPIError(status, body)
-    with httpx's status error, which holds the request and response, as the
-    cause (errors.raise_for_status)."""
+def _gundi_api_error_from_httpx(status_code: int, body: str, url: str = "https://sensors.api.test.gundiservice.org/v2/observations/") -> Exception:
+    """A non-2xx exactly as gundi-client-v2 3.x raises it: through the library's
+    own raise_for_status, so the shape (status, detail, httpx's error as the
+    cause) cannot drift from what the client produces."""
     import httpx
-    from gundi_client_v2.errors import GundiAPIError
+    from gundi_client_v2.errors import GundiAPIError, raise_for_status
 
-    request = httpx.Request("POST", "https://sensors.api.test.gundiservice.org/v2/observations/", content=b'[{"source": "x"}]')
-    response = httpx.Response(status_code, text=body, request=request)
+    request = httpx.Request("POST", url, content=b'[{"source": "x"}]')
+    try:
+        raise_for_status(httpx.Response(status_code, text=body, request=request))
+    except GundiAPIError as e:
+        return e
+    raise AssertionError("raise_for_status did not raise")
+
+
+def _auth_error_from_token_post(secret: str) -> Exception:
+    """An AuthenticationError as gundi_client_v2.auth raises it for a rejected
+    token request: chained from httpx's status error, whose request body is the
+    token POST carrying the client secret."""
+    import httpx
+    from gundi_client_v2.errors import AuthenticationError
+
+    request = httpx.Request(
+        "POST", "https://auth.example.org/realms/x/protocol/openid-connect/token",
+        content=f"client_id=cdip-integrations&client_secret={secret}&grant_type=client_credentials".encode(),
+    )
+    response = httpx.Response(401, text='{"error": "invalid_client"}', request=request)
     try:
         response.raise_for_status()
     except httpx.HTTPStatusError as e:
         try:
-            raise GundiAPIError(status_code=status_code, detail=body) from e
-        except GundiAPIError as wrapped:
+            raise AuthenticationError("Token request failed: HTTP 401", status_code=401, error="invalid_client") from e
+        except AuthenticationError as wrapped:
             return wrapped
+    raise AssertionError("unreachable")
 
 
 @pytest.mark.asyncio
@@ -757,10 +776,10 @@ async def test_execute_action_reports_gundi_auth_failure_as_gundi_side(
 ):
     """A wrong GUNDI_OAUTH_CLIENT_SECRET surfaces from the handler's portal
     call as AuthenticationError(401). It must not read as the provider
-    rejecting the integration's credentials."""
-    from gundi_client_v2.errors import AuthenticationError
+    rejecting the integration's credentials, and the token request chained
+    under it must not be published."""
 
-    handler = AsyncMock(side_effect=AuthenticationError("Token request failed: HTTP 401", status_code=401, error="invalid_client"))
+    handler = AsyncMock(side_effect=_auth_error_from_token_post("SUPERSECRET-client-secret"))
     del handler.action_title
     mocker.patch("app.services.action_runner.action_handlers", {"pull_observations": (handler, MockPullActionConfiguration, None)})
     mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
@@ -777,7 +796,55 @@ async def test_execute_action_reports_gundi_auth_failure_as_gundi_side(
     assert details["error_type"] == "gundi"
     assert details["error"].startswith("Could not authenticate with Gundi")
     assert "(HTTP 401)" in details["error"]
-    assert details.get("server_response_status") is None  # no Gundi response to report; the status is in the text
+    # The chained token POST carries the client secret: it must reach neither
+    # the response nor the published event, so no request/response fields at
+    # all for an AuthenticationError (the status is in the text).
+    assert "SUPERSECRET" not in response.text
+    assert "request_data" not in details and "request_url" not in details
+    assert details.get("server_response_status") is None
+    event = mock_publish_event.mock_calls[0].kwargs["event"]
+    assert "SUPERSECRET" not in event.json()
+    assert not event.payload.request_data  # gundi_core defaults the field to ""
+
+
+@pytest.mark.asyncio
+async def test_execute_action_does_not_publish_a_chained_provider_login(
+        mocker, mock_gundi_client_v2, integration_v2, mock_config_manager, mock_publish_event,
+):
+    """A connector that does `raise IntegrationAuthError(...) from e` after a
+    failed provider login chains the login POST, whose body holds the
+    provider password. IntegrationError carries no request of its own, and the
+    runner must not go looking for one on the cause."""
+    import httpx
+    from app.services.errors import IntegrationAuthError
+
+    request = httpx.Request("POST", "https://provider.example.org/login", content=b"user=ranger&password=PROVIDER-PASSWORD")
+    response = httpx.Response(401, text="bad login", request=request)
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        try:
+            raise IntegrationAuthError("Provider rejected the credentials") from e
+        except IntegrationAuthError as wrapped:
+            exc = wrapped
+    handler = AsyncMock(side_effect=exc)
+    del handler.action_title
+    mocker.patch("app.services.action_runner.action_handlers", {"pull_observations": (handler, MockPullActionConfiguration, None)})
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+
+    response = api_client.post(
+        "/v1/actions/execute/",
+        json={"integration_id": str(integration_v2.id), "action_id": "pull_observations"},
+    )
+
+    assert "PROVIDER-PASSWORD" not in response.text
+    assert "request_data" not in response.json()["detail"]
+    event = mock_publish_event.mock_calls[0].kwargs["event"]
+    assert "PROVIDER-PASSWORD" not in event.json()
+    assert event.payload.error_traceback  # the traceback still names the chain, without bodies
 
 
 _EPHEMERAL_SECRET = "ephemeral-token-abc123"

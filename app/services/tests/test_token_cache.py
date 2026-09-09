@@ -15,8 +15,10 @@ to ""), so the Redis-backend assertions build their URLs explicitly.
 """
 import logging
 import os
+import pathlib
 import subprocess
 import sys
+import tempfile
 
 import pytest
 from gundi_client_v2 import GundiClient
@@ -45,16 +47,55 @@ def test_token_cache_db_defaults_next_to_state_and_config_dbs():
     assert settings.REDIS_TOKEN_CACHE_DB == 2
 
 
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
+_SUBPROCESS_KEYS = ("GUNDI_TOKEN_CACHE_URL", "REDIS_HOST", "REDIS_PORT", "REDIS_TOKEN_CACHE_DB")
+
+
 def _settings_in_subprocess(env_overrides: dict, probe: str) -> str:
     """Run ``probe`` in a fresh interpreter with the runner's env adjusted, so
     a settings value can be checked without reloading the settings module in
-    this process (a reload re-runs env.read_env()). Returns the last stdout
-    line; the settings module logs to stdout, so a warning may precede it."""
-    env = {k: v for k, v in os.environ.items() if k not in ("GUNDI_TOKEN_CACHE_URL", "REDIS_HOST", "REDIS_PORT", "REDIS_TOKEN_CACHE_DB")}
+    this process (a reload re-runs env.read_env()). Runs from the repo root,
+    with gundi-client-v2's own .env loader pointed at an empty file. The
+    runner's read_env() still finds a repo-root .env, which environs would let
+    win over the keys removed here, so such a .env skips these tests instead
+    of failing them. Returns the last stdout line; the settings module logs to
+    stdout, so a warning may precede it."""
+    repo_dotenv = _REPO_ROOT / ".env"
+    if repo_dotenv.exists():
+        from dotenv import dotenv_values
+
+        clashing = sorted(k for k in dotenv_values(repo_dotenv) if k in _SUBPROCESS_KEYS)
+        if clashing:
+            pytest.skip(f"{repo_dotenv} sets {clashing}; the runner's .env loader would override the test environment")
+    env = {k: v for k, v in os.environ.items() if k not in _SUBPROCESS_KEYS}
     env.update(env_overrides)
-    result = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, timeout=60, env=env)
+    with tempfile.NamedTemporaryFile(prefix="gundi-empty-", suffix=".env") as empty:
+        env["GUNDI_CLIENT_ENVFILE"] = empty.name
+        result = subprocess.run(
+            [sys.executable, "-c", probe], capture_output=True, text=True, timeout=60, env=env, cwd=_REPO_ROOT,
+        )
     assert result.returncode == 0, result.stderr
     return result.stdout.strip().splitlines()[-1]
+
+
+@pytest.mark.parametrize("entry_point", ["app.main", "app.register", "app.services.action_runner", "app.services.config_manager", "app.services.webhooks"])
+def test_runner_settings_load_before_the_client_library(entry_point):
+    """Both the runner and gundi-client-v2 load a .env through environs'
+    read_env(), and the first loader wins per key. app/settings/base.py imports
+    the client only after its own read_env(), so the runner's .env wins wherever
+    app.settings is reached first. Observed by spying on read_env itself:
+    sys.modules order is completion order, so it cannot tell the two apart."""
+    line = _settings_in_subprocess(
+        {},
+        # Env.read_env is a staticmethod in environs.
+        "import inspect, environs; calls = []; orig = environs.Env.read_env\n"
+        "def spy(*a, **k):\n"
+        "    calls.append(inspect.stack()[1].filename); return orig(*a, **k)\n"
+        "environs.Env.read_env = staticmethod(spy)\n"
+        f"import {entry_point}\n"
+        "print(calls[0].replace('\\\\', '/').endswith('app/settings/base.py'), len(calls))",
+    )
+    assert line == "True 2", f"{entry_point}: the first .env loader was not the runner's ({line})"
 
 
 def test_settings_derive_the_url_from_redis_settings_when_not_overridden():

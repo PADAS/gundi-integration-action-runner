@@ -11,8 +11,8 @@ import redis.asyncio as redis
 # raise TypeError instead of catching.
 from redis.exceptions import RedisError
 from gundi_core.schemas.v2 import Integration, IntegrationSummary, IntegrationActionConfiguration, WebhookConfiguration
+from app import settings  # before gundi_client_v2: .env loader precedence, see app/settings/base.py
 from gundi_client_v2 import GundiClient
-from app import settings
 from .gundi import GUNDI_API_RETRY, _block_if_ephemeral
 from .retry_policies import REDIS_RETRY
 
