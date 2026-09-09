@@ -13,7 +13,7 @@ from redis.exceptions import RedisError
 from gundi_core.schemas.v2 import Integration, IntegrationSummary, IntegrationActionConfiguration, WebhookConfiguration
 from app import settings  # before gundi_client_v2: .env loader precedence, see app/settings/base.py
 from gundi_client_v2 import GundiClient
-from .gundi import GUNDI_API_RETRY, _block_if_ephemeral, with_fresh_token_on_401
+from .gundi import GUNDI_API_RETRY, _block_if_ephemeral
 from .retry_policies import REDIS_RETRY
 
 logger = logging.getLogger(__name__)
@@ -235,9 +235,7 @@ class IntegrationConfigurationManager:
         async with GundiClient() as gundi:
             async for attempt in stamina.retry_context(**GUNDI_API_RETRY):
                 with attempt:
-                    integration_details = await with_fresh_token_on_401(
-                        gundi, lambda: gundi.get_integration_details(integration_id)
-                    )
+                    integration_details = await gundi.get_integration_details(integration_id)
         return integration_details
 
     async def _write_absence_sentinel(self, key: str, *, ttl: int, mode: str, expected: str = "") -> bool:

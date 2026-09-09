@@ -54,7 +54,7 @@ gcloud-aio-auth==5.5.0
     # via gcloud-aio-pubsub
 gcloud-aio-pubsub==6.0.1
     # via -r requirements-base.in
-gundi-client-v2[redis]==3.7.0
+gundi-client-v2[redis]==3.7.1
     # via -r requirements-base.in
 gundi-core==1.11.3
     # via

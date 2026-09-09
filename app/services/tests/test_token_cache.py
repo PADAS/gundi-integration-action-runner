@@ -13,14 +13,13 @@ developer's repo .env would leak into the assertions. Under pytest the runner
 is configured for in-process sharing only (conftest sets GUNDI_TOKEN_CACHE_URL
 to ""), so the Redis-backend assertions build their URLs explicitly.
 """
-import logging
 import itertools
+import logging
 import os
 import pathlib
 import subprocess
 import sys
 import tempfile
-from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -238,12 +237,11 @@ def test_portal_singleton_token_is_reset_between_tests():
     _portal.cached_token = "leaked-if-seen-by-the-next-test"
 
 
-def _api_and_idp(issued_tokens, accepted):
-    """A MockTransport standing in for Keycloak and the Gundi API: the token
-    endpoint hands out ``issued_tokens`` in order; the API answers 401 to any
-    bearer not in ``accepted`` (a set the test edits to invalidate a token
-    server-side) and a 200 api-key body otherwise."""
-    issued = iter(issued_tokens)
+def _idp_and_api(accepted):
+    """A transport standing in for the IdP and the Gundi API: the token endpoint
+    issues a distinct token per call, and the API answers 401 to any bearer
+    outside ``accepted`` — the shape of a token the IdP invalidated early."""
+    issued = (f"tok-{n}" for n in itertools.count())
     calls = {"token": 0, "api": 0}
 
     def handler(request):
@@ -262,230 +260,29 @@ def _api_and_idp(issued_tokens, accepted):
     return httpx.MockTransport(handler), calls
 
 
-def _replica(transport):
-    """A bare, memory-only client, as the runner builds them, talking over ``transport``."""
-    client = GundiClient(
-        base_url="https://api.example.org", oauth_client_id="svc", oauth_client_secret="s",
-        oauth_token_url="https://auth.example.org/realms/x/protocol/openid-connect/token",
-        token_cache_url="",
-    )
-    client._session = httpx.AsyncClient(transport=transport)
-    return client
-
-
 @pytest.mark.asyncio
-async def test_a_token_the_api_rejects_is_replaced_for_every_client():
-    """The shared cache judges a token by its expiry only, and the client
-    refreshes only on the API's login redirect, never on a 401. So a token
-    Keycloak invalidated early (a restart, a session revocation) would be
-    served to every replica for the rest of its lifetime, and every portal
-    call would fail with a 401 that the retry policy rightly treats as
-    final. Before the shared cache each call minted a fresh token and
-    self-healed. The runner's portal calls must evict the rejected token,
-    fetch a replacement once and retry; a replica that then hits the same
-    401 adopts the replacement instead of minting a third token."""
-    from app.services import gundi
-    from app.services.gundi import with_fresh_token_on_401
+async def test_a_portal_token_the_api_rejects_is_replaced_by_the_client(mocker):
+    """The runner carries no 401 workaround of its own: gundi-client-v2 3.7.1
+    replaces a token the API rejects with a plain 401 and retries once
+    (PADAS/gundi-client#61). This pins both halves of relying on that — that
+    the pinned client still does it, and that a runner portal call goes
+    through the client path that does — so dropping either is a test failure
+    rather than a stale token served to every replica until it expires.
+    """
+    from app.services import gundi as gundi_helpers
 
-    accepted = {"stale"}
-    transport, calls = _api_and_idp(["stale", "fresh"], accepted)
-    first, second = _replica(transport), _replica(transport)
+    transport, calls = _idp_and_api(accepted={"tok-1"})
 
-    assert await first.get_integration_api_key("i") == "k"  # mints "stale", shared
-    accepted.clear(); accepted.add("fresh")  # Keycloak invalidates it
+    def build_client():
+        client = GundiClient(
+            base_url="https://api.example.org", oauth_client_id="svc", oauth_client_secret="s",
+            oauth_token_url="https://auth.example.org/realms/x/protocol/openid-connect/token",
+            token_cache_url="",
+        )
+        client._session = httpx.AsyncClient(transport=transport)
+        return client
 
-    assert await with_fresh_token_on_401(second, lambda: second.get_integration_api_key("i")) == "k"
-    # No reset between the two: throttling a portal that rejects every token
-    # must not block this call, which holds the token that was replaced and
-    # heals by adopting the replacement, without an IdP request of its own.
-    assert await with_fresh_token_on_401(first, lambda: first.get_integration_api_key("i")) == "k"
+    mocker.patch.object(gundi_helpers, "GundiClient", build_client)
 
-    assert calls["token"] == 2, "the second replica must adopt the replacement, not mint a third token"
-    assert first.cached_token.access_token == second.cached_token.access_token == "fresh"
-
-
-@pytest.mark.asyncio
-async def test_a_token_rejected_after_replacement_is_final():
-    """One replacement per call: if the fresh token is rejected too, the 401
-    is the answer (and the retry policy does not retry it)."""
-    from gundi_client_v2.errors import GundiAPIError
-
-    from app.services.gundi import with_fresh_token_on_401
-    from app.services.retry_policies import is_transient_gundi_error
-
-    transport, calls = _api_and_idp(["stale", "fresh", "third"], accepted=set())
-    client = _replica(transport)
-
-    with pytest.raises(GundiAPIError) as info:
-        await with_fresh_token_on_401(client, lambda: client.get_integration_api_key("i"))
-
-    assert info.value.status_code == 401
-    assert calls == {"token": 2, "api": 2}
-    assert is_transient_gundi_error(info.value) is False
-
-
-@pytest.mark.asyncio
-async def test_a_portal_that_rejects_every_token_does_not_mint_one_per_call(monkeypatch):
-    """A portal answering 401 to everything (the runner's OAuth client lost a
-    role, say) must not become one IdP token request per portal call. Each
-    call builds its own client, adopts the shared token, is rejected, evicts
-    it and mints a replacement, so an incident that used to cost about one
-    token request per token lifetime would instead hammer the IdP for as long
-    as it lasts, across every replica and every scheduled tick. One forced
-    refresh per process per cooldown bounds that; the healing case above
-    still recovers on the first 401."""
-    from gundi_client_v2.errors import GundiAPIError
-
-    from app.services import gundi
-
-    transport, calls = _api_and_idp((f"t{n}" for n in itertools.count()), accepted=set())
-    monkeypatch.setattr(gundi, "time", SimpleNamespace(monotonic=lambda: 1000.0))
-
-    for _ in range(5):
-        client = _replica(transport)
-        with pytest.raises(GundiAPIError):
-            await gundi.with_fresh_token_on_401(client, lambda: client.get_integration_api_key("i"))
-
-    assert calls["token"] == 2, f"expected one mint and one forced refresh, got {calls}"
-    assert calls["api"] == 6
-
-
-@pytest.mark.asyncio
-async def test_the_throttled_refresh_is_logged_once_per_cooldown(monkeypatch, caplog):
-    """The runner deliberately stops replacing the token during a sustained
-    401, which an operator has to be able to see. Once per cooldown, not once
-    per portal call: a scheduled pull would otherwise warn on every tick of
-    every replica (the same reason _skip_invalid_config throttles)."""
-    from gundi_client_v2.errors import GundiAPIError
-
-    from app.services import gundi
-
-    transport, _ = _api_and_idp((f"t{n}" for n in itertools.count()), accepted=set())
-    now = {"t": 1000.0}
-    monkeypatch.setattr(gundi, "time", SimpleNamespace(monotonic=lambda: now["t"]))
-
-    async def one_failing_call():
-        client = _replica(transport)
-        with pytest.raises(GundiAPIError):
-            await gundi.with_fresh_token_on_401(client, lambda: client.get_integration_api_key("i"))
-
-    with caplog.at_level("WARNING", logger="app.services.gundi"):
-        for _ in range(4):
-            await one_failing_call()
-        assert len(caplog.records) == 1, [r.message for r in caplog.records]
-
-        now["t"] += gundi.REPLACEMENT_RETRY_COOLDOWN_SECONDS + 1
-        for _ in range(3):
-            await one_failing_call()
-
-    assert len(caplog.records) == 2, [r.message for r in caplog.records]
-
-
-@pytest.mark.asyncio
-async def test_the_cooldown_lapses_so_a_stuck_replacement_is_retried(monkeypatch):
-    """Throttling a portal that rejects every token must not leave the process
-    stuck on a dead one once the fault is fixed. A token minted before the fix
-    can still be rejected (a role is baked into the JWT), so the replacement is
-    asked for again when the cooldown lapses, rather than reported forever."""
-    from gundi_client_v2.errors import GundiAPIError
-
-    from app.services import gundi
-
-    accepted = set()
-    transport, calls = _api_and_idp((f"t{n}" for n in itertools.count()), accepted=accepted)
-    now = {"t": 1000.0}
-    monkeypatch.setattr(gundi, "time", SimpleNamespace(monotonic=lambda: now["t"]))
-
-    async def one_call():
-        client = _replica(transport)
-        return await gundi.with_fresh_token_on_401(client, lambda: client.get_integration_api_key("i"))
-
-    for _ in range(3):  # the incident: one mint, one replacement, then throttled
-        with pytest.raises(GundiAPIError):
-            await one_call()
-    assert calls["token"] == 2
-
-    accepted.add("t2")  # fixed, but only a newly minted token carries the fix
-    now["t"] += gundi.REPLACEMENT_RETRY_COOLDOWN_SECONDS + 1
-
-    assert await one_call() == "k"
-    assert calls["token"] == 3
-
-
-@pytest.mark.asyncio
-async def test_a_portal_that_rejects_every_token_does_not_mint_one_per_call(monkeypatch):
-    """A portal answering 401 to everything (the runner's OAuth client lost a
-    role, say) must not become one IdP token request per portal call. Each
-    call builds its own client, adopts the shared token, is rejected, evicts
-    it and mints a replacement, so an incident that used to cost about one
-    token request per token lifetime would instead hammer the IdP for as long
-    as it lasts, across every replica and every scheduled tick. One forced
-    refresh per process per cooldown bounds that; the healing case above
-    still recovers on the first 401."""
-    from gundi_client_v2.errors import GundiAPIError
-
-    from app.services import gundi
-
-    transport, calls = _api_and_idp((f"t{n}" for n in itertools.count()), accepted=set())
-    monkeypatch.setattr(gundi, "time", SimpleNamespace(monotonic=lambda: 1000.0))
-
-    for _ in range(5):
-        client = _replica(transport)
-        with pytest.raises(GundiAPIError):
-            await gundi.with_fresh_token_on_401(client, lambda: client.get_integration_api_key("i"))
-
-    assert calls["token"] == 2, f"expected one mint and one forced refresh, got {calls}"
-    assert calls["api"] == 6
-
-
-@pytest.mark.asyncio
-async def test_the_throttled_refresh_is_logged_once_per_cooldown(monkeypatch, caplog):
-    """The runner deliberately stops replacing the token during a sustained
-    401, which an operator has to be able to see. Once per cooldown, not once
-    per portal call: a scheduled pull would otherwise warn on every tick of
-    every replica (the same reason _skip_invalid_config throttles)."""
-    from gundi_client_v2.errors import GundiAPIError
-
-    from app.services import gundi
-
-    transport, _ = _api_and_idp((f"t{n}" for n in itertools.count()), accepted=set())
-    now = {"t": 1000.0}
-    monkeypatch.setattr(gundi, "time", SimpleNamespace(monotonic=lambda: now["t"]))
-
-    async def one_failing_call():
-        client = _replica(transport)
-        with pytest.raises(GundiAPIError):
-            await gundi.with_fresh_token_on_401(client, lambda: client.get_integration_api_key("i"))
-
-    with caplog.at_level("WARNING", logger="app.services.gundi"):
-        for _ in range(4):
-            await one_failing_call()
-        assert len(caplog.records) == 1, [r.message for r in caplog.records]
-
-        now["t"] += gundi.REPLACEMENT_RETRY_COOLDOWN_SECONDS + 1
-        for _ in range(3):
-            await one_failing_call()
-
-    assert len(caplog.records) == 2, [r.message for r in caplog.records]
-
-
-@pytest.mark.asyncio
-async def test_the_cooldown_lapses_so_a_later_invalidation_still_heals(monkeypatch):
-    """The cooldown throttles a portal that keeps rejecting tokens; it must
-    not leave a replica stuck on a dead token once the incident is over."""
-    from app.services import gundi
-
-    accepted = {"t0"}
-    transport, calls = _api_and_idp((f"t{n}" for n in itertools.count()), accepted=accepted)
-    now = {"t": 1000.0}
-    monkeypatch.setattr(gundi, "time", SimpleNamespace(monotonic=lambda: now["t"]))
-
-    client = _replica(transport)
-    assert await gundi.with_fresh_token_on_401(client, lambda: client.get_integration_api_key("i")) == "k"
-
-    accepted.clear()
-    accepted.add("t1")  # the old token is invalidated; a fresh one would work
-    now["t"] += gundi.REPLACEMENT_RETRY_COOLDOWN_SECONDS + 1
-
-    assert await gundi.with_fresh_token_on_401(client, lambda: client.get_integration_api_key("i")) == "k"
-    assert calls["token"] == 2
+    assert await gundi_helpers._get_gundi_api_key("abc-123") == "k"
+    assert calls == {"token": 2, "api": 2}, "one replacement, one retry"

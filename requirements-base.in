@@ -10,7 +10,11 @@ fastapi~=0.115.0
 uvicorn~=0.23.2
 gundi-core~=1.11.1
 # [redis]: backend for the shared OAuth token cache (see GUNDI_TOKEN_CACHE_URL in app/settings/base.py)
-gundi-client-v2[redis]~=3.7.0
+# >=3.7.1: 3.7.0 served a token the API rejected with a plain 401 to every client
+# sharing the cache until it expired, and only replaced one on the API's login
+# redirect. 3.7.1 replaces it and retries, throttled per credential identity
+# (PADAS/gundi-client#61), which is why the runner carries no workaround for it.
+gundi-client-v2[redis]~=3.7.1
 # httpx is imported directly by app/services/*; must stay on the 0.28 line gundi-client-v2 3.x requires
 httpx~=0.28.1
 # 24.3 is the first release whose `on=` accepts a predicate (app/services/retry_policies.py)

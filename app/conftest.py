@@ -2176,10 +2176,6 @@ def _clear_gundi_client_caches():
         if action_runner is not None:
             # The expiry stamps are only read when a token is present.
             action_runner._portal.cached_token = None
-        gundi_helpers = sys.modules.get("app.services.gundi")
-        if gundi_helpers is not None:
-            # with_fresh_token_on_401 throttles token replacement per process.
-            gundi_helpers.reset_token_replacement_state()
 
     _clear()
     yield
