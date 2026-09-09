@@ -91,7 +91,11 @@ def test_runner_settings_load_before_the_client_library(entry_point):
     read_env(), and the first loader wins per key. app/settings/base.py imports
     the client only after its own read_env(), so the runner's .env wins wherever
     app.settings is reached first. Observed by spying on read_env itself:
-    sys.modules order is completion order, so it cannot tell the two apart."""
+    sys.modules order is completion order, so it cannot tell the two apart.
+
+    Asserts which loader ran first and that the client's ran at all, not how
+    many ran: a connector is free to add its own read_env() in
+    app/settings/integration.py, and counting would fail it for doing so."""
     line = _settings_in_subprocess(
         {},
         # Env.read_env is a staticmethod in environs.
@@ -100,9 +104,13 @@ def test_runner_settings_load_before_the_client_library(entry_point):
         "    calls.append(inspect.stack()[1].filename); return orig(*a, **k)\n"
         "environs.Env.read_env = staticmethod(spy)\n"
         f"import {entry_point}\n"
-        "print(calls[0].replace('\\\\', '/').endswith('app/settings/base.py'), len(calls))",
+        "paths = [c.replace('\\\\', '/') for c in calls]\n"
+        "print(paths[0].endswith('app/settings/base.py'), "
+        "any('gundi_client_v2/settings.py' in p for p in paths))",
     )
-    assert line == "True 2", f"{entry_point}: the first .env loader was not the runner's ({line})"
+    assert line == "True True", (
+        f"{entry_point}: expected the runner's .env loader first and the client's to run ({line})"
+    )
 
 
 def test_settings_derive_the_url_from_redis_settings_when_not_overridden():
