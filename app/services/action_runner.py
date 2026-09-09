@@ -183,8 +183,9 @@ def _ephemeral_status_for(exc: Exception, fallback: int) -> int:
     Forward the source system's verdict so cdip's upstream_status matches it
     and the portal can tell bad credentials from a broken source. The status
     is read by errors.source_status_code, the same reader the classifier
-    uses, so the body text and the response status always agree; an
-    IntegrationAuthError with no explicit code is still a 401. Only 4xx/5xx
+    uses, so wherever a status is forwarded it is the one the text names; an
+    IntegrationAuthError with no explicit code is still a 401. A Gundi-side
+    failure is the one case where the two differ on purpose: see below. Only 4xx/5xx
     are forwarded: statuses below 400 are not failures the portal can
     classify (a redirect surfaced by raise_for_status with redirects off is
     the common one), and anything outside the HTTP range is a connector bug,

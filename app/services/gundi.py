@@ -8,6 +8,8 @@ cover code that routes through these helpers — handlers that construct
 directly are out of scope.
 """
 import datetime
+import logging
+import time
 from typing import Awaitable, Callable, List, TypeVar
 import stamina
 # app.settings before gundi_client_v2 (see app/services/errors.py).
@@ -19,6 +21,43 @@ from .activity_logger import ephemeral_run
 from .retry_policies import is_transient_gundi_error
 
 T = TypeVar("T")
+
+logger = logging.getLogger(__name__)
+
+# A portal that answers 401 to everything (the runner's OAuth client lost a
+# role, the API broke) would otherwise cost one IdP token request per portal
+# call: every call builds its own client, adopts the shared token, is
+# rejected, evicts it and mints a replacement that is rejected in turn. That
+# is a large amplification aimed at the IdP during an incident, where the
+# shared cache had made it about one request per token lifetime. One forced
+# refresh per process per cooldown bounds it. Per process, so replicas heal
+# independently, and a genuine early invalidation still heals on the first
+# 401: a healthy process has not forced a refresh recently.
+FORCE_REFRESH_COOLDOWN_SECONDS = 60.0
+_last_forced_refresh = None
+_cooldown_warned = False
+
+
+def reset_force_refresh_cooldown() -> None:
+    """Forget the last forced refresh. For tests; the cooldown is process state."""
+    global _last_forced_refresh, _cooldown_warned
+    _last_forced_refresh = None
+    _cooldown_warned = False
+
+
+def _claim_forced_refresh() -> bool:
+    """Take the process's one forced refresh for this cooldown, if it is free.
+
+    Synchronous between the read and the write, so concurrent coroutines
+    cannot both claim it.
+    """
+    global _last_forced_refresh, _cooldown_warned
+    now = time.monotonic()
+    if _last_forced_refresh is not None and now - _last_forced_refresh < FORCE_REFRESH_COOLDOWN_SECONDS:
+        return False
+    _last_forced_refresh = now
+    _cooldown_warned = False
+    return True
 
 
 class EphemeralWriteBlocked(RuntimeError):
@@ -49,11 +88,28 @@ async def with_fresh_token_on_401(client: GundiClient, call: Callable[[], Awaita
     replacement per call: a second 401 is the answer. Only ``GundiAPIError``
     qualifies: an ``AuthenticationError`` 401 is the token endpoint rejecting
     the credentials themselves, and no new token will change that.
+
+    Replacing is rate-limited per process (FORCE_REFRESH_COOLDOWN_SECONDS): a
+    portal that rejects every token must not turn each portal call into an IdP
+    request. Past the limit the 401 is simply reported, which is what it means.
     """
     try:
         return await call()
     except GundiAPIError as e:
         if e.status_code != 401:
+            raise
+        if not _claim_forced_refresh():
+            # A replacement token was fetched moments ago and this 401 is on
+            # that one: minting another would not help the caller and would
+            # aim the retry at the IdP. Warn once per cooldown, not once per
+            # call: a scheduled pull would otherwise warn on every tick.
+            global _cooldown_warned
+            if not _cooldown_warned:
+                _cooldown_warned = True
+                logger.warning(
+                    "Gundi answered 401 again within %ss of replacing the OAuth token; "
+                    "reporting these instead of fetching another.", FORCE_REFRESH_COOLDOWN_SECONDS,
+                )
             raise
     await client.get_auth_header(force_refresh_token=True)
     return await call()

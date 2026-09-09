@@ -229,8 +229,8 @@ class IntegrationConfigurationManager:
     async def _fetch_integration_from_gundi(self, integration_id: str) -> Integration:
         # The one portal read both reloads share. Blocked on the ephemeral
         # path: a draft integration has no portal row, so the read would 404
-        # and spin GUNDI_API_RETRY for up to two minutes on the request (the
-        # same guard, for the same reason, as gundi._get_gundi_api_key).
+        # for an integration that does not exist (the same guard, for the same
+        # reason, as gundi._get_gundi_api_key).
         _block_if_ephemeral("IntegrationConfigurationManager reload")
         async with GundiClient() as gundi:
             async for attempt in stamina.retry_context(**GUNDI_API_RETRY):
