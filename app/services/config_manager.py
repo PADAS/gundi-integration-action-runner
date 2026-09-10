@@ -54,10 +54,33 @@ logger = logging.getLogger(__name__)
 # for sentinels written before generations existed, the value is the bare
 # "null", which still reads as absence; the reload's ordering guard simply has
 # nothing to compare and behaves as before.
+#
+# Real configurations are protected by the same generations, kept beside the
+# value rather than inside it so that no replica's reader changes. Every write
+# to an action key (a configuration from the consumer, a tombstone, the
+# reload's own snapshot) also writes "<epoch>:<n>" to the key's stamp
+# ("<key>.written", same expiry as the key). The reload's snapshot write refuses
+# a key whose stamp is newer than the generation the reload took before its
+# portal fetch: that write landed while the fetch was in flight (an
+# ActionConfigUpdated's new credentials, say), and the snapshot, however fresh
+# it looked, predates it. Without this a reload could put an older permanent
+# configuration over a newer one and nothing later would correct it. A missing
+# stamp (a key written by a replica without this code, or from before it)
+# imposes nothing, so a rolling deployment is safe: the protection simply
+# starts with the first stamped write.
+#
+# A stamp expires even when its key is permanent (CONFIG_WRITE_STAMP_TTL_SECONDS).
+# It only has to outlive the fetch it orders against, and a stamp from an
+# epoch other than the reload's is refused without being orderable at all: if
+# the counter were lost while a permanent stamp survived, every later reload
+# would mint a new epoch and refuse that key forever, and were the key itself
+# gone as well, nothing could repopulate it and the action would read as
+# absent on every run. Bounded, the stamp ages out and the next reload writes.
 _ABSENCE_SENTINEL_PREFIX = "null"
 _NO_WEBHOOK_CONFIG_SENTINEL = "null"
 _GENERATION_KEY = "integrationconfig.generation"
 _GENERATION_EPOCH_KEY = "integrationconfig.generation.epoch"
+_WRITE_STAMP_SUFFIX = ".written"
 
 
 def _is_absence_sentinel(data) -> bool:
@@ -94,6 +117,14 @@ WEBHOOK_CONFIG_DEFAULT_TTL_SECONDS = 300
 # whatever the portal now says. It also lets an orphan sentinel (a cascade
 # ActionConfigDeleted arriving after IntegrationDeleted) age out on its own.
 ACTION_ABSENCE_SENTINEL_TTL_SECONDS = 300
+# Longest a write stamp lives, whatever the expiry of the key it stamps. A
+# reload takes its generation, fetches the portal and writes; the fetch is
+# bounded by GUNDI_API_RETRY (120 s in total) and each Redis call by
+# REDIS_RETRY, so no reload that could still be ordered against a stamp is in
+# flight fifteen minutes after that stamp was written. Past that the stamp is
+# only a liability: from an epoch whose counter was lost it would refuse every
+# reload's snapshot (see the module comment), and it can outlive its key.
+CONFIG_WRITE_STAMP_TTL_SECONDS = 15 * 60
 # Attach a TTL to a key only while it still holds the exact sentinel the read
 # observed and has no expiry (TTL == -1). One server-side step on purpose: a
 # client-side TTL check followed by EXPIRE could race an ActionConfigCreated
@@ -115,25 +146,7 @@ if redis.call('TTL', KEYS[1]) == -1 then
 end
 return 0
 """
-# Replace exactly the value the caller read (a sentinel generation or a
-# config's raw JSON) with a real configuration, but never anything that landed
-# in between: a newer configuration, a newer sentinel generation from a
-# concurrent ActionConfigDeleted, or nothing at all. A missing key is not a
-# match either: a tombstone written during a slow portal fetch can itself have
-# expired by the time this runs, and installing over "missing" would resurrect
-# the deleted config. Every consumer write of an action config goes through it.
-_REPLACE_CACHED_ENTRY_SCRIPT = """
-if redis.call('GET', KEYS[1]) == ARGV[1] then
-    if ARGV[3] == '' then
-        redis.call('SET', KEYS[1], ARGV[2])
-    else
-        redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
-    end
-    return 1
-end
-return 0
-"""
-# Shared by the two scripts below: the current epoch, minting a new one (the
+# Shared by the scripts below: the current epoch, minting a new one (the
 # caller's candidate) when the counter or the epoch key is missing, then the
 # next number. Returns "<epoch>:<n>".
 _NEXT_GENERATION_LUA = """
@@ -146,6 +159,69 @@ local function next_generation(counter_key, epoch_key, candidate_epoch)
     return epoch .. ':' .. redis.call('INCR', counter_key)
 end
 """
+# SET with an optional expiry ('' means permanent).
+_SET_WITH_TTL_LUA = """
+local function set_with_ttl(key, value, ttl)
+    if ttl == '' then
+        redis.call('SET', key, value)
+    else
+        redis.call('SET', key, value, 'EX', ttl)
+    end
+end
+"""
+# Write a stamp with the key's expiry ('' means permanent), capped at
+# CONFIG_WRITE_STAMP_TTL_SECONDS so that no stamp outlives every reload it
+# could order (see the module comment).
+_SET_STAMP_LUA = """
+local function set_stamp(stamp_key, token, ttl)
+    if ttl == '' or tonumber(ttl) > %(cap)d then
+        ttl = %(cap)d
+    end
+    redis.call('SET', stamp_key, token, 'EX', ttl)
+end
+""" % {"cap": CONFIG_WRITE_STAMP_TTL_SECONDS}
+# Write an action key together with its stamp: the value, then "<epoch>:<n>" on
+# the stamp key. The stamp is what the reload's snapshot compares its fetch
+# generation against (see _WRITE_SNAPSHOT_CONFIG_SCRIPT).
+_STAMPED_WRITE_LUA = _NEXT_GENERATION_LUA + _SET_WITH_TTL_LUA + _SET_STAMP_LUA + """
+local function stamped_write(key, stamp_key, counter_key, epoch_key, value, ttl, candidate_epoch)
+    set_with_ttl(key, value, ttl)
+    set_stamp(stamp_key, next_generation(counter_key, epoch_key, candidate_epoch), ttl)
+end
+"""
+# Every stamped script takes the same keys: KEYS[1] the action key, KEYS[2] its
+# stamp, KEYS[3] the generation counter, KEYS[4] the epoch key.
+#
+# Replace exactly the value the caller read (a sentinel generation or a
+# config's raw JSON) with a real configuration, but never anything that landed
+# in between: a newer configuration, a newer sentinel generation from a
+# concurrent ActionConfigDeleted, or nothing at all. A missing key is not a
+# match either: a tombstone written during a slow portal fetch can itself have
+# expired by the time this runs, and installing over "missing" would resurrect
+# the deleted config. ARGV[1] the observed value, ARGV[2] the configuration,
+# ARGV[3] the TTL or '', ARGV[4] a candidate epoch.
+_REPLACE_CACHED_ENTRY_SCRIPT = _STAMPED_WRITE_LUA + """
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+    stamped_write(KEYS[1], KEYS[2], KEYS[3], KEYS[4], ARGV[2], ARGV[3], ARGV[4])
+    return 1
+end
+return 0
+"""
+# Write a configuration only if nothing is cached for the action (the
+# consumer's cold-cache recovery). ARGV[1] the configuration, ARGV[2] the TTL
+# or '', ARGV[3] a candidate epoch.
+_INSTALL_CONFIG_IF_MISSING_SCRIPT = _STAMPED_WRITE_LUA + """
+if redis.call('EXISTS', KEYS[1]) == 1 then
+    return 0
+end
+stamped_write(KEYS[1], KEYS[2], KEYS[3], KEYS[4], ARGV[1], ARGV[2], ARGV[3])
+return 1
+"""
+# Write a configuration unconditionally. Same ARGV as the install script.
+_WRITE_CONFIG_SCRIPT = _STAMPED_WRITE_LUA + """
+stamped_write(KEYS[1], KEYS[2], KEYS[3], KEYS[4], ARGV[1], ARGV[2], ARGV[3])
+return 1
+"""
 # The reload's generation, taken before its portal fetch so every tombstone
 # written during the fetch compares higher (within the same epoch). KEYS[1] the
 # counter, KEYS[2] the epoch key; ARGV[1] a candidate epoch.
@@ -154,12 +230,13 @@ return next_generation(KEYS[1], KEYS[2], ARGV[1])
 """
 # Write an absence sentinel, atomically with the INCR that issues its generation
 # (a generation taken separately could be written after a higher one, breaking
-# the ordering the reload relies on). KEYS[1] is the action key, KEYS[2] the
-# counter, KEYS[3] the epoch key; ARGV[1] a hex nonce, ARGV[2] the TTL in
-# seconds, ARGV[3] the precondition ('any', 'missing', or 'equals' the value in
-# ARGV[4]), ARGV[5] a candidate epoch, ARGV[6] '1' to write a generated
-# tombstone or '0' for the bare value (CONFIG_CACHE_SENTINEL_GENERATIONS).
-_WRITE_TOMBSTONE_SCRIPT = _NEXT_GENERATION_LUA + """
+# the ordering the reload relies on). The generation always goes on the stamp;
+# it goes into the value as well only while generated tombstones are enabled.
+# Keys as above; ARGV[1] a hex nonce, ARGV[2] the TTL in seconds, ARGV[3] the
+# precondition ('any', 'missing', or 'equals' the value in ARGV[4]), ARGV[5] a
+# candidate epoch, ARGV[6] '1' to write a generated tombstone or '0' for the
+# bare value (CONFIG_CACHE_SENTINEL_GENERATIONS).
+_WRITE_TOMBSTONE_SCRIPT = _NEXT_GENERATION_LUA + _SET_STAMP_LUA + """
 local current = redis.call('GET', KEYS[1])
 if ARGV[3] == 'missing' and current then
     return 0
@@ -167,43 +244,62 @@ end
 if ARGV[3] == 'equals' and current ~= ARGV[4] then
     return 0
 end
+local generation = next_generation(KEYS[3], KEYS[4], ARGV[5])
 local value = 'null'
 if ARGV[6] == '1' then
-    value = 'null:' .. next_generation(KEYS[2], KEYS[3], ARGV[5]) .. ':' .. ARGV[1]
+    value = 'null:' .. generation .. ':' .. ARGV[1]
 end
 redis.call('SET', KEYS[1], value, 'EX', ARGV[2])
+set_stamp(KEYS[2], generation, ARGV[2])
 return 1
 """
-# The reload's write of one configured action from its portal snapshot. Refuses
-# to overwrite an absence sentinel from another epoch, or from this epoch with a
-# generation above the one the reload took before its fetch: that is a
-# concurrent ActionConfigDeleted's tombstone, newer than the snapshot, and an
-# unconditional SET would resurrect the deleted config permanently. While
-# generations are enabled (ARGV[4] == '1') a bare "null" is preserved as well:
-# enabling the setting is itself a rolling restart, and a not-yet-enabled
-# replica writes bare tombstones that cannot be ordered against the reload's
-# generation; a bare sentinel that merely predates the fetch expires on its
-# TTL and the next miss reloads. Anything else (a real config, an older
-# generated sentinel, nothing) is replaced by the snapshot, which is the
-# portal's truth as of the fetch. ARGV[2] is the reload's "<epoch>:<n>" token.
-_WRITE_SNAPSHOT_CONFIG_SCRIPT = """
+# The reload's write of one configured action from its portal snapshot. KEYS[1]
+# the action key, KEYS[2] its stamp; ARGV[1] the configuration, ARGV[2] the
+# reload's "<epoch>:<n>" token, taken before its fetch, ARGV[3] the TTL or '',
+# ARGV[4] '1' while generated tombstones are enabled.
+#
+# Refuses a key whose stamp is from another epoch, or from this epoch with a
+# generation above the reload's: whatever wrote it (an ActionConfigUpdated's
+# new configuration, a delete's tombstone, a later reload's snapshot) did so
+# after this reload took its generation, so the snapshot is older than the key
+# and writing it would put stale state over newer, permanently. A key with no
+# stamp (written before stamps existed, or whose stamp has expired: see
+# CONFIG_WRITE_STAMP_TTL_SECONDS) imposes nothing.
+#
+# For the tombstone itself the same rule applies to the generation in its
+# value, so a delete recorded by a replica that stamps nothing still wins over
+# a fetch it postdates. While generations are enabled (ARGV[4] == '1') a bare
+# "null" is preserved as well: enabling the setting is itself a rolling
+# restart, and a not-yet-enabled replica writes bare tombstones that cannot be
+# ordered against the reload's generation; a bare sentinel that merely predates
+# the fetch expires on its TTL and the next miss reloads. Anything else is
+# replaced by the snapshot, which is the portal's truth as of the fetch, and
+# the stamp records the fetch generation so an even older reload yields to it.
+_WRITE_SNAPSHOT_CONFIG_SCRIPT = _SET_WITH_TTL_LUA + _SET_STAMP_LUA + """
+local fetch_epoch, fetch_generation = string.match(ARGV[2], '^([^:]+):(%d+)$')
+local function newer_than_fetch(epoch, generation)
+    return epoch ~= fetch_epoch or tonumber(generation) > tonumber(fetch_generation)
+end
+local stamp = redis.call('GET', KEYS[2])
+if stamp then
+    local epoch, generation = string.match(stamp, '^([^:]+):(%d+)$')
+    if epoch and newer_than_fetch(epoch, generation) then
+        return 0
+    end
+end
 local current = redis.call('GET', KEYS[1])
 if current then
     local epoch, generation = string.match(current, '^null:([^:]+):(%d+):')
     if epoch then
-        local fetch_epoch, fetch_generation = string.match(ARGV[2], '^([^:]+):(%d+)$')
-        if epoch ~= fetch_epoch or tonumber(generation) > tonumber(fetch_generation) then
+        if newer_than_fetch(epoch, generation) then
             return 0
         end
     elseif ARGV[4] == '1' and string.sub(current, 1, 4) == 'null' then
         return 0
     end
 end
-if ARGV[3] == '' then
-    redis.call('SET', KEYS[1], ARGV[1])
-else
-    redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[3])
-end
+set_with_ttl(KEYS[1], ARGV[1], ARGV[3])
+set_stamp(KEYS[2], ARGV[2], ARGV[3])
 return 1
 """
 
@@ -222,6 +318,12 @@ class IntegrationConfigurationManager:
 
     def _get_action_config_key(self, integration_id: str, action_id: str) -> str:
         return f"integrationconfig.{integration_id}.{action_id}"
+
+    @staticmethod
+    def _stamped_keys(key: str) -> tuple:
+        """The four keys every stamped write takes: the action key, its write
+        stamp, the generation counter and the epoch key."""
+        return key, key + _WRITE_STAMP_SUFFIX, _GENERATION_KEY, _GENERATION_EPOCH_KEY
 
     def _get_webhook_config_key(self, integration_id: str) -> str:
         return f"integrationconfig.{integration_id}.webhook"
@@ -242,7 +344,7 @@ class IntegrationConfigurationManager:
         async for attempt in stamina.retry_context(**REDIS_RETRY):
             with attempt:
                 written = await self.db_client.eval(
-                    _WRITE_TOMBSTONE_SCRIPT, 3, key, _GENERATION_KEY, _GENERATION_EPOCH_KEY,
+                    _WRITE_TOMBSTONE_SCRIPT, 4, *self._stamped_keys(key),
                     uuid.uuid4().hex, ttl, mode, expected, uuid.uuid4().hex,
                     "1" if settings.CONFIG_CACHE_SENTINEL_GENERATIONS else "0",
                 )
@@ -263,15 +365,16 @@ class IntegrationConfigurationManager:
         # unconfigured action misses and reloads from the Gundi API, so an
         # integration configured for two of its type's three actions would
         # hit the portal on every single run. Configured actions are written
-        # through a script that preserves a tombstone newer than the fetch
-        # (see _WRITE_SNAPSHOT_CONFIG_SCRIPT).
+        # through a script that yields to anything written to the key after
+        # the fetch generation was taken (see _WRITE_SNAPSHOT_CONFIG_SCRIPT).
         configured = set()
         for config in integration_details.configurations:
             configured.add(config.action.value)
             config_key = self._get_action_config_key(integration_id, config.action.value)
             await self.db_client.eval(
-                _WRITE_SNAPSHOT_CONFIG_SCRIPT, 1, config_key, config.json(), fetch_generation,
-                ttl if ttl is not None else "", "1" if settings.CONFIG_CACHE_SENTINEL_GENERATIONS else "0",
+                _WRITE_SNAPSHOT_CONFIG_SCRIPT, 2, config_key, config_key + _WRITE_STAMP_SUFFIX, config.json(),
+                fetch_generation, ttl if ttl is not None else "",
+                "1" if settings.CONFIG_CACHE_SENTINEL_GENERATIONS else "0",
             )
         # Sentinels are written only if the key is missing, so they never
         # replace a key that is already there. A reload reads the portal, then
@@ -408,7 +511,10 @@ class IntegrationConfigurationManager:
         key = self._get_action_config_key(integration_id, action_id)
         async for attempt in stamina.retry_context(**REDIS_RETRY):
             with attempt:
-                await self.db_client.set(key, config.json(), ttl)
+                await self.db_client.eval(
+                    _WRITE_CONFIG_SCRIPT, 4, *self._stamped_keys(key),
+                    config.json(), ttl if ttl is not None else "", uuid.uuid4().hex,
+                )
 
     async def replace_cached_entry(
             self, integration_id: str, action_id: str, *, config: IntegrationActionConfiguration, observed: str,
@@ -425,7 +531,10 @@ class IntegrationConfigurationManager:
         key = self._get_action_config_key(integration_id, action_id)
         async for attempt in stamina.retry_context(**REDIS_RETRY):
             with attempt:
-                written = await self.db_client.eval(_REPLACE_CACHED_ENTRY_SCRIPT, 1, key, observed, config.json(), "")
+                written = await self.db_client.eval(
+                    _REPLACE_CACHED_ENTRY_SCRIPT, 4, *self._stamped_keys(key),
+                    observed, config.json(), "", uuid.uuid4().hex,
+                )
         return bool(written)
 
     async def replace_cached_entry_with_absence(self, integration_id: str, action_id: str, *, observed: str) -> bool:
@@ -443,14 +552,17 @@ class IntegrationConfigurationManager:
     async def install_action_configuration_if_missing(
             self, integration_id: str, action_id: str, *, config: IntegrationActionConfiguration,
     ) -> bool:
-        """Write `config` only if nothing is cached for this action (SET NX),
-        for a recovery that saw a cold cache, fetched the portal row, and must
-        not overwrite whatever landed meanwhile. Returns whether it was written.
+        """Write `config` only if nothing is cached for this action, for a
+        recovery that saw a cold cache, fetched the portal row, and must not
+        overwrite whatever landed meanwhile. Returns whether it was written.
         Permanent, like every real configuration."""
         key = self._get_action_config_key(integration_id, action_id)
         async for attempt in stamina.retry_context(**REDIS_RETRY):
             with attempt:
-                written = await self.db_client.set(key, config.json(), None, nx=True)
+                written = await self.db_client.eval(
+                    _INSTALL_CONFIG_IF_MISSING_SCRIPT, 4, *self._stamped_keys(key),
+                    config.json(), "", uuid.uuid4().hex,
+                )
         return bool(written)
 
     async def delete_action_configuration(self, integration_id: str, action_id: str):
@@ -482,7 +594,7 @@ class IntegrationConfigurationManager:
     async def delete_integration(self, integration_id: str):
         # Every key derived from this integration goes in one variadic DEL: the
         # webhook key (config or absence sentinel) and the per-action config
-        # keys are addressed separately, so leaving them behind lets them
+        # keys and their write stamps are addressed separately, so leaving them behind lets them
         # outlive their owner, and a single round-trip has no partial-failure
         # window between the keys. The action list lives in the summary that is
         # about to go, so read it first; if it is gone or unreadable, the two
@@ -495,7 +607,9 @@ class IntegrationConfigurationManager:
                     summary_data = await self.db_client.get(integration_key)
             if summary_data:
                 summary = IntegrationSummary.parse_raw(summary_data)
-                keys += [self._get_action_config_key(integration_id, a.value) for a in (summary.type.actions or [])]
+                for action in summary.type.actions or []:
+                    action_key = self._get_action_config_key(integration_id, action.value)
+                    keys += [action_key, action_key + _WRITE_STAMP_SUFFIX]
         except (RedisError, pydantic.ValidationError) as e:
             logger.warning(
                 f"Could not read the cached summary for integration '{integration_id}' "
