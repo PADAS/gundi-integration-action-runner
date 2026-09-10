@@ -640,6 +640,7 @@ class _FakeRedis:
     (matched by identity) so the interleavings exercise their real decisions."""
     def __init__(self):
         self.data = {}
+        self.stamp_ttls = {}  # the expiry each script put on a write stamp (see set_stamp in config_manager)
 
     async def get(self, key):
         return self.data.get(key)
@@ -673,6 +674,11 @@ class _FakeRedis:
         if script is cm._NEXT_GENERATION_SCRIPT:
             counter, epoch_key = keys
             return next_generation(counter, epoch_key, args[0])
+        def stamp(written_key, token, ttl):
+            # set_stamp: the key's expiry, capped so no stamp outlives every reload it could order.
+            cap = cm.CONFIG_WRITE_STAMP_TTL_SECONDS
+            self.data[written_key] = token
+            self.stamp_ttls[written_key] = cap if ttl == "" or int(ttl) > cap else int(ttl)
         def newer_than(token, fetch_token):
             # A stamp from another epoch cannot be ordered against the fetch; treat it as newer.
             epoch, generation = token.split(":")
@@ -690,7 +696,7 @@ class _FakeRedis:
                 self.data[key] = f"null:{generation}:{hex_part}"
             else:
                 self.data[key] = "null"  # the format every deployed replica can read
-            self.data[written_key] = generation
+            stamp(written_key, generation, ttl)
             return 1
         if script is cm._WRITE_SNAPSHOT_CONFIG_SCRIPT:
             written_key = keys[1]
@@ -706,7 +712,7 @@ class _FakeRedis:
                 elif generations_enabled == "1":
                     return 0  # a bare tombstone from a not-yet-enabled replica: cannot be ordered, so preserve it
             self.data[key] = value
-            self.data[written_key] = fetch_token
+            stamp(written_key, fetch_token, ttl)
             return 1
         if script is cm._REPLACE_CACHED_ENTRY_SCRIPT:
             written_key, counter, epoch_key = keys[1], keys[2], keys[3]
@@ -714,7 +720,7 @@ class _FakeRedis:
             if current != observed:
                 return 0
             self.data[key] = value
-            self.data[written_key] = next_generation(counter, epoch_key, candidate_epoch)
+            stamp(written_key, next_generation(counter, epoch_key, candidate_epoch), ttl)
             return 1
         if script is cm._INSTALL_CONFIG_IF_MISSING_SCRIPT:
             written_key, counter, epoch_key = keys[1], keys[2], keys[3]
@@ -722,13 +728,13 @@ class _FakeRedis:
             if current is not None:
                 return 0
             self.data[key] = value
-            self.data[written_key] = next_generation(counter, epoch_key, candidate_epoch)
+            stamp(written_key, next_generation(counter, epoch_key, candidate_epoch), ttl)
             return 1
         if script is cm._WRITE_CONFIG_SCRIPT:
             written_key, counter, epoch_key = keys[1], keys[2], keys[3]
             value, ttl, candidate_epoch = args
             self.data[key] = value
-            self.data[written_key] = next_generation(counter, epoch_key, candidate_epoch)
+            stamp(written_key, next_generation(counter, epoch_key, candidate_epoch), ttl)
             return 1
         if script is cm._EXPIRE_LEGACY_SENTINEL_SCRIPT:
             return 0
@@ -1525,3 +1531,62 @@ async def test_reload_does_not_resurrect_a_config_deleted_during_its_fetch_while
 
     assert fake.data[key] == "null"
     assert await manager.get_action_configuration(integration_id, "auth") is None
+
+
+@pytest.mark.asyncio
+async def test_a_stamp_expires_even_on_a_permanent_key_so_an_unorderable_one_cannot_block_reloads_forever(mocker, integration_v2):
+    """A stamp from another epoch is refused without being orderable at all.
+    Were the stamp as permanent as its key, losing the generation counter
+    (an eviction, a hand-run DEL) while a permanent config's stamp survived
+    would have every later reload mint a new epoch and refuse that key for
+    good; and were the key itself gone too, nothing could repopulate it and
+    the action would read as absent on every run. So every stamp carries a
+    bounded expiry, longer than any fetch it could order against, and once it
+    has aged out the next reload writes."""
+    from app.services import config_manager as cm
+
+    manager = cm.IntegrationConfigurationManager()
+    fake = _FakeRedis()
+    manager.db_client = fake
+    integration_id = str(integration_v2.id)
+    portal_row = next(c for c in integration_v2.configurations if c.action.value == "auth")
+    key = f"integrationconfig.{integration_id}.auth"
+    stale = portal_row.copy(update={"data": {"token": "stale"}})
+    await manager.set_action_configuration(integration_id, "auth", config=stale)  # permanent
+    assert fake.stamp_ttls[f"{key}.written"] == cm.CONFIG_WRITE_STAMP_TTL_SECONDS, \
+        "the stamp expires although the key it stamps does not"
+    mocker.patch.object(manager, "_fetch_integration_from_gundi", AsyncMock(return_value=integration_v2))
+
+    del fake.data[cm._GENERATION_KEY]  # the counter is lost; the next generation mints a new epoch
+    await manager._reload_integration_from_gundi(integration_id)
+    assert fake.data[key] == stale.json(), "while the old-epoch stamp stands, the snapshot is refused"
+    del fake.data[key]  # the key is lost too, leaving the stamp orphaned
+    assert await manager.get_action_configuration(integration_id, "auth") is None, \
+        "until the stamp expires the reload cannot repopulate the key"
+
+    del fake.data[f"{key}.written"]  # CONFIG_WRITE_STAMP_TTL_SECONDS later
+    assert (await manager.get_action_configuration(integration_id, "auth")).data == portal_row.data
+    assert fake.data[key] == portal_row.json()
+
+
+@pytest.mark.asyncio
+async def test_a_stamp_keeps_a_shorter_key_expiry_and_caps_a_longer_one(integration_v2):
+    """The stamp's expiry is its key's, capped: a tombstone's stamp goes when
+    the tombstone does, and a key cached for longer than the cap keeps a stamp
+    only as long as a reload could still be ordered against it."""
+    from app.services import config_manager as cm
+
+    manager = cm.IntegrationConfigurationManager()
+    fake = _FakeRedis()
+    manager.db_client = fake
+    integration_id = str(integration_v2.id)
+    row = next(c for c in integration_v2.configurations if c.action.value == "auth")
+    key = f"integrationconfig.{integration_id}.auth"
+
+    await manager.delete_action_configuration(integration_id, "auth")
+    assert fake.stamp_ttls[f"{key}.written"] == cm.ACTION_ABSENCE_SENTINEL_TTL_SECONDS
+    await manager.set_action_configuration(integration_id, "auth", config=row, ttl=60)
+    assert fake.stamp_ttls[f"{key}.written"] == 60
+    await manager.set_action_configuration(integration_id, "auth", config=row, ttl=4 * cm.CONFIG_WRITE_STAMP_TTL_SECONDS)
+    assert fake.stamp_ttls[f"{key}.written"] == cm.CONFIG_WRITE_STAMP_TTL_SECONDS
+

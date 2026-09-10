@@ -68,6 +68,14 @@ logger = logging.getLogger(__name__)
 # stamp (a key written by a replica without this code, or from before it)
 # imposes nothing, so a rolling deployment is safe: the protection simply
 # starts with the first stamped write.
+#
+# A stamp expires even when its key is permanent (CONFIG_WRITE_STAMP_TTL_SECONDS).
+# It only has to outlive the fetch it orders against, and a stamp from an
+# epoch other than the reload's is refused without being orderable at all: if
+# the counter were lost while a permanent stamp survived, every later reload
+# would mint a new epoch and refuse that key forever, and were the key itself
+# gone as well, nothing could repopulate it and the action would read as
+# absent on every run. Bounded, the stamp ages out and the next reload writes.
 _ABSENCE_SENTINEL_PREFIX = "null"
 _NO_WEBHOOK_CONFIG_SENTINEL = "null"
 _GENERATION_KEY = "integrationconfig.generation"
@@ -109,6 +117,14 @@ WEBHOOK_CONFIG_DEFAULT_TTL_SECONDS = 300
 # whatever the portal now says. It also lets an orphan sentinel (a cascade
 # ActionConfigDeleted arriving after IntegrationDeleted) age out on its own.
 ACTION_ABSENCE_SENTINEL_TTL_SECONDS = 300
+# Longest a write stamp lives, whatever the expiry of the key it stamps. A
+# reload takes its generation, fetches the portal and writes; the fetch is
+# bounded by GUNDI_API_RETRY (120 s in total) and each Redis call by
+# REDIS_RETRY, so no reload that could still be ordered against a stamp is in
+# flight fifteen minutes after that stamp was written. Past that the stamp is
+# only a liability: from an epoch whose counter was lost it would refuse every
+# reload's snapshot (see the module comment), and it can outlive its key.
+CONFIG_WRITE_STAMP_TTL_SECONDS = 15 * 60
 # Attach a TTL to a key only while it still holds the exact sentinel the read
 # observed and has no expiry (TTL == -1). One server-side step on purpose: a
 # client-side TTL check followed by EXPIRE could race an ActionConfigCreated
@@ -153,13 +169,24 @@ local function set_with_ttl(key, value, ttl)
     end
 end
 """
+# Write a stamp with the key's expiry ('' means permanent), capped at
+# CONFIG_WRITE_STAMP_TTL_SECONDS so that no stamp outlives every reload it
+# could order (see the module comment).
+_SET_STAMP_LUA = """
+local function set_stamp(stamp_key, token, ttl)
+    if ttl == '' or tonumber(ttl) > %(cap)d then
+        ttl = %(cap)d
+    end
+    redis.call('SET', stamp_key, token, 'EX', ttl)
+end
+""" % {"cap": CONFIG_WRITE_STAMP_TTL_SECONDS}
 # Write an action key together with its stamp: the value, then "<epoch>:<n>" on
-# the stamp key, both with the same expiry. The stamp is what the reload's
-# snapshot compares its fetch generation against (see _WRITE_SNAPSHOT_CONFIG_SCRIPT).
-_STAMPED_WRITE_LUA = _NEXT_GENERATION_LUA + _SET_WITH_TTL_LUA + """
+# the stamp key. The stamp is what the reload's snapshot compares its fetch
+# generation against (see _WRITE_SNAPSHOT_CONFIG_SCRIPT).
+_STAMPED_WRITE_LUA = _NEXT_GENERATION_LUA + _SET_WITH_TTL_LUA + _SET_STAMP_LUA + """
 local function stamped_write(key, stamp_key, counter_key, epoch_key, value, ttl, candidate_epoch)
     set_with_ttl(key, value, ttl)
-    set_with_ttl(stamp_key, next_generation(counter_key, epoch_key, candidate_epoch), ttl)
+    set_stamp(stamp_key, next_generation(counter_key, epoch_key, candidate_epoch), ttl)
 end
 """
 # Every stamped script takes the same keys: KEYS[1] the action key, KEYS[2] its
@@ -209,7 +236,7 @@ return next_generation(KEYS[1], KEYS[2], ARGV[1])
 # precondition ('any', 'missing', or 'equals' the value in ARGV[4]), ARGV[5] a
 # candidate epoch, ARGV[6] '1' to write a generated tombstone or '0' for the
 # bare value (CONFIG_CACHE_SENTINEL_GENERATIONS).
-_WRITE_TOMBSTONE_SCRIPT = _NEXT_GENERATION_LUA + """
+_WRITE_TOMBSTONE_SCRIPT = _NEXT_GENERATION_LUA + _SET_STAMP_LUA + """
 local current = redis.call('GET', KEYS[1])
 if ARGV[3] == 'missing' and current then
     return 0
@@ -223,7 +250,7 @@ if ARGV[6] == '1' then
     value = 'null:' .. generation .. ':' .. ARGV[1]
 end
 redis.call('SET', KEYS[1], value, 'EX', ARGV[2])
-redis.call('SET', KEYS[2], generation, 'EX', ARGV[2])
+set_stamp(KEYS[2], generation, ARGV[2])
 return 1
 """
 # The reload's write of one configured action from its portal snapshot. KEYS[1]
@@ -235,8 +262,9 @@ return 1
 # generation above the reload's: whatever wrote it (an ActionConfigUpdated's
 # new configuration, a delete's tombstone, a later reload's snapshot) did so
 # after this reload took its generation, so the snapshot is older than the key
-# and writing it would put stale state over newer, permanently. Keys written
-# before stamps existed have none and impose nothing.
+# and writing it would put stale state over newer, permanently. A key with no
+# stamp (written before stamps existed, or whose stamp has expired: see
+# CONFIG_WRITE_STAMP_TTL_SECONDS) imposes nothing.
 #
 # For the tombstone itself the same rule applies to the generation in its
 # value, so a delete recorded by a replica that stamps nothing still wins over
@@ -247,7 +275,7 @@ return 1
 # the fetch expires on its TTL and the next miss reloads. Anything else is
 # replaced by the snapshot, which is the portal's truth as of the fetch, and
 # the stamp records the fetch generation so an even older reload yields to it.
-_WRITE_SNAPSHOT_CONFIG_SCRIPT = _SET_WITH_TTL_LUA + """
+_WRITE_SNAPSHOT_CONFIG_SCRIPT = _SET_WITH_TTL_LUA + _SET_STAMP_LUA + """
 local fetch_epoch, fetch_generation = string.match(ARGV[2], '^([^:]+):(%d+)$')
 local function newer_than_fetch(epoch, generation)
     return epoch ~= fetch_epoch or tonumber(generation) > tonumber(fetch_generation)
@@ -271,7 +299,7 @@ if current then
     end
 end
 set_with_ttl(KEYS[1], ARGV[1], ARGV[3])
-set_with_ttl(KEYS[2], ARGV[2], ARGV[3])
+set_stamp(KEYS[2], ARGV[2], ARGV[3])
 return 1
 """
 
