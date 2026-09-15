@@ -171,7 +171,7 @@ async def test_get_action_configuration_with_ttl(
     # with the caller's TTL (the script preserves a newer tombstone, so this
     # write is an EVAL rather than a plain SET).
     snapshot_writes = {c.args[2]: c.args for c in mock_redis_empty.Redis.return_value.eval.call_args_list}
-    _, _, _, written_json, _, written_ttl, _ = snapshot_writes[f"integrationconfig.{integration_id}.{action_id}"]
+    _, _, _, _stamp_key, written_json, _, written_ttl, _ = snapshot_writes[f"integrationconfig.{integration_id}.{action_id}"]
     assert (written_json, written_ttl) == (action_config.json(), ttl)
     # Verify that integration was also saved with TTL
     mock_redis_empty.Redis.return_value.set.assert_any_call(
@@ -195,11 +195,15 @@ async def test_set_action_configuration_with_ttl(
 
     await config_manager.set_action_configuration(integration_id, action_id, action_v2, ttl=ttl)
 
-    mock_redis_empty.Redis.return_value.set.assert_called_once_with(
-        f"integrationconfig.{integration_id}.{action_id}",
-        action_v2.json(),
-        ttl
+    from app.services import config_manager as cm
+    (script, numkeys, key, written_key, counter, epoch_key, value, written_ttl, _candidate_epoch), _ = \
+        mock_redis_empty.Redis.return_value.eval.call_args
+    assert script is cm._WRITE_CONFIG_SCRIPT
+    assert (numkeys, key, written_key, counter, epoch_key, value, written_ttl) == (
+        4, f"integrationconfig.{integration_id}.{action_id}", f"integrationconfig.{integration_id}.{action_id}.written",
+        cm._GENERATION_KEY, cm._GENERATION_EPOCH_KEY, action_v2.json(), ttl,
     )
+    assert not mock_redis_empty.Redis.return_value.set.called
 
 
 @pytest.mark.asyncio
@@ -423,6 +427,7 @@ async def test_deleting_an_integration_drops_every_derived_key_in_one_call(
     assert f"integration.{integration_id}" in deleted
     assert f"integrationconfig.{integration_id}.webhook" in deleted
     expected_action_keys = {f"integrationconfig.{integration_id}.{a.value}" for a in integration_v2.type.actions}
+    expected_action_keys |= {f"{k}.written" for k in expected_action_keys}
     assert expected_action_keys and expected_action_keys <= deleted
 
 
@@ -562,12 +567,13 @@ async def test_reload_writes_absence_sentinels_for_unconfigured_actions(
     tombstones = {c.args[2]: c.args for c in evals if c.args[0] is cm._WRITE_TOMBSTONE_SCRIPT}
     snapshots = {c.args[2]: c.args for c in evals if c.args[0] is cm._WRITE_SNAPSHOT_CONFIG_SCRIPT}
     for action_id in unconfigured:
-        _, numkeys, _, counter, epoch_key, _hex, _ttl, mode, _, _, _ = tombstones[f"integrationconfig.{integration_id}.{action_id}"]
-        assert (numkeys, counter, epoch_key, mode) == (3, cm._GENERATION_KEY, cm._GENERATION_EPOCH_KEY, "missing"), \
+        _, numkeys, _, written_key, counter, epoch_key, _hex, _ttl, mode, _, _, _ = tombstones[f"integrationconfig.{integration_id}.{action_id}"]
+        assert (numkeys, written_key, counter, epoch_key, mode) == (
+            4, f"integrationconfig.{integration_id}.{action_id}.written", cm._GENERATION_KEY, cm._GENERATION_EPOCH_KEY, "missing"), \
             "a Redis-issued generation, and never replacing an existing key"
     for action_id in configured:
         # Written through the snapshot script, which preserves a newer tombstone.
-        assert not snapshots[f"integrationconfig.{integration_id}.{action_id}"][3].startswith("null")
+        assert not snapshots[f"integrationconfig.{integration_id}.{action_id}"][4].startswith("null")
 
 
 def _miss_until_the_snapshot_is_written(client, integration):
@@ -634,6 +640,7 @@ class _FakeRedis:
     (matched by identity) so the interleavings exercise their real decisions."""
     def __init__(self):
         self.data = {}
+        self.stamp_ttls = {}  # the expiry each script put on a write stamp (see set_stamp in config_manager)
 
     async def get(self, key):
         return self.data.get(key)
@@ -667,35 +674,67 @@ class _FakeRedis:
         if script is cm._NEXT_GENERATION_SCRIPT:
             counter, epoch_key = keys
             return next_generation(counter, epoch_key, args[0])
+        def stamp(written_key, token, ttl):
+            # set_stamp: the key's expiry, capped so no stamp outlives every reload it could order.
+            cap = cm.CONFIG_WRITE_STAMP_TTL_SECONDS
+            self.data[written_key] = token
+            self.stamp_ttls[written_key] = cap if ttl == "" or int(ttl) > cap else int(ttl)
+        def newer_than(token, fetch_token):
+            # A stamp from another epoch cannot be ordered against the fetch; treat it as newer.
+            epoch, generation = token.split(":")
+            fetch_epoch, fetch_generation = fetch_token.split(":")
+            return epoch != fetch_epoch or int(generation) > int(fetch_generation)
         if script is cm._WRITE_TOMBSTONE_SCRIPT:
-            counter, epoch_key = keys[1], keys[2]
+            written_key, counter, epoch_key = keys[1], keys[2], keys[3]
             hex_part, ttl, mode, expected, candidate_epoch, generated = args
             if mode == "missing" and current is not None:
                 return 0
             if mode == "equals" and current != expected:
                 return 0
+            generation = next_generation(counter, epoch_key, candidate_epoch)
             if generated == "1":
-                self.data[key] = f"null:{next_generation(counter, epoch_key, candidate_epoch)}:{hex_part}"
+                self.data[key] = f"null:{generation}:{hex_part}"
             else:
                 self.data[key] = "null"  # the format every deployed replica can read
+            stamp(written_key, generation, ttl)
             return 1
         if script is cm._WRITE_SNAPSHOT_CONFIG_SCRIPT:
+            written_key = keys[1]
             value, fetch_token, ttl, generations_enabled = args
+            written = self.data.get(written_key)
+            if written is not None and newer_than(written, fetch_token):
+                return 0  # something was written to this key after the reload took its generation
             if isinstance(current, str) and current.startswith("null"):
                 m = re.match(r"^null:([^:]+):(\d+):", current)
                 if m:
-                    fetch_epoch, fetch_generation = fetch_token.split(":")
-                    if m.group(1) != fetch_epoch or int(m.group(2)) > int(fetch_generation):
+                    if newer_than(f"{m.group(1)}:{m.group(2)}", fetch_token):
                         return 0
                 elif generations_enabled == "1":
                     return 0  # a bare tombstone from a not-yet-enabled replica: cannot be ordered, so preserve it
             self.data[key] = value
+            stamp(written_key, fetch_token, ttl)
             return 1
         if script is cm._REPLACE_CACHED_ENTRY_SCRIPT:
-            observed, value = args[0], args[1]
+            written_key, counter, epoch_key = keys[1], keys[2], keys[3]
+            observed, value, ttl, candidate_epoch = args
             if current != observed:
                 return 0
             self.data[key] = value
+            stamp(written_key, next_generation(counter, epoch_key, candidate_epoch), ttl)
+            return 1
+        if script is cm._INSTALL_CONFIG_IF_MISSING_SCRIPT:
+            written_key, counter, epoch_key = keys[1], keys[2], keys[3]
+            value, ttl, candidate_epoch = args
+            if current is not None:
+                return 0
+            self.data[key] = value
+            stamp(written_key, next_generation(counter, epoch_key, candidate_epoch), ttl)
+            return 1
+        if script is cm._WRITE_CONFIG_SCRIPT:
+            written_key, counter, epoch_key = keys[1], keys[2], keys[3]
+            value, ttl, candidate_epoch = args
+            self.data[key] = value
+            stamp(written_key, next_generation(counter, epoch_key, candidate_epoch), ttl)
             return 1
         if script is cm._EXPIRE_LEGACY_SENTINEL_SCRIPT:
             return 0
@@ -759,11 +798,11 @@ async def test_deleting_an_action_configuration_records_its_absence(
     await config_manager.delete_action_configuration(integration_id, "pull_events")
 
     from app.services import config_manager as cm
-    (script, numkeys, key, counter, epoch_key, _hex, ttl, mode, _, _, _), _ = mock_redis_empty.Redis.return_value.eval.call_args
+    (script, numkeys, key, written_key, counter, epoch_key, _hex, ttl, mode, _, _, _), _ = mock_redis_empty.Redis.return_value.eval.call_args
     assert script is cm._WRITE_TOMBSTONE_SCRIPT
-    assert (numkeys, key, counter, epoch_key, ttl, mode) == (
-        3, f"integrationconfig.{integration_id}.pull_events", cm._GENERATION_KEY, cm._GENERATION_EPOCH_KEY,
-        ACTION_ABSENCE_SENTINEL_TTL_SECONDS, "any",
+    assert (numkeys, key, written_key, counter, epoch_key, ttl, mode) == (
+        4, f"integrationconfig.{integration_id}.pull_events", f"integrationconfig.{integration_id}.pull_events.written",
+        cm._GENERATION_KEY, cm._GENERATION_EPOCH_KEY, ACTION_ABSENCE_SENTINEL_TTL_SECONDS, "any",
     )
     assert not mock_redis_empty.Redis.return_value.set.called
     assert not mock_redis_empty.Redis.return_value.delete.called
@@ -871,10 +910,10 @@ async def test_reload_absence_sentinels_expire_when_the_caller_asks_for_no_ttl(
     tombstones = {c.args[2]: c.args for c in evals if c.args[0] is cm._WRITE_TOMBSTONE_SCRIPT}
     snapshots = {c.args[2]: c.args for c in evals if c.args[0] is cm._WRITE_SNAPSHOT_CONFIG_SCRIPT}
     for action_id in unconfigured:
-        assert tombstones[f"integrationconfig.{integration_id}.{action_id}"][6] == ACTION_ABSENCE_SENTINEL_TTL_SECONDS
+        assert tombstones[f"integrationconfig.{integration_id}.{action_id}"][7] == ACTION_ABSENCE_SENTINEL_TTL_SECONDS
     for action_id in configured:
         # Real configs stay permanent: the events that change them invalidate them.
-        assert snapshots[f"integrationconfig.{integration_id}.{action_id}"][5] == ""
+        assert snapshots[f"integrationconfig.{integration_id}.{action_id}"][6] == ""
 
 
 @pytest.mark.asyncio
@@ -895,7 +934,7 @@ async def test_reload_absence_sentinels_keep_an_explicit_caller_ttl(
     evals = mock_redis_empty.Redis.return_value.eval.call_args_list
     tombstones = {c.args[2]: c.args for c in evals if c.args[0] is cm._WRITE_TOMBSTONE_SCRIPT}
     for action_id in unconfigured:
-        assert tombstones[f"integrationconfig.{integration_id}.{action_id}"][6] == 60
+        assert tombstones[f"integrationconfig.{integration_id}.{action_id}"][7] == 60
 
 
 @pytest.mark.asyncio
@@ -987,9 +1026,13 @@ async def test_replace_cached_entry_requires_the_exact_observed_value(
     )
 
     assert won is True
-    (script, numkeys, key, sentinel, value, ttl), _ = client.eval.call_args
-    assert (numkeys, key, sentinel, value, ttl) == (
-        1, f"integrationconfig.{integration_id}.pull_observations", "null:0123abcd", config.json(), "",
+    from app.services import config_manager as cm
+    (script, numkeys, key, written_key, counter, epoch_key, sentinel, value, ttl, _candidate_epoch), _ = client.eval.call_args
+    assert script is cm._REPLACE_CACHED_ENTRY_SCRIPT
+    assert (numkeys, key, written_key, counter, epoch_key, sentinel, value, ttl) == (
+        4, f"integrationconfig.{integration_id}.pull_observations",
+        f"integrationconfig.{integration_id}.pull_observations.written", cm._GENERATION_KEY, cm._GENERATION_EPOCH_KEY,
+        "null:0123abcd", config.json(), "",
     )
     assert "GET" in script and "SET" in script
     assert "false" not in script, "a missing (expired) key must not count as the observed sentinel"
@@ -1006,7 +1049,7 @@ async def test_replace_cached_entry_requires_the_exact_observed_value(
     assert await config_manager.replace_cached_entry(
         integration_id, "pull_observations", config=config, observed=stale_raw,
     ) is True
-    assert client.eval.call_args.args[3] == stale_raw
+    assert client.eval.call_args.args[6] == stale_raw
 
 
 @pytest.mark.asyncio
@@ -1024,12 +1067,19 @@ async def test_install_action_configuration_if_missing_is_a_single_conditional_w
     integration_id = str(integration_v2.id)
     config = IntegrationActionConfiguration.parse_raw(pull_observations_config_as_json)
 
-    client.set.return_value = async_return(True)
+    from app.services import config_manager as cm
+    client.eval.return_value = async_return(1)
     assert await config_manager.install_action_configuration_if_missing(integration_id, "pull_observations", config=config) is True
-    client.set.assert_called_once_with(f"integrationconfig.{integration_id}.pull_observations", config.json(), None, nx=True)
-    assert not client.eval.called
+    (script, numkeys, key, written_key, counter, epoch_key, value, ttl, _candidate_epoch), _ = client.eval.call_args
+    assert script is cm._INSTALL_CONFIG_IF_MISSING_SCRIPT
+    assert (numkeys, key, written_key, counter, epoch_key, value, ttl) == (
+        4, f"integrationconfig.{integration_id}.pull_observations",
+        f"integrationconfig.{integration_id}.pull_observations.written", cm._GENERATION_KEY, cm._GENERATION_EPOCH_KEY,
+        config.json(), "",
+    )
+    assert not client.set.called
 
-    client.set.return_value = async_return(None)  # redis: NX not applied
+    client.eval.return_value = async_return(0)  # the key was there
     assert await config_manager.install_action_configuration_if_missing(integration_id, "pull_observations", config=config) is False
 @pytest.mark.parametrize("cached", ["webhook-config", "sentinel"])
 @pytest.mark.asyncio
@@ -1172,11 +1222,11 @@ async def test_replace_cached_entry_with_absence_writes_a_fresh_expiring_tombsto
     won = await config_manager.replace_cached_entry_with_absence(integration_id, "pull_events", observed='{"id": "x"}')
 
     assert won is True
-    (script, numkeys, key, counter, epoch_key, _hex, ttl, mode, expected, _, _), _ = client.eval.call_args
+    (script, numkeys, key, written_key, counter, epoch_key, _hex, ttl, mode, expected, _, _), _ = client.eval.call_args
     assert script is cm._WRITE_TOMBSTONE_SCRIPT
-    assert (numkeys, key, counter, epoch_key, ttl, mode, expected) == (
-        3, f"integrationconfig.{integration_id}.pull_events", cm._GENERATION_KEY, cm._GENERATION_EPOCH_KEY,
-        ACTION_ABSENCE_SENTINEL_TTL_SECONDS, "equals", '{"id": "x"}',
+    assert (numkeys, key, written_key, counter, epoch_key, ttl, mode, expected) == (
+        4, f"integrationconfig.{integration_id}.pull_events", f"integrationconfig.{integration_id}.pull_events.written",
+        cm._GENERATION_KEY, cm._GENERATION_EPOCH_KEY, ACTION_ABSENCE_SENTINEL_TTL_SECONDS, "equals", '{"id": "x"}',
     )
 
 
@@ -1228,7 +1278,10 @@ async def test_by_default_tombstones_are_the_bare_value_every_replica_can_read(i
     anything else as a configuration, so a generated tombstone would raise on
     every lookup there until the rollout completes. Generated tombstones are
     therefore opt-in (CONFIG_CACHE_SENTINEL_GENERATIONS): this release ships
-    the tolerant reader everywhere; a later one turns the writer on."""
+    the tolerant reader everywhere; a later one turns the writer on. The
+    generation still goes on the write stamp beside the key, which no reader
+    of the value ever sees, so the reload can order the delete against its
+    fetch either way."""
     from app.services import config_manager as cm
 
     assert cm.settings.CONFIG_CACHE_SENTINEL_GENERATIONS is False
@@ -1241,7 +1294,7 @@ async def test_by_default_tombstones_are_the_bare_value_every_replica_can_read(i
     await config_manager.delete_action_configuration(integration_id, "pull_events")
 
     assert fake.data[key] == "null"
-    assert cm._GENERATION_KEY not in fake.data, "no counter traffic while generations are off"
+    assert fake.data[f"{key}.written"] == f"{fake.data[cm._GENERATION_EPOCH_KEY]}:{fake.data[cm._GENERATION_KEY]}"
     assert await config_manager.get_action_configuration(integration_id, "pull_events") is None
 
 
@@ -1394,3 +1447,146 @@ async def test_compare_and_set_over_a_bare_sentinel_proceeds_while_generations_a
 
     assert await config_manager.replace_cached_entry(str(integration_v2.id), "pull_observations", config=config, observed="null") is True
     assert client.eval.called
+
+
+@pytest.mark.asyncio
+async def test_reload_does_not_overwrite_a_config_updated_during_its_fetch(mocker, integration_v2):
+    """The reload reads the portal, and while that read is in flight the
+    consumer applies an ActionConfigUpdated (new credentials, compare-and-set,
+    permanent). The reload's snapshot predates that write, so it must not land
+    on top of it: nothing later would correct the stale permanent key. Every
+    write to an action key stamps its generation; the snapshot yields to a
+    stamp newer than the generation the reload took before its fetch."""
+    from app.services import config_manager as cm
+
+    manager = cm.IntegrationConfigurationManager()
+    fake = _FakeRedis()
+    manager.db_client = fake
+    integration_id = str(integration_v2.id)
+    old = next(c for c in integration_v2.configurations if c.action.value == "auth")
+    key = f"integrationconfig.{integration_id}.auth"
+    new = old.copy(update={"data": {"token": "rotated"}})
+    assert await manager.install_action_configuration_if_missing(integration_id, "auth", config=old)
+
+    async def fetch_while_an_update_lands(_integration_id):
+        assert await manager.replace_cached_entry(integration_id, "auth", config=new, observed=old.json())
+        return integration_v2  # the portal as of before the rotation
+
+    mocker.patch.object(manager, "_fetch_integration_from_gundi", fetch_while_an_update_lands)
+
+    await manager._reload_integration_from_gundi(integration_id)
+
+    assert fake.data[key] == new.json(), "the snapshot must not overwrite the newer configuration"
+    assert (await manager.get_action_configuration(integration_id, "auth")).data == {"token": "rotated"}
+
+
+@pytest.mark.asyncio
+async def test_reload_started_after_an_update_writes_its_snapshot(mocker, integration_v2):
+    """The guard only yields to writes that landed after the reload took its
+    generation. A configuration written before that is older than the portal
+    read, so the snapshot is the truth and replaces it."""
+    from app.services import config_manager as cm
+
+    manager = cm.IntegrationConfigurationManager()
+    fake = _FakeRedis()
+    manager.db_client = fake
+    integration_id = str(integration_v2.id)
+    portal_row = next(c for c in integration_v2.configurations if c.action.value == "auth")
+    key = f"integrationconfig.{integration_id}.auth"
+    stale = portal_row.copy(update={"data": {"token": "stale"}})
+    assert await manager.install_action_configuration_if_missing(integration_id, "auth", config=stale)
+    mocker.patch.object(manager, "_fetch_integration_from_gundi", AsyncMock(return_value=integration_v2))
+
+    await manager._reload_integration_from_gundi(integration_id)
+
+    assert fake.data[key] == portal_row.json()
+    assert fake.data[f"{key}.written"] != "", "the snapshot stamps the key with the reload's fetch generation"
+
+
+@pytest.mark.asyncio
+async def test_reload_does_not_resurrect_a_config_deleted_during_its_fetch_while_generations_are_off(mocker, integration_v2):
+    """With CONFIG_CACHE_SENTINEL_GENERATIONS off a delete writes a bare "null"
+    that carries no generation of its own, so until now a reload whose fetch
+    started before the delete overwrote it with the snapshot, resurrecting the
+    deleted configuration as a permanent key. The write stamp orders the delete
+    against the fetch without changing the value old replicas read."""
+    from app.services import config_manager as cm
+
+    assert cm.settings.CONFIG_CACHE_SENTINEL_GENERATIONS is False
+    manager = cm.IntegrationConfigurationManager()
+    fake = _FakeRedis()
+    manager.db_client = fake
+    integration_id = str(integration_v2.id)
+    row = next(c for c in integration_v2.configurations if c.action.value == "auth")
+    key = f"integrationconfig.{integration_id}.auth"
+    assert await manager.install_action_configuration_if_missing(integration_id, "auth", config=row)
+
+    async def fetch_while_a_delete_lands(_integration_id):
+        await manager.delete_action_configuration(integration_id, "auth")
+        return integration_v2  # the portal as of before the delete
+
+    mocker.patch.object(manager, "_fetch_integration_from_gundi", fetch_while_a_delete_lands)
+
+    await manager._reload_integration_from_gundi(integration_id)
+
+    assert fake.data[key] == "null"
+    assert await manager.get_action_configuration(integration_id, "auth") is None
+
+
+@pytest.mark.asyncio
+async def test_a_stamp_expires_even_on_a_permanent_key_so_an_unorderable_one_cannot_block_reloads_forever(mocker, integration_v2):
+    """A stamp from another epoch is refused without being orderable at all.
+    Were the stamp as permanent as its key, losing the generation counter
+    (an eviction, a hand-run DEL) while a permanent config's stamp survived
+    would have every later reload mint a new epoch and refuse that key for
+    good; and were the key itself gone too, nothing could repopulate it and
+    the action would read as absent on every run. So every stamp carries a
+    bounded expiry, longer than any fetch it could order against, and once it
+    has aged out the next reload writes."""
+    from app.services import config_manager as cm
+
+    manager = cm.IntegrationConfigurationManager()
+    fake = _FakeRedis()
+    manager.db_client = fake
+    integration_id = str(integration_v2.id)
+    portal_row = next(c for c in integration_v2.configurations if c.action.value == "auth")
+    key = f"integrationconfig.{integration_id}.auth"
+    stale = portal_row.copy(update={"data": {"token": "stale"}})
+    await manager.set_action_configuration(integration_id, "auth", config=stale)  # permanent
+    assert fake.stamp_ttls[f"{key}.written"] == cm.CONFIG_WRITE_STAMP_TTL_SECONDS, \
+        "the stamp expires although the key it stamps does not"
+    mocker.patch.object(manager, "_fetch_integration_from_gundi", AsyncMock(return_value=integration_v2))
+
+    del fake.data[cm._GENERATION_KEY]  # the counter is lost; the next generation mints a new epoch
+    await manager._reload_integration_from_gundi(integration_id)
+    assert fake.data[key] == stale.json(), "while the old-epoch stamp stands, the snapshot is refused"
+    del fake.data[key]  # the key is lost too, leaving the stamp orphaned
+    assert await manager.get_action_configuration(integration_id, "auth") is None, \
+        "until the stamp expires the reload cannot repopulate the key"
+
+    del fake.data[f"{key}.written"]  # CONFIG_WRITE_STAMP_TTL_SECONDS later
+    assert (await manager.get_action_configuration(integration_id, "auth")).data == portal_row.data
+    assert fake.data[key] == portal_row.json()
+
+
+@pytest.mark.asyncio
+async def test_a_stamp_keeps_a_shorter_key_expiry_and_caps_a_longer_one(integration_v2):
+    """The stamp's expiry is its key's, capped: a tombstone's stamp goes when
+    the tombstone does, and a key cached for longer than the cap keeps a stamp
+    only as long as a reload could still be ordered against it."""
+    from app.services import config_manager as cm
+
+    manager = cm.IntegrationConfigurationManager()
+    fake = _FakeRedis()
+    manager.db_client = fake
+    integration_id = str(integration_v2.id)
+    row = next(c for c in integration_v2.configurations if c.action.value == "auth")
+    key = f"integrationconfig.{integration_id}.auth"
+
+    await manager.delete_action_configuration(integration_id, "auth")
+    assert fake.stamp_ttls[f"{key}.written"] == cm.ACTION_ABSENCE_SENTINEL_TTL_SECONDS
+    await manager.set_action_configuration(integration_id, "auth", config=row, ttl=60)
+    assert fake.stamp_ttls[f"{key}.written"] == 60
+    await manager.set_action_configuration(integration_id, "auth", config=row, ttl=4 * cm.CONFIG_WRITE_STAMP_TTL_SECONDS)
+    assert fake.stamp_ttls[f"{key}.written"] == cm.CONFIG_WRITE_STAMP_TTL_SECONDS
+
