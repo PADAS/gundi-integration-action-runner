@@ -24,7 +24,7 @@ from gundi_core.events import (
     WebhookExecutionComplete,
     IntegrationWebhookFailed,
     WebhookExecutionFailed,
-    CustomWebhookLog,
+    CustomWebhookLog,    LogLevel,
 )
 from app import settings
 from app.services.errors import format_error_message
@@ -76,13 +76,13 @@ async def publish_event(event: SystemEventBaseModel, topic_name: str):
             return response
 
 
-async def log_activity(integration_id: str, action_id: str, title: str, level="INFO", config_data: dict = None, data: dict = None):
+async def log_activity(integration_id: str, action_id: str, title: str, level=LogLevel.INFO, config_data: dict = None, data: dict = None):
     # Show a deprecation warning in favor of using either log_action_activity or log_webhook_activity
     logger.warning("log_activity is deprecated. Please use log_action_activity or log_webhook_activity instead.")
     return await log_action_activity(integration_id, action_id, title, level, config_data, data)
 
 
-async def log_action_activity(integration_id: str, action_id: str, title: str, level="INFO", config_data: dict = None, data: dict = None):
+async def log_action_activity(integration_id: str, action_id: str, title: str, level=LogLevel.INFO, config_data: dict = None, data: dict = None):
     """
         This is a helper method to send custom activity logs to the portal.
         :param integration_id: UUID of the integration
@@ -109,7 +109,7 @@ async def log_action_activity(integration_id: str, action_id: str, title: str, l
 
 
 async def log_webhook_activity(
-        integration_id: str, title: str, webhook_id: str="webhook", level="INFO", config_data: dict = None, data: dict = None
+        integration_id: str, title: str, webhook_id: str="webhook", level=LogLevel.INFO, config_data: dict = None, data: dict = None
 ):
     """
         This is a helper method to send custom activity logs to the portal.

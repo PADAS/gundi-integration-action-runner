@@ -11,7 +11,7 @@ from gundi_core.events import (
     IntegrationWebhookFailed
 )
 from app import settings
-from app.services.activity_logger import publish_event, activity_logger, webhook_activity_logger, log_activity
+from app.services.activity_logger import publish_event, activity_logger, webhook_activity_logger, log_activity, log_action_activity, log_webhook_activity
 from app.services.errors import IntegrationAuthError
 from app.webhooks import GenericJsonPayload, GenericJsonTransformConfig
 
@@ -277,3 +277,25 @@ async def test_webhook_activity_logger_decorator_publishes_classified_error_text
     assert failed_events[0].payload.error == (
         "Authentication failed — Provider rejected the credentials (HTTP 401)"
     )
+
+
+@pytest.mark.asyncio
+async def test_log_activity_default_level_is_a_valid_log_level(mocker, integration_v2, mock_publish_event):
+    """gundi-core's LogLevel is an IntEnum, so the string default "INFO" the
+    helpers used to carry never validated: a connector that called
+    log_action_activity without a level got a ValidationError instead of a
+    log entry. The default must be the enum member."""
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+
+    await log_action_activity(
+        integration_id=str(integration_v2.id),
+        action_id="pull_observations",
+        title="Something worth telling the operator",
+    )
+    await log_webhook_activity(
+        integration_id=str(integration_v2.id),
+        title="Webhook received",
+    )
+
+    levels = [call.kwargs["event"].payload.level for call in mock_publish_event.call_args_list]
+    assert levels == [LogLevel.INFO, LogLevel.INFO]
