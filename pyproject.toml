@@ -16,8 +16,12 @@ dependencies = [
     "fastapi~=0.115.0",
     "uvicorn~=0.30.0",
     "gundi-core~=1.11.1",
-    "gundi-client-v2~=3.5",
-    "stamina~=23.2.0",
+    "gundi-client-v2[redis]~=3.7.1",  # [redis]: shared OAuth token cache backend.
+                                      # >=3.7.1: 3.7.0 served a token the API rejected
+                                      # with a plain 401 to every client sharing the
+                                      # cache (PADAS/gundi-client#61).
+    "stamina~=24.3.0",   # 24.3 is the first release whose `on=` accepts a predicate
+    "httpx~=0.28.1",     # imported directly by services/*; the line gundi-client-v2 3.x needs
     "redis~=5.0.1",
     "gcloud-aio-pubsub~=6.0.0",
     # previously transitive via gcloud-aio-pubsub; services/errors.py now imports it directly
