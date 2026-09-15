@@ -1,11 +1,14 @@
 import asyncio
 import datetime
 import json
+import sys
 
 import httpx
 import pydantic
 import pytest
 from unittest.mock import MagicMock
+# GUNDI_TOKEN_CACHE_URL is defaulted to "" for tests in the root conftest.py,
+# which runs before anything under app/ (and with it gundi_action_runner.settings) is imported.
 from gundi_action_runner import settings
 from gcloud.aio import pubsub
 from gundi_core.schemas.v2 import Integration, IntegrationSummary
@@ -73,6 +76,7 @@ def mock_redis(mocker, mock_integration_state):
     redis_client.incr.return_value = redis_client
     redis_client.decr.return_value = async_return(None)
     redis_client.expire.return_value = redis_client
+    redis_client.eval.return_value = async_return(0)  # scripts (compare-and-expire) report "nothing changed"
     redis_client.execute.return_value = async_return((1, True))
     redis_client.__aenter__.return_value = redis_client
     redis_client.__aexit__.return_value = None
@@ -92,6 +96,7 @@ def mock_redis_empty(mocker, mock_integration_state):
     redis_client.incr.return_value = redis_client
     redis_client.decr.return_value = async_return(None)
     redis_client.expire.return_value = redis_client
+    redis_client.eval.return_value = async_return(0)  # scripts (compare-and-expire) report "nothing changed"
     redis_client.execute.return_value = async_return((1, True))
     redis_client.__aenter__.return_value = redis_client
     redis_client.__aexit__.return_value = None
@@ -111,6 +116,7 @@ def mock_redis_with_integration_config(mocker, integration_v2_as_json):
     redis_client.incr.return_value = redis_client
     redis_client.decr.return_value = async_return(None)
     redis_client.expire.return_value = redis_client
+    redis_client.eval.return_value = async_return(0)  # scripts (compare-and-expire) report "nothing changed"
     redis_client.execute.return_value = async_return((1, True))
     redis_client.__aenter__.return_value = redis_client
     redis_client.__aexit__.return_value = None
@@ -130,6 +136,7 @@ def mock_redis_with_action_config(mocker, pull_observations_config_as_json):
     redis_client.incr.return_value = redis_client
     redis_client.decr.return_value = async_return(None)
     redis_client.expire.return_value = redis_client
+    redis_client.eval.return_value = async_return(0)  # scripts (compare-and-expire) report "nothing changed"
     redis_client.execute.return_value = async_return((1, True))
     redis_client.__aenter__.return_value = redis_client
     redis_client.__aexit__.return_value = None
@@ -151,6 +158,7 @@ def mock_redis_with_webhook_config(mocker, integration_v2_with_webhook):
     redis_client.incr.return_value = redis_client
     redis_client.decr.return_value = async_return(None)
     redis_client.expire.return_value = redis_client
+    redis_client.eval.return_value = async_return(0)  # scripts (compare-and-expire) report "nothing changed"
     redis_client.execute.return_value = async_return((1, True))
     redis_client.__aenter__.return_value = redis_client
     redis_client.__aexit__.return_value = None
@@ -934,6 +942,12 @@ def mock_config_manager(mocker, integration_v2):
     )
     mock_config_manager.get_integration_details.return_value = async_return(integration_v2)
     mock_config_manager.get_action_configuration.return_value = async_return(integration_v2.configurations[0])
+    mock_config_manager.read_cached_action_configuration.return_value = async_return(
+        (integration_v2.configurations[0], integration_v2.configurations[0].json())
+    )
+    mock_config_manager.replace_cached_entry.return_value = async_return(True)
+    mock_config_manager.install_action_configuration_if_missing.return_value = async_return(True)
+    mock_config_manager._fetch_integration_from_gundi.return_value = async_return(integration_v2)
     mock_config_manager.set_integration.return_value = async_return(None)
     mock_config_manager.set_action_configuration.return_value = async_return(None)
     mock_config_manager.delete_integration.return_value = async_return(None)
@@ -2140,3 +2154,29 @@ def mock_webhook_request_payload_for_fixed_schema():
         "lat": -2.3828796,
         "lon": 35.3380609,
     }
+
+
+@pytest.fixture(autouse=True)
+def _clear_gundi_client_caches():
+    """Keep gundi-client-v2's process-wide caches test-isolated.
+
+    Since gundi-client-v2 3.7 every GundiClient in a process shares one OAuth
+    token per set of credentials; without this, a token minted in one test would
+    be served to the clients built in the next. The OIDC discovery cache is
+    cleared for the same reason. The module-level portal client in
+    action_runner is a singleton that also keeps the token on the instance, and
+    get_access_token consults that before the shared cache, so it is reset too.
+    """
+    from gundi_client_v2 import auth, token_cache
+
+    def _clear():
+        token_cache.clear_token_cache()
+        auth.clear_discovery_cache()
+        action_runner = sys.modules.get("gundi_action_runner.services.action_runner")
+        if action_runner is not None:
+            # The expiry stamps are only read when a token is present.
+            action_runner._portal.cached_token = None
+
+    _clear()
+    yield
+    _clear()
