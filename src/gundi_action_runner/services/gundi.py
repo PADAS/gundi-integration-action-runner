@@ -1,12 +1,84 @@
+"""Public helpers for talking to Gundi from an action handler.
+
+Every write helper here, and `action_scheduler.trigger_action`, short-circuits
+with `_block_if_ephemeral` on the ephemeral path (defense in depth on top of
+the config-model whitelist in `action_runner.execute_action`). Guards only
+cover code that routes through these helpers — handlers that construct
+`GundiDataSenderClient`, an `httpx.AsyncClient`, or a PubSub publisher
+directly are out of scope.
+
+A token the Gundi API rejects with a 401 is replaced by gundi-client-v2 itself
+since 3.7.1 (PADAS/gundi-client#61): it retries the request once with a fresh
+token, throttled per credential identity so a portal that rejects everything
+cannot turn each call into a token request. The runner needs nothing of its own
+for that, and a second layer here would fire exactly when the client's
+replacement had already been rejected, which is the case not to retry.
+"""
 import datetime
 from typing import List
-import httpx
 import stamina
+# gundi_action_runner.settings before gundi_client_v2 (see app/services/errors.py).
+from gundi_action_runner import settings  # noqa: F401
 from gundi_client_v2.client import GundiClient, GundiDataSenderClient
 
+from .activity_logger import ephemeral_run
+from .retry_policies import is_transient_gundi_error
 
-@stamina.retry(on=httpx.HTTPError, wait_initial=10.0, wait_jitter=10.0, wait_max=300.0)
+
+class EphemeralWriteBlocked(RuntimeError):
+    """Blocked write from a reference/auth handler on the ephemeral path."""
+
+
+def _block_if_ephemeral(op: str) -> None:
+    if ephemeral_run.get():
+        raise EphemeralWriteBlocked(
+            f"{op} is not allowed on the ephemeral (draft-integration) path"
+        )
+
+
+# One retry policy for every request-time Gundi API call (the send helpers
+# below and the config manager's reloads), defined once so the wait curve and
+# the stop condition can't drift apart, and applied exactly once per call
+# path: nesting it (a decorated helper calling another decorated helper)
+# multiplies the attempts. Self-registration is the deliberate exception: a
+# one-shot startup/CLI path that keeps its own three-attempt policy in
+# self_registration.py, so a slow portal fails the boot fast instead of
+# holding the process for two minutes.
+#
+# stamina combines `attempts` and `timeout` with stop_any(), so the tighter
+# one wins, and its defaults (attempts=10 / timeout=45 s) silently truncate a
+# long curve: the hand-copied 10-20-40 s decorators this replaced ran three
+# attempts, not ten. Both stops are spelled out here and sized so every
+# declared attempt is reachable. The waits are min(2 * 2**n + jitter, 30) for
+# n = 0..4, i.e. 2-7, 4-9, 8-13, 16-21 and 30 s: 60-80 s of waiting in total
+# for six attempts, inside the 120 s budget whenever the calls themselves are
+# quick. tenacity checks the stop after a failed attempt and then sleeps the
+# full wait, so the loop's own overhead for one failing call is bounded by
+# timeout + wait_max = 150 s. The requests themselves come on top of that:
+# GundiDataSenderClient posts with an httpx timeout of 120 s, so a Sensors
+# API that hangs rather than fails can hold one send for roughly four and a
+# half minutes. Gundi sends run inline in the PubSub push request by default
+# (PROCESS_PUBSUB_MESSAGES_IN_BACKGROUND=False), so deployments that expect
+# hangs should turn background processing on or shorten this policy; the
+# tests in test_gundi_api.py pin the loop-overhead bound.
+GUNDI_API_RETRY = dict(
+    on=is_transient_gundi_error,
+    attempts=6,
+    timeout=120.0,
+    wait_initial=2.0,
+    wait_jitter=5.0,
+    wait_max=30.0,
+)
+
+
 async def _get_gundi_api_key(integration_id):
+    # No retry decorator of its own: every caller is one of the retry-decorated
+    # send helpers below, and a second policy nested inside the first restarts
+    # the inner six attempts on each outer attempt (36 portal calls, many
+    # minutes of sleep) for a portal that keeps failing.
+    # An ephemeral run's synthetic integration has no portal row: letting
+    # this reach the portal would 404 for an integration that does not exist.
+    _block_if_ephemeral("_get_gundi_api_key")
     async with GundiClient() as gundi_client:
         return await gundi_client.get_integration_api_key(
             integration_id=integration_id
@@ -23,7 +95,7 @@ async def _get_sensors_api_client(integration_id):
     return sensors_api_client
 
 
-@stamina.retry(on=httpx.HTTPError, wait_initial=10.0, wait_jitter=10.0, wait_max=300.0)
+@stamina.retry(**GUNDI_API_RETRY)
 async def send_events_to_gundi(events: List[dict], **kwargs) -> dict:
     """
     Send Events to Gundi using the REST API v2
@@ -46,6 +118,7 @@ async def send_events_to_gundi(events: List[dict], **kwargs) -> dict:
     :param kwargs: integration_id: The UUID of the related integration
     :return: A dict with the response from the API
     """
+    _block_if_ephemeral("send_events_to_gundi")
     integration_id = kwargs.get("integration_id")
     if not integration_id:
         raise ValueError("integration_id is required")
@@ -53,7 +126,7 @@ async def send_events_to_gundi(events: List[dict], **kwargs) -> dict:
     return await sensors_api_client.post_events(data=events)
 
 
-@stamina.retry(on=httpx.HTTPError, wait_initial=10.0, wait_jitter=10.0, wait_max=300.0)
+@stamina.retry(**GUNDI_API_RETRY)
 async def send_event_attachments_to_gundi(event_id: str, attachments: List[tuple], **kwargs) -> dict:
     """
     Send Event Attachments to Gundi using the REST API v2
@@ -65,6 +138,7 @@ async def send_event_attachments_to_gundi(event_id: str, attachments: List[tuple
     :param kwargs: integration_id: The UUID of the related integration
     :return: A dict with the response from the API
     """
+    _block_if_ephemeral("send_event_attachments_to_gundi")
     integration_id = kwargs.get("integration_id")
     if not integration_id:
         raise ValueError("integration_id is required")
@@ -72,7 +146,7 @@ async def send_event_attachments_to_gundi(event_id: str, attachments: List[tuple
     return await sensors_api_client.post_event_attachments(event_id=event_id, attachments=attachments)
 
 
-@stamina.retry(on=httpx.HTTPError, wait_initial=10.0, wait_jitter=10.0, wait_max=300.0)
+@stamina.retry(**GUNDI_API_RETRY)
 async def send_observations_to_gundi(observations: List[dict], **kwargs) -> dict:
     """
     Send Observations to Gundi using the REST API v2
@@ -96,6 +170,7 @@ async def send_observations_to_gundi(observations: List[dict], **kwargs) -> dict
     :param kwargs: integration_id: The UUID of the related integration
     :return: A dict with the response from the API
     """
+    _block_if_ephemeral("send_observations_to_gundi")
     integration_id = kwargs.get("integration_id")
     if not integration_id:
         raise ValueError("integration_id is required")
@@ -103,7 +178,7 @@ async def send_observations_to_gundi(observations: List[dict], **kwargs) -> dict
     return await sensors_api_client.post_observations(data=observations)
 
 
-@stamina.retry(on=httpx.HTTPError, wait_initial=10.0, wait_jitter=10.0, wait_max=300.0)
+@stamina.retry(**GUNDI_API_RETRY)
 async def send_messages_to_gundi(messages: List[dict], **kwargs) -> dict:
     """
     Send Messages to Gundi using the REST API v2
@@ -135,6 +210,7 @@ async def send_messages_to_gundi(messages: List[dict], **kwargs) -> dict:
     :param kwargs: integration_id: The UUID of the related integration
     :return: A dict with the response from the API
     """
+    _block_if_ephemeral("send_messages_to_gundi")
     integration_id = kwargs.get("integration_id")
     if not integration_id:
         raise ValueError("integration_id is required")

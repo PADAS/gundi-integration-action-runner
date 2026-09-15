@@ -1,4 +1,5 @@
 import asyncio
+import contextvars
 import json
 import logging
 
@@ -23,13 +24,21 @@ from gundi_core.events import (
     WebhookExecutionComplete,
     IntegrationWebhookFailed,
     WebhookExecutionFailed,
-    CustomWebhookLog,
+    CustomWebhookLog,    LogLevel,
 )
 from gundi_action_runner import settings
 from gundi_action_runner.services.errors import format_error_message
 
 
 logger = logging.getLogger(__name__)
+
+
+# Set for the duration of an ephemeral run (reference or auth). Every publish
+# path checks it and short-circuits — no integration to log against, and
+# draft credentials must never touch PubSub.
+ephemeral_run: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "ephemeral_run", default=False
+)
 
 
 # Publish events for other services or system components
@@ -41,6 +50,8 @@ logger = logging.getLogger(__name__)
     wait_jitter=5.0
 )
 async def publish_event(event: SystemEventBaseModel, topic_name: str):
+    if ephemeral_run.get():
+        return None
     timeout_settings = aiohttp.ClientTimeout(total=20.0)
     async with aiohttp.ClientSession(
         raise_for_status=True, timeout=timeout_settings
@@ -65,13 +76,13 @@ async def publish_event(event: SystemEventBaseModel, topic_name: str):
             return response
 
 
-async def log_activity(integration_id: str, action_id: str, title: str, level="INFO", config_data: dict = None, data: dict = None):
+async def log_activity(integration_id: str, action_id: str, title: str, level=LogLevel.INFO, config_data: dict = None, data: dict = None):
     # Show a deprecation warning in favor of using either log_action_activity or log_webhook_activity
     logger.warning("log_activity is deprecated. Please use log_action_activity or log_webhook_activity instead.")
     return await log_action_activity(integration_id, action_id, title, level, config_data, data)
 
 
-async def log_action_activity(integration_id: str, action_id: str, title: str, level="INFO", config_data: dict = None, data: dict = None):
+async def log_action_activity(integration_id: str, action_id: str, title: str, level=LogLevel.INFO, config_data: dict = None, data: dict = None):
     """
         This is a helper method to send custom activity logs to the portal.
         :param integration_id: UUID of the integration
@@ -98,7 +109,7 @@ async def log_action_activity(integration_id: str, action_id: str, title: str, l
 
 
 async def log_webhook_activity(
-        integration_id: str, title: str, webhook_id: str="webhook", level="INFO", config_data: dict = None, data: dict = None
+        integration_id: str, title: str, webhook_id: str="webhook", level=LogLevel.INFO, config_data: dict = None, data: dict = None
 ):
     """
         This is a helper method to send custom activity logs to the portal.
