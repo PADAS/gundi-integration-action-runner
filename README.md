@@ -1,5 +1,80 @@
-# gundi-integration-action-runner
-Template repo for integration in Gundi v2.
+# gundi-integration-olmoearth
+Gundi v2 connector for the OlmoEarth prediction API, built on the action-runner
+template. The template's own documentation follows the connector section below.
+
+## The OlmoEarth connector
+
+Three actions, in `app/actions/`:
+
+| Action | Type | What it does |
+| --- | --- | --- |
+| `auth` | auth | Validates the API token by asking the predictions search for one record. |
+| `list_predictions` | reference | Populates a portal dropdown of predictions, newest first. |
+| `pull_events` | pull (every 4h) | The ingest. Predictions → features → Gundi events. |
+
+### The ingest
+
+The API splits *what the model ran on* from *what it found*, so a run is two
+searches deep:
+
+```
+POST /api/v1/predictions/search                                  new predictions for a model
+  -> a prediction's result ids                                   client.result_ids_for
+    -> POST /api/v1/prediction-results/{id}/features/search       GeoJSON detections, paged
+      -> Gundi events                                            one event per feature
+```
+
+Each feature becomes one Gundi event: `oe_start_time` is the `recorded_at`
+(when the model saw the thing, not when the record was written), the geometry's
+centre becomes the point `location`, the full GeoJSON geometry travels
+alongside so a polygon detection stays a polygon, and the model's own
+properties land in `event_details` with the `oe_` provenance fields renamed
+rather than mixed in.
+
+### Incremental runs
+
+The watermark is at the **prediction** level, not the feature level. A
+prediction is the unit the provider publishes, so the state row records the
+newest ingested `creation_time` plus a bounded list of recently-ingested
+prediction ids, and each new prediction is drained in full.
+
+Two consequences worth knowing:
+
+- The predictions search is bounded with `creation_time >= watermark`, not `>`,
+  so a prediction created in the same second as the watermark is not skipped.
+  The processed-id list is what stops it being ingested twice.
+- State is saved after *each* prediction, so a run that fails on the fifth of
+  six does not re-send the first four.
+
+A feature-level watermark was the obvious alternative and is the wrong shape: a
+bulk-inserted result gives thousands of features an identical `oe_created_at`,
+and a `>` cursor on that field silently drops everything sharing the boundary
+second.
+
+Feature paging forces `sort_by=oe_created_at, sort_direction=asc` regardless of
+what the caller asked for, because offset paging over a descending sort skips a
+record whenever one is inserted mid-walk.
+
+### Open questions
+
+Two things in here are guesses, both marked `TODO` in the code:
+
+1. **How a prediction names its result ids.** The features endpoint is keyed by
+   `prediction_result_id`, but the only documented way to find work is the
+   predictions search, which returns predictions — and the predictions response
+   schema was not part of the API sample this was written from.
+   `client.result_ids_for` probes the plausible field names and falls back to
+   assuming the prediction id *is* the result id. If that turns out to need a
+   third request (`GET /predictions/{id}/results`), it becomes a client method
+   and nothing else changes.
+2. **Area filtering on the predictions search.** Until it lands, the configured
+   area of interest is applied one level down, on the features search. Same
+   events, one extra round trip per prediction. See the `TODO(area filtering)`
+   in `build_prediction_query`.
+
+Smaller ones: the prediction `status` value to treat as "ready" defaults to
+`completed`, and the confidence property a model writes is configurable because
+models disagree on whether it is `confidence` or `score`.
 
 ## Usage
 - Fork this repo
