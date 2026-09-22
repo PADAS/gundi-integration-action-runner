@@ -22,7 +22,7 @@ pip install "gundi-action-runner[cli]"
 ```
 
 > The current release is a release candidate — until the first stable release,
-> pin it exactly: `pip install "gundi-action-runner[cli]==0.1.0rc3"`
+> pin it exactly: `pip install "gundi-action-runner[cli]==0.1.0rc4"`
 > (avoid `--pre`, which cascades pre-releases to all dependencies).
 
 ## What you get
