@@ -67,6 +67,26 @@ them all at once, or keep decorating in place.
   registered (and the `action_title` decorator itself is never mistaken for
   a handler when imported alongside them). If an action disappears after
   merging, check its signature.
+- **Gundi OAuth tokens are cached and shared.** With `gundi-client-v2 >= 3.7`
+  every Gundi client the runner builds — including a bare `GundiClient()` in
+  your own code — shares one token per set of credentials, in process memory
+  and in Redis database `REDIS_TOKEN_CACHE_DB` (default `2`). Nothing to
+  configure unless that database is taken: set `REDIS_TOKEN_CACHE_DB`, or
+  `GUNDI_TOKEN_CACHE_URL` for a different backend (`file:///dir`, or `""` for
+  in-process only). Tests that count token requests get the process cache
+  cleared between tests by the framework's pytest plugin.
+- **Preferred OAuth variable names are `GUNDI_OAUTH_*`.** `OAUTH_*` and
+  `KEYCLOAK_*` still work; when both spellings are set the `GUNDI_`-prefixed
+  one wins. Scaffolded `.env` examples emit the new names.
+- **Batched fan-outs.** `trigger_actions(integration_id, action_id, configs)`
+  and `publish_events(events, topic)` publish one request per batch instead of
+  one session, token and round trip per message; batches split on Pub/Sub's
+  count and byte limits. Use them where you loop over `trigger_action`.
+- **A scaffolded project carries the fork's CI.** `gundi-runner new` emits
+  `.github/workflows/{pr.yaml,main.yaml,_tests.yml}` mirroring the template's
+  tests → build → `update_hcl` pipeline; a fork that cuts over to the library
+  layout keeps its own workflows and only changes how tests install (`pip
+  install -e ".[dev]"` instead of `pip-compile`).
 
 ## If you customized framework files
 
