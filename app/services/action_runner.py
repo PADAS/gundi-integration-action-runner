@@ -388,6 +388,18 @@ async def _skip_invalid_config(integration_id, action_id, *, error):
     return {"skipped": True, "reason": "invalid_configuration"}
 
 
+async def _cancel_handler(handler_task: "asyncio.Task") -> None:
+    """Cancel a running handler and wait for it to finish unwinding, so its
+    finally blocks run before the runner reports or propagates anything (the
+    same guarantee asyncio.wait_for gave). Whatever the handler raises while
+    unwinding is the handler's business, not the runner's."""
+    handler_task.cancel()
+    try:
+        await handler_task
+    except (asyncio.CancelledError, Exception):
+        pass
+
+
 async def execute_action(
         integration_id: Optional[str], action_id: Optional[str] = None, config_overrides: dict = None,
         data: dict = None, metadata: dict = None, triggered_by: Optional[str] = None,
@@ -631,16 +643,20 @@ async def _execute_action_impl(
         # provider timeout), and the two must be reported differently. Waiting
         # on the task tells them apart by whether the task finished.
         handler_task = asyncio.ensure_future(handler(**handler_kwargs))
-        done, _ = await asyncio.wait({handler_task}, timeout=settings.MAX_ACTION_EXECUTION_TIME)
+        try:
+            done, _ = await asyncio.wait({handler_task}, timeout=settings.MAX_ACTION_EXECUTION_TIME)
+        except asyncio.CancelledError:
+            # Unlike wait_for, asyncio.wait leaves what it waits on running
+            # when the waiter is cancelled. The runner going away (request
+            # aborted, process shutting down) must take the handler with it,
+            # or it keeps publishing and writing state with no deadline.
+            await _cancel_handler(handler_task)
+            raise
         if done:
             result = handler_task.result()  # re-raises the handler's own exception unchanged
         else:
             deadline_expired = True
-            handler_task.cancel()
-            try:
-                await handler_task  # let the handler's finally blocks run, as wait_for did
-            except (asyncio.CancelledError, Exception):
-                pass
+            await _cancel_handler(handler_task)
     except Exception as e:
         # Saved-integration runs keep the historical 500; the ephemeral path
         # forwards the source system's verdict instead (_handle_error applies

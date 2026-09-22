@@ -2478,3 +2478,50 @@ def test_ephemeral_handler_timeout_reports_action_timed_out_with_504(
     assert response.status_code == 504
     # Runner-authored title only: the ephemeral path drops the message segment.
     assert response.json() == {"detail": {"action_id": "auth", "error": "Action timed out"}}
+
+
+@pytest.mark.asyncio
+async def test_cancelling_execute_action_cancels_the_running_handler(
+        mocker, mock_gundi_client_v2, integration_v2, mock_config_manager,
+        mock_publish_event, mock_action_handlers,
+):
+    # Review on #115: asyncio.wait does not propagate cancellation to the task
+    # it waits on, unlike wait_for. A cancelled runner (the request or the
+    # process going away) must take its handler down with it, or the handler
+    # keeps publishing and writing state with no deadline at all.
+    import asyncio
+    _, config_model, transform = mock_action_handlers["pull_observations"]
+    started = asyncio.Event()
+    handler_events = []
+
+    async def long_handler(**kwargs):
+        started.set()
+        try:
+            await asyncio.Event().wait()  # never set: runs until cancelled
+        except asyncio.CancelledError:
+            handler_events.append("cancelled")
+            raise
+        finally:
+            handler_events.append("cleaned up")
+
+    mock_action_handlers["pull_observations"] = (long_handler, config_model, transform)
+    mocker.patch.object(settings, "MAX_ACTION_EXECUTION_TIME", 540)
+    mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+
+    runner = asyncio.ensure_future(execute_action(
+        integration_id=str(integration_v2.id),
+        action_id="pull_observations",
+    ))
+    await asyncio.wait_for(started.wait(), timeout=5)
+
+    runner.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await runner
+
+    # By the time the runner's cancellation propagates, the handler has been
+    # cancelled and its cleanup has run: nothing is left running unbounded.
+    assert handler_events == ["cancelled", "cleaned up"]
