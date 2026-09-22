@@ -2384,8 +2384,14 @@ async def test_execute_action_reports_the_runner_timeout_as_action_timed_out(
     import asyncio
     _, config_model, transform = mock_action_handlers["pull_observations"]
 
+    cancelled = []
+
     async def slow_handler(**kwargs):
-        await asyncio.sleep(1)
+        try:
+            await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            cancelled.append(True)
+            raise
 
     mock_action_handlers["pull_observations"] = (slow_handler, config_model, transform)
     mocker.patch.object(settings, "MAX_ACTION_EXECUTION_TIME", 0.01)
@@ -2405,6 +2411,42 @@ async def test_execute_action_reports_the_runner_timeout_as_action_timed_out(
     assert error_details["error"] == "Action timed out — exceeded the 0.01 s execution limit"
     assert error_details["error_type"] == "timeout"
     assert "Could not reach the provider" not in error_details["error"]
+    # The cap cancels the handler, as wait_for did.
+    assert cancelled == [True]
+
+
+@pytest.mark.asyncio
+async def test_execute_action_keeps_connectivity_wording_for_a_timeout_the_handler_raised(
+        mocker, mock_gundi_client_v2, integration_v2, mock_config_manager,
+        mock_publish_event, mock_action_handlers,
+):
+    # Review on #115: asyncio.wait_for re-raises an asyncio.TimeoutError that
+    # the handler itself raised (aiohttp's provider timeout), and an except
+    # clause keyed on the type relabelled it as the execution cap. Only the
+    # runner's own expired deadline may become ActionTimeoutError.
+    import asyncio
+    _, config_model, transform = mock_action_handlers["pull_observations"]
+
+    async def provider_timed_out(**kwargs):
+        raise asyncio.TimeoutError("provider request timed out")
+
+    mock_action_handlers["pull_observations"] = (provider_timed_out, config_model, transform)
+    mocker.patch.object(settings, "MAX_ACTION_EXECUTION_TIME", 540)
+    mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+
+    response = await execute_action(
+        integration_id=str(integration_v2.id),
+        action_id="pull_observations",
+    )
+
+    assert response.status_code == 500
+    error_details = json.loads(response.body)["detail"]
+    assert error_details["error"] == "Could not reach the provider — provider request timed out"
+    assert error_details["error_type"] == "connectivity"
 
 
 def test_ephemeral_handler_timeout_reports_action_timed_out_with_504(

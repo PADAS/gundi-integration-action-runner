@@ -615,6 +615,7 @@ async def _execute_action_impl(
             return None
         return {"configurations": [c.dict() for c in integration.configurations]}
 
+    deadline_expired = False
     try:  # Execute the action handler with a timeout
         start_time = time.monotonic()
         handler_kwargs = {
@@ -625,21 +626,21 @@ async def _execute_action_impl(
             handler_kwargs["data"] = parsed_data
         if metadata is not None:
             handler_kwargs["metadata"] = metadata
-        result = await asyncio.wait_for(
-            handler(**handler_kwargs),
-            timeout=settings.MAX_ACTION_EXECUTION_TIME
-        )
-    except asyncio.TimeoutError:
-        # The runner's own cap, not the provider failing to answer: an
-        # asyncio.TimeoutError here would classify as connectivity and send
-        # the operator to check the provider.
-        return await _handle_error(
-            ActionTimeoutError(f"exceeded the {settings.MAX_ACTION_EXECUTION_TIME} s execution limit"),
-            integration_id, action_id,
-            config_data=handler_error_config_data(),
-            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            classify_heuristics=True,
-        )
+        # Not asyncio.wait_for: it raises the same asyncio.TimeoutError for its
+        # own expired deadline and for one the handler raised (aiohttp's
+        # provider timeout), and the two must be reported differently. Waiting
+        # on the task tells them apart by whether the task finished.
+        handler_task = asyncio.ensure_future(handler(**handler_kwargs))
+        done, _ = await asyncio.wait({handler_task}, timeout=settings.MAX_ACTION_EXECUTION_TIME)
+        if done:
+            result = handler_task.result()  # re-raises the handler's own exception unchanged
+        else:
+            deadline_expired = True
+            handler_task.cancel()
+            try:
+                await handler_task  # let the handler's finally blocks run, as wait_for did
+            except (asyncio.CancelledError, Exception):
+                pass
     except Exception as e:
         # Saved-integration runs keep the historical 500; the ephemeral path
         # forwards the source system's verdict instead (_handle_error applies
@@ -648,6 +649,17 @@ async def _execute_action_impl(
             e, integration_id, action_id,
             config_data=handler_error_config_data(),
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            classify_heuristics=True,
+        )
+    if deadline_expired:
+        # The runner's own cap, not the provider failing to answer: an
+        # asyncio.TimeoutError here would classify as connectivity and send
+        # the operator to check the provider.
+        return await _handle_error(
+            ActionTimeoutError(f"exceeded the {settings.MAX_ACTION_EXECUTION_TIME} s execution limit"),
+            integration_id, action_id,
+            config_data=handler_error_config_data(),
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             classify_heuristics=True,
         )
 
