@@ -1,6 +1,7 @@
 import asyncio
 import contextvars
 import json
+from typing import List
 import logging
 
 import aiohttp
@@ -74,6 +75,64 @@ async def publish_event(event: SystemEventBaseModel, topic_name: str):
             logger.debug(f"System event {event} published successfully.")
             logger.debug(f"GCP PubSub response: {response}")
             return response
+
+
+
+# Cloud PubSub accepts at most 1,000 messages (10 MB) per publish request.
+PUBSUB_MAX_MESSAGES_PER_PUBLISH = 1000
+
+
+@stamina.retry(
+    on=(aiohttp.ClientError, asyncio.TimeoutError),
+    attempts=5,
+    wait_initial=4.0,
+    wait_max=60,
+    wait_jitter=5.0
+)
+async def _publish_batch(client, topic: str, messages: list, topic_name: str):
+    # Retried per batch, so a failure late in a large list does not republish
+    # the batches that already succeeded.
+    try:
+        return await client.publish(topic, messages)
+    except Exception as e:
+        logger.exception(
+            f"Error publishing {len(messages)} system events to topic {topic_name}: {e}. This will be retried."
+        )
+        raise
+
+
+async def publish_events(events: List[SystemEventBaseModel], topic_name: str):
+    """Publish many events to one topic in as few requests as possible.
+
+    One session and one token for the whole list, split at PubSub's
+    per-request limit. publish_event opens a session and fetches a token per
+    call, and an action that fans out one command per source (hundreds per
+    integration) overran Cloud Run's request timeout doing that serially.
+    Returns the combined {"messageIds": [...]}, or None on the ephemeral path
+    like publish_event.
+    """
+    if ephemeral_run.get():
+        return None
+    events = list(events)
+    if not events:
+        return {"messageIds": []}
+    timeout_settings = aiohttp.ClientTimeout(total=20.0)
+    async with aiohttp.ClientSession(
+        raise_for_status=True, timeout=timeout_settings
+    ) as session:
+        client = pubsub.PublisherClient(session=session)
+        topic = client.topic_path(settings.GCP_PROJECT_ID, topic_name)
+        message_ids = []
+        for start in range(0, len(events), PUBSUB_MAX_MESSAGES_PER_PUBLISH):
+            batch = events[start:start + PUBSUB_MAX_MESSAGES_PER_PUBLISH]
+            messages = [
+                pubsub.PubsubMessage(json.dumps(event.dict(), default=str).encode("utf-8"))
+                for event in batch
+            ]
+            logger.debug(f"Sending {len(messages)} events to PubSub topic {topic_name}..")
+            response = await _publish_batch(client, topic, messages, topic_name)
+            message_ids.extend((response or {}).get("messageIds", []))
+        return {"messageIds": message_ids}
 
 
 async def log_activity(integration_id: str, action_id: str, title: str, level=LogLevel.INFO, config_data: dict = None, data: dict = None):
