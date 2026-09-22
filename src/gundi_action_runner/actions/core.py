@@ -1,7 +1,7 @@
 import importlib
 import inspect
 import logging
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
 from gundi_action_runner.services.utils import UISchemaModelMixin
@@ -61,6 +61,44 @@ class GenericActionConfiguration(ActionConfiguration):
     pass
 
 
+class ReferenceActionConfiguration(ActionConfiguration):
+    """Marker base for reference-data actions: the config model IS the query.
+
+    Reference actions are stateless — they read the integration's auth config
+    but store no configuration of their own; callers (the Gundi portal)
+    supply query params via config_overrides. The runner therefore executes
+    them without a stored config row, and they are one of the two action
+    types (with auth) allowed to run ephemerally against a draft integration.
+    """
+
+
+class ReferenceOption(BaseModel):
+    """One choice in a reference-data response.
+
+    The shape the Gundi portal renders a dropdown from. `value` is what gets
+    stored in the integration's configuration; everything else is presentation.
+    """
+
+    value: str
+    label: Optional[str] = None        # portal defaults label to value
+    description: Optional[str] = None  # tooltip / help text
+    group: Optional[str] = None        # optional grouping for long lists
+
+
+class ReferenceDataResponse(BaseModel):
+    """What a reference action returns, as a dict.
+
+    Handlers return `ReferenceDataResponse(...).dict()`: the runner publishes
+    the handler's return value as-is, and the portal reads these three fields.
+    `truncated` tells it the provider had more than the handler was willing to
+    return, so the list is a prefix rather than the whole set.
+    """
+
+    options: List[ReferenceOption]
+    cache_ttl_seconds: int = 300       # portal-side cache hint
+    truncated: bool = False            # true if the list was capped
+
+
 def discover_actions(module_name, prefix):
     action_handlers = {}
     # Import the module using importlib
@@ -99,5 +137,4 @@ def discover_actions(module_name, prefix):
             action_handlers[key] = (func, config_model, data_model)
 
     return action_handlers
-
 

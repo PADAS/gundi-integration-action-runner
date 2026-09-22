@@ -78,20 +78,28 @@ def create_app(handlers_modules=None):
         # scheduled tick vs an operator's "Run now"). Absent the marker we default
         # to automated, so scheduled pulls on destination-only integrations skip
         # quietly instead of erroring.
+        #
+        # It is read from the PubSub message attributes as well as the body:
+        # gundi_core's RunIntegrationAction command has no `triggered_by` field, so
+        # a portal that serializes that model cannot put the marker in the payload
+        # and the MANUAL branch would never be reachable over PubSub.
+        triggered_by = json_payload.get("triggered_by") or (
+            json_data["message"].get("attributes") or {}
+        ).get("triggered_by")
         if settings.PROCESS_PUBSUB_MESSAGES_IN_BACKGROUND:
             background_tasks.add_task(
                 execute_action,
                 integration_id=json_payload.get("integration_id"),
                 action_id=json_payload.get("action_id"),
                 config_overrides=json_payload.get("config_overrides"),
-                triggered_by=json_payload.get("triggered_by"),
+                triggered_by=triggered_by,
             )
         else:
             await execute_action(
                 integration_id=json_payload.get("integration_id"),
                 action_id=json_payload.get("action_id"),
                 config_overrides=json_payload.get("config_overrides"),
-                triggered_by=json_payload.get("triggered_by"),
+                triggered_by=triggered_by,
             )
         return {}
 
@@ -128,13 +136,20 @@ def create_app(handlers_modules=None):
 
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(request: Request, exc: RequestValidationError):
-        logger.debug(
-            "Failed handling body: %s",
-            jsonable_encoder({"detail": exc.errors(), "body": exc.body}),
-        )
+        # The request body can carry draft credentials on the ephemeral path, so
+        # neither the response nor the log gets it: log access and retention are
+        # usually broader than access to the originating request. Keep only
+        # loc/msg/type per error. On the pinned pydantic 1.x, `ctx` can carry
+        # values from the offending input; `input` is dropped too so a pydantic 2
+        # upgrade, which mirrors the value there, does not reopen the leak.
+        safe_errors = [
+            {k: v for k, v in err.items() if k not in ("input", "ctx")}
+            for err in exc.errors()
+        ]
+        logger.debug("Failed handling body: %s", jsonable_encoder({"detail": safe_errors}))
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            content=jsonable_encoder({"detail": exc.errors(), "body": exc.body}),
+            content=jsonable_encoder({"detail": safe_errors}),
         )
 
     return app

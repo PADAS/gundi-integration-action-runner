@@ -1,3 +1,9 @@
+# Settings first: handler discovery below executes the connector's handlers
+# module at import, and gundi_action_runner.settings installs the shared token
+# cache URL into gundi-client-v2's settings, so a GundiClient() built at module
+# scope there only picks it up if this runs first. Done here rather than in the
+# package __init__ so lightweight imports (services.utils, actions.core) stay light.
+from gundi_action_runner import settings  # noqa: F401
 from .core import *  # noqa: F401,F403
 from gundi_action_runner.registry import registry
 
