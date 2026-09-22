@@ -36,3 +36,13 @@ include_webhook:
   type: bool
   help: Include a webhook handler (push-based connector)?
   default: false
+
+# Set by `gundi-runner new` to the installed library version; never prompted.
+# A pre-release (any letter in the version: rc, a, b, dev) makes the generated
+# pyproject pin the library exactly, because pip's `~=0.1` never resolves to a
+# pre-release and the scaffold's Dockerfile and CI could not install. A stable
+# version, or plain `copier copy`, keeps the compatible-release pin.
+runner_version:
+  type: str
+  default: ""
+  when: false

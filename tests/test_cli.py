@@ -100,6 +100,15 @@ def test_new_default_template_pins_ref_to_library_version(runner, mocker, tmp_pa
     result = runner.invoke(cli, ["new", str(tmp_path / "x"), "--defaults"])
     assert result.exit_code == 0, result.output
     assert run_copy.call_args.kwargs["vcs_ref"] == f"v{__version__}"
+    # ...and tells the scaffold which library version it is being generated for
+    assert run_copy.call_args.kwargs["data"]["runner_version"] == __version__
+
+
+def test_new_lets_data_override_the_runner_version(runner, mocker, tmp_path):
+    run_copy = mocker.patch("copier.run_copy")
+    result = runner.invoke(cli, ["new", str(tmp_path / "x"), "--defaults", "--data", "runner_version=9.9.9"])
+    assert result.exit_code == 0, result.output
+    assert run_copy.call_args.kwargs["data"]["runner_version"] == "9.9.9"
 
 
 def test_new_rejects_data_without_equals(runner, tmp_path):

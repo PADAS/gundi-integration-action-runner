@@ -107,8 +107,9 @@ def new(destination, template, vcs_ref, data_pairs, defaults):
             "copier is not installed. Install the CLI extras first:\n"
             "  pip install 'gundi-action-runner[cli]'"
         )
+    from gundi_action_runner import __version__
+
     if template == DEFAULT_TEMPLATE and vcs_ref is None:
-        from gundi_action_runner import __version__
         vcs_ref = f"v{__version__}"
     data = {}
     for pair in data_pairs:
@@ -118,6 +119,9 @@ def new(destination, template, vcs_ref, data_pairs, defaults):
         if value.lower() in ("true", "false"):
             value = value.lower() == "true"
         data[key] = value
+    # The scaffold pins the library to this version while it is a pre-release
+    # (see runner_version in copier.yml); an explicit --data override wins.
+    data.setdefault("runner_version", __version__)
     copier.run_copy(
         template, destination, data=data, vcs_ref=vcs_ref, defaults=defaults,
     )

@@ -7,13 +7,16 @@ name = "{{ package_name | replace('_', '-') }}"
 version = "0.1.0"
 description = "Gundi connector for {{ project_name }}"
 requires-python = ">=3.10"
+{#- Exact pin for a pre-release library (pip's ~= never resolves to one), compatible-release pin otherwise. -#}
+{%- set _prerelease = runner_version and (runner_version | select('in', 'abcdefghijklmnopqrstuvwxyz') | list) -%}
+{%- set runner_requirement = ('==' ~ runner_version) if _prerelease else '~=0.1' -%}
 dependencies = [
-    "gundi-action-runner~=0.1",
+    "gundi-action-runner{{ runner_requirement }}",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "gundi-action-runner[testing]~=0.1",
+    "gundi-action-runner[testing]{{ runner_requirement }}",
 ]
 
 [tool.setuptools.packages.find]

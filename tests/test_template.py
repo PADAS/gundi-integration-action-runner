@@ -99,6 +99,19 @@ def test_local_dev_stack(generate_project):
     assert "debugpy" in dockerfile
 
 
+def test_pyproject_pins_a_prerelease_library_exactly(generate_project):
+    """pip's `~=0.1` never resolves to a pre-release, so a scaffold generated
+    by an rc library could not build its image or run CI until 0.1.0 final.
+    `gundi-runner new` passes the installed version; the pin follows it."""
+    def pins(**answers):
+        text = (generate_project(**answers) / "pyproject.toml").read_text()
+        return [line.strip().strip('",') for line in text.splitlines() if "gundi-action-runner" in line]
+
+    assert pins(runner_version="0.1.0rc4") == ["gundi-action-runner==0.1.0rc4", "gundi-action-runner[testing]==0.1.0rc4"]
+    assert pins(runner_version="0.1.0") == ["gundi-action-runner~=0.1", "gundi-action-runner[testing]~=0.1"]
+    assert pins() == ["gundi-action-runner~=0.1", "gundi-action-runner[testing]~=0.1"]  # plain `copier copy`
+
+
 def test_ci_workflows_mirror_the_fork_pipeline(generate_project):
     """A fork inherits tests-on-PR and tests -> image -> deploy on push. A
     generated connector has to get the same, or it is not a fork replacement."""
