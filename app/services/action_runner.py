@@ -394,10 +394,9 @@ async def _cancel_handler(handler_task: "asyncio.Task") -> None:
     same guarantee asyncio.wait_for gave). Whatever the handler raises while
     unwinding is the handler's business, not the runner's."""
     handler_task.cancel()
-    try:
-        await handler_task
-    except (asyncio.CancelledError, Exception):
-        pass
+    # Collect the handler's exception, but let cancellation of this runner
+    # propagate. Catching CancelledError around a direct await confuses the two.
+    await asyncio.gather(handler_task, return_exceptions=True)
 
 
 async def execute_action(

@@ -2525,3 +2525,43 @@ async def test_cancelling_execute_action_cancels_the_running_handler(
     # By the time the runner's cancellation propagates, the handler has been
     # cancelled and its cleanup has run: nothing is left running unbounded.
     assert handler_events == ["cancelled", "cleaned up"]
+
+
+@pytest.mark.asyncio
+async def test_cancelling_execute_action_during_deadline_cleanup_propagates(
+        mocker, mock_gundi_client_v2, integration_v2, mock_config_manager,
+        mock_publish_event, mock_action_handlers,
+):
+    # Cancellation of the runner while the timed-out handler is unwinding
+    # must not be mistaken for the handler's expected CancelledError.
+    import asyncio
+    _, config_model, transform = mock_action_handlers["pull_observations"]
+    cleanup_started = asyncio.Event()
+
+    async def long_handler(**kwargs):
+        try:
+            await asyncio.Event().wait()  # never set: runs until cancelled
+        finally:
+            cleanup_started.set()
+            await asyncio.Event().wait()
+
+    mock_action_handlers["pull_observations"] = (long_handler, config_model, transform)
+    mocker.patch.object(settings, "MAX_ACTION_EXECUTION_TIME", 0.01)
+    mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+
+    runner = asyncio.ensure_future(execute_action(
+        integration_id=str(integration_v2.id),
+        action_id="pull_observations",
+    ))
+    try:
+        await asyncio.wait_for(cleanup_started.wait(), timeout=5)
+        runner.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await runner
+    finally:
+        runner.cancel()
+        await asyncio.gather(runner, return_exceptions=True)
