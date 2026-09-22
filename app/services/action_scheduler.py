@@ -5,7 +5,7 @@ from pydantic.class_validators import validator
 from typing import Any, Dict, Optional, Union, List, Annotated
 from gundi_core.commands import RunIntegrationAction
 from app import settings
-from .activity_logger import publish_event
+from .activity_logger import publish_event, publish_events
 from .gundi import _block_if_ephemeral
 
 
@@ -40,6 +40,45 @@ async def trigger_action(integration_id: str, action_id: str, config=None):
             raise ValueError(error_msg)
         return await publish_event(run_action_command, settings.INTEGRATION_COMMANDS_TOPIC)
 
+
+
+async def trigger_actions(integration_id: str, action_id: str, configs):
+    """
+    Triggers the same action once per config, publishing all the command
+    messages to the actions topic in one batch.
+    Use this instead of calling trigger_action in a loop when fanning out over
+    many sources: one publish request (per 1,000 commands) instead of one
+    session, token and round trip per command.
+    :param integration_id: uuid of the integration
+    :param action_id: slug id of the action
+    :param configs: one configuration model per triggered action
+    :return:
+    """
+    _block_if_ephemeral("trigger_actions")
+    commands = [
+        RunIntegrationAction(
+            integration_id=integration_id,
+            action_id=action_id,
+            config_overrides=config.dict() if config else None
+        )
+        for config in configs
+    ]
+    if settings.TRIGGER_ACTIONS_ALWAYS_SYNC:  # For testing or local development
+        from .action_runner import execute_action
+        return [
+            await execute_action(
+                integration_id=integration_id,
+                action_id=action_id,
+                config_overrides=command.config_overrides
+            )
+            for command in commands
+        ]
+    if not settings.INTEGRATION_COMMANDS_TOPIC:
+        error_msg = "Please set INTEGRATION_COMMANDS_TOPIC in the environment to trigger actions from the integration."
+        raise ValueError(error_msg)
+    if not commands:
+        return None
+    return await publish_events(commands, settings.INTEGRATION_COMMANDS_TOPIC)
 
 class CrontabSchedule(BaseModel):
     minute: str = Field(

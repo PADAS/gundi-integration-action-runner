@@ -1,3 +1,4 @@
+import json
 import pytest
 from unittest.mock import ANY
 from gundi_core.events import (
@@ -11,7 +12,11 @@ from gundi_core.events import (
     IntegrationWebhookFailed
 )
 from app import settings
-from app.services.activity_logger import publish_event, activity_logger, webhook_activity_logger, log_activity, log_action_activity, log_webhook_activity
+from app.conftest import async_return
+from app.services.activity_logger import (
+    publish_event, publish_events, activity_logger, webhook_activity_logger, log_activity,
+    log_action_activity, log_webhook_activity, PUBSUB_MAX_MESSAGES_PER_PUBLISH, PUBSUB_MAX_BYTES_PER_PUBLISH,
+)
 from app.services.errors import IntegrationAuthError
 from app.webhooks import GenericJsonPayload, GenericJsonTransformConfig
 
@@ -299,3 +304,114 @@ async def test_log_activity_default_level_is_a_valid_log_level(mocker, integrati
 
     levels = [call.kwargs["event"].payload.level for call in mock_publish_event.call_args_list]
     assert levels == [LogLevel.INFO, LogLevel.INFO]
+
+
+@pytest.mark.asyncio
+async def test_publish_events_sends_all_events_in_a_single_publish_call(
+        mocker, mock_pubsub_client, action_started_event, gcp_pubsub_publish_response
+):
+    mocker.patch("app.services.activity_logger.pubsub", mock_pubsub_client)
+
+    response = await publish_events([action_started_event] * 3, topic_name=settings.INTEGRATION_EVENTS_TOPIC)
+
+    publisher = mock_pubsub_client.PublisherClient.return_value
+    assert publisher.publish.call_count == 1
+    topic, messages = publisher.publish.call_args.args
+    assert topic == f"projects/{settings.GCP_PROJECT_ID}/topics/{settings.INTEGRATION_EVENTS_TOPIC}"
+    assert len(messages) == 3
+    assert response == gcp_pubsub_publish_response
+
+
+@pytest.mark.asyncio
+async def test_publish_events_splits_batches_at_the_pubsub_limit(
+        mocker, mock_pubsub_client, action_started_event
+):
+    mocker.patch("app.services.activity_logger.pubsub", mock_pubsub_client)
+    publisher = mock_pubsub_client.PublisherClient.return_value
+    publisher.publish.side_effect = lambda topic, messages: async_return(
+        {"messageIds": [str(i) for i in range(len(messages))]}
+    )
+    events = [action_started_event] * (PUBSUB_MAX_MESSAGES_PER_PUBLISH + 5)
+
+    response = await publish_events(events, topic_name=settings.INTEGRATION_EVENTS_TOPIC)
+
+    assert [len(c.args[1]) for c in publisher.publish.call_args_list] == [PUBSUB_MAX_MESSAGES_PER_PUBLISH, 5]
+    assert len(response["messageIds"]) == PUBSUB_MAX_MESSAGES_PER_PUBLISH + 5
+
+
+@pytest.mark.asyncio
+async def test_publish_events_is_a_no_op_on_ephemeral_run(mocker, mock_pubsub_client, action_started_event):
+    from app.services.activity_logger import ephemeral_run
+    mocker.patch("app.services.activity_logger.pubsub", mock_pubsub_client)
+
+    token = ephemeral_run.set(True)
+    try:
+        response = await publish_events([action_started_event], topic_name=settings.INTEGRATION_EVENTS_TOPIC)
+    finally:
+        ephemeral_run.reset(token)
+
+    assert response is None
+    assert not mock_pubsub_client.PublisherClient.return_value.publish.called
+
+
+def _serialized_request_size(messages):
+    # What gcloud-aio's PublisherClient.publish puts on the wire: base64 data
+    # plus JSON framing. Pub/Sub's 10 MB quota applies to this body.
+    return len(json.dumps({"messages": [m.to_repr() for m in messages]}))
+
+
+@pytest.fixture
+def mock_publisher_client_only(mocker, gcp_pubsub_publish_response):
+    """Mock the publisher but keep the real PubsubMessage, so batch sizes
+    reflect the events actually being sent."""
+    publisher = mocker.MagicMock()
+    publisher.topic_path.return_value = f"projects/{settings.GCP_PROJECT_ID}/topics/{settings.INTEGRATION_EVENTS_TOPIC}"
+    publisher.publish.side_effect = lambda topic, messages: async_return(
+        {"messageIds": [str(i) for i in range(len(messages))]}
+    )
+    mocker.patch("app.services.activity_logger.pubsub.PublisherClient", return_value=publisher)
+    return publisher
+
+
+@pytest.mark.asyncio
+async def test_publish_events_splits_batches_at_the_byte_limit(
+        mocker, mock_publisher_client_only, action_started_event
+):
+    # Review on #114: Pub/Sub also rejects publish requests over 10 MB, and a
+    # count-only split assembled 1,000 x 12 KB commands into a 16 MB request
+    # that every retry would resend. Split on serialized size as well.
+    from app.services import activity_logger
+    one_event = _serialized_request_size(
+        [activity_logger.pubsub.PubsubMessage(json.dumps(action_started_event.dict(), default=str).encode("utf-8"))]
+    )
+    limit = one_event * 3 + 16  # room for three, not four
+    mocker.patch.object(activity_logger, "PUBSUB_MAX_BYTES_PER_PUBLISH", limit)
+
+    response = await publish_events([action_started_event] * 7, topic_name=settings.INTEGRATION_EVENTS_TOPIC)
+
+    sizes = [len(c.args[1]) for c in mock_publisher_client_only.publish.call_args_list]
+    assert sizes == [3, 3, 1]
+    for call in mock_publisher_client_only.publish.call_args_list:
+        assert _serialized_request_size(call.args[1]) <= limit
+    assert len(response["messageIds"]) == 7
+
+
+@pytest.mark.asyncio
+async def test_publish_events_sends_an_oversized_event_alone_instead_of_dropping_it(
+        mocker, mock_publisher_client_only, action_started_event
+):
+    # A single event larger than the limit cannot be split; it goes out on
+    # its own so Pub/Sub's rejection names it, and the loop still terminates.
+    from app.services import activity_logger
+    mocker.patch.object(activity_logger, "PUBSUB_MAX_BYTES_PER_PUBLISH", 10)
+
+    response = await publish_events([action_started_event] * 3, topic_name=settings.INTEGRATION_EVENTS_TOPIC)
+
+    assert [len(c.args[1]) for c in mock_publisher_client_only.publish.call_args_list] == [1, 1, 1]
+    assert len(response["messageIds"]) == 3
+
+
+def test_publish_byte_limit_is_the_pubsub_quota():
+    # 10 MB per publish request, per https://cloud.google.com/pubsub/quotas
+    assert PUBSUB_MAX_BYTES_PER_PUBLISH <= 10 * 1000 * 1000
+    assert PUBSUB_MAX_MESSAGES_PER_PUBLISH == 1000
