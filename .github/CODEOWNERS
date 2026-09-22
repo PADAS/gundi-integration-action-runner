@@ -1,0 +1,4 @@
+# Every PR needs an approval from one of the Gundi teams (enforced by the
+# "default" ruleset's "require code owner review"). This repo is the shared
+# template for integrations; changes to it must be reviewed by the team.
+* @PADAS/gundi-admins @PADAS/gundi-team
