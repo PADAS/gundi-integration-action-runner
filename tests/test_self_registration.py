@@ -728,7 +728,7 @@ def _discover_actions_in_fake_module(module):
 
 
 def test_discover_actions_ignores_imported_action_title_decorator():
-    # Simulates handlers.py doing `from app.actions import action_title`
+    # Simulates handlers.py doing `from gundi_action_runner.actions import action_title`
     module = types.ModuleType("fake_handlers_module")
     module.action_title = action_title
 
@@ -784,3 +784,41 @@ async def test_crontab_schedule_decorator(
         tz_offset=0
     )
     assert action_pull_observations.crontab_schedule == expected_schedule
+
+
+def test_action_type_enum_has_reference():
+    from gundi_action_runner.services.core import ActionTypeEnum
+
+    assert ActionTypeEnum.REFERENCE.value == "reference"
+
+
+def _dummy_reference_handlers():
+    from gundi_action_runner.actions.core import ReferenceActionConfiguration
+
+    class DummyQuery(ReferenceActionConfiguration):
+        pass
+
+    async def action_list_dummy(integration, action_config: DummyQuery):
+        return {"options": []}
+
+    return {"list_dummy": (action_list_dummy, DummyQuery, None)}
+
+
+@pytest.mark.asyncio
+async def test_reference_actions_are_registered_with_the_reference_type(mocker):
+    # The platform accepts the "reference" action type, so reference actions
+    # always register, and with their own type rather than "generic" (which
+    # the runner's ephemeral whitelist would otherwise be the only guard for).
+    from unittest.mock import AsyncMock, MagicMock
+    from gundi_action_runner.services import self_registration
+
+    mocker.patch.object(self_registration, "action_handlers", _dummy_reference_handlers())
+    gundi_client = MagicMock()
+    gundi_client.register_integration_type = AsyncMock(return_value={})
+
+    await self_registration.register_integration_in_gundi(gundi_client, type_slug="my_tracker")
+
+    data = gundi_client.register_integration_type.call_args.args[0]
+    assert [a["value"] for a in data["actions"]] == ["list_dummy"]
+    assert data["actions"][0]["type"] == "reference"
+    assert data["actions"][0]["is_periodic_action"] is False
