@@ -18,6 +18,29 @@ gundi-runner register --slug {{ integration_type_slug }} --name "{{ display_name
   --handlers {{ package_name }}.handlers
 ```
 
+## Deploy
+
+`.github/workflows/` carries the same pipeline a fork of the template gets:
+`pr.yaml` runs the tests on every pull request; `main.yaml` runs them on a
+push, builds the Docker image, and deploys by pointing this connector's
+`terragrunt.hcl` in `PADAS/gundi-integrations-v2-infra` at the new image —
+`main` deploys to **dev**, `release-**` branches to **stage** and then **prod**.
+
+The pipeline is keyed on the GitHub repository name, and it expects:
+
+| What | Where | Value |
+|---|---|---|
+| Image repository | derived | `us-central1-docker.pkg.dev/cdip-78ca/gundi-integrations/<repository name>` |
+| Deploy targets | `PADAS/gundi-integrations-v2-infra` | `environments/{dev,stage,prod}/integrations/<repository name>/terragrunt.hcl` |
+| `GUNDI_INTEGRATIONS_WORKLOAD_IDENTITY_PROVIDER` | repository or organization **variable** | GCP workload identity provider the image build authenticates with |
+| `GUNDI_INTEGRATIONS_SERVICE_ACCOUNT` | repository or organization **variable** | service account that provider impersonates |
+| `GUNDI_INTEGRATIONS_DEPLOY_KEY` | repository or organization **secret** | SSH deploy key with write access to the infra repository |
+
+A repository in the PADAS organization inherits the variables and the secret;
+elsewhere, set them under *Settings → Secrets and variables → Actions*, and
+ask the Gundi team to add the three `terragrunt.hcl` files before the first
+push to `main`.
+
 ## Update the scaffold
 
 This project tracks the upstream template; pull scaffold improvements with

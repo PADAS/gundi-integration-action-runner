@@ -78,17 +78,70 @@ def test_local_dev_stack(generate_project):
     assert "PUBSUB_EMULATOR_HOST=pubsub_emulator:8085" in env_example
     assert "INTEGRATION_COMMANDS_TOPIC=local-actions-topic" in env_example
 
-    # Dual-mode auth: personal login default, OAUTH_* names only
+    # Dual-mode auth: personal login default, GUNDI_OAUTH_* names only
     assert "GUNDI_USERNAME=" in env_example
     assert "GUNDI_PASSWORD=" in env_example
-    assert 'OAUTH_CLIENT_ID="cdip-oauth2"' in env_example
+    assert 'GUNDI_OAUTH_CLIENT_ID="cdip-oauth2"' in env_example
     assert "KEYCLOAK_" not in env_example
+    assert "\nOAUTH_" not in env_example and "# OAUTH_" not in env_example
     root_env = (dst / ".env.example").read_text()
-    assert "OAUTH_CLIENT_ID=" in root_env
-    assert "KEYCLOAK_" not in root_env
+    assert "GUNDI_OAUTH_CLIENT_ID=" in root_env
+    assert "KEYCLOAK_" not in root_env and "\nOAUTH_" not in root_env
+    # The shared OAuth token cache lives in Redis db 2, beside state (0) and config (1)
+    assert "REDIS_TOKEN_CACHE_DB=2" in root_env
+    assert "GUNDI_TOKEN_CACHE_URL" in root_env
+    assert "REDIS_TOKEN_CACHE_DB" in env_example
 
     dockerfile = (dst / "Dockerfile").read_text()
     assert "AS dev" in dockerfile and "AS prod" in dockerfile
     # prod must be the LAST stage so a bare `docker build .` builds production
     assert dockerfile.rindex("AS prod") > dockerfile.rindex("AS dev")
     assert "debugpy" in dockerfile
+
+
+def test_ci_workflows_mirror_the_fork_pipeline(generate_project):
+    """A fork inherits tests-on-PR and tests -> image -> deploy on push. A
+    generated connector has to get the same, or it is not a fork replacement."""
+    import yaml
+
+    dst = generate_project()
+    workflows = dst / ".github" / "workflows"
+    for name in ("pr.yaml", "main.yaml", "_tests.yml"):
+        assert (workflows / name).exists(), f"missing {name}"
+
+    pr = yaml.safe_load((workflows / "pr.yaml").read_text())
+    assert pr["jobs"]["pr_unit_tests"]["uses"] == "./.github/workflows/_tests.yml"
+
+    tests_wf = (workflows / "_tests.yml").read_text()
+    assert 'pip install --no-cache-dir -e ".[dev]"' in tests_wf
+    assert "run: pytest" in tests_wf
+
+    main = yaml.safe_load((workflows / "main.yaml").read_text())
+    jobs = main["jobs"]
+    assert set(jobs) == {"vars", "run_unit_tests", "build", "deploy_dev", "deploy_stage", "deploy_prod"}
+    assert jobs["run_unit_tests"]["uses"] == "./.github/workflows/_tests.yml"
+    assert jobs["build"]["uses"].startswith("PADAS/gundi-workflows/.github/workflows/build_docker.yml@")
+    for env in ("dev", "stage", "prod"):
+        job = jobs[f"deploy_{env}"]
+        assert job["uses"].startswith("PADAS/gundi-workflows/.github/workflows/update_hcl.yml@")
+        assert job["with"]["environment"] == env
+        assert job["with"]["git_repository"] == "PADAS/gundi-integrations-v2-infra"
+        assert job["with"]["key_name"] == "image"
+    assert jobs["deploy_prod"]["needs"] == ["vars", "build", "deploy_stage"]
+
+    # The workflows are copied, not rendered: GitHub's own ${{ }} expressions
+    # must survive generation untouched.
+    raw = (workflows / "main.yaml").read_text()
+    assert "${{ github.event.repository.name }}" in raw
+    assert "${{ vars.GUNDI_INTEGRATIONS_WORKLOAD_IDENTITY_PROVIDER }}" in raw
+    assert "${{ secrets.GUNDI_INTEGRATIONS_DEPLOY_KEY }}" in raw
+
+    # ...and the README tells the author what the pipeline expects of the repo.
+    readme = (dst / "README.md").read_text()
+    for needed in (
+        "GUNDI_INTEGRATIONS_WORKLOAD_IDENTITY_PROVIDER",
+        "GUNDI_INTEGRATIONS_SERVICE_ACCOUNT",
+        "GUNDI_INTEGRATIONS_DEPLOY_KEY",
+        "gundi-integrations-v2-infra",
+    ):
+        assert needed in readme, needed
