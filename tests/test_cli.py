@@ -20,7 +20,11 @@ def test_cli_group_lists_commands(runner):
 
 
 def test_run_invokes_uvicorn_with_factory(runner, mocker, monkeypatch):
-    monkeypatch.delenv("GUNDI_HANDLERS_MODULES", raising=False)
+    # setenv first so teardown restores the key to absent: delenv on a missing
+    # key records nothing, and the value the CLI sets below would leak into
+    # every later test (and their subprocesses).
+    monkeypatch.setenv("GUNDI_HANDLERS_MODULES", "")
+    monkeypatch.delenv("GUNDI_HANDLERS_MODULES")
     monkeypatch.setattr("gundi_action_runner.settings.GUNDI_HANDLERS_MODULES", None)
     uvicorn_run = mocker.patch("uvicorn.run")
     result = runner.invoke(
