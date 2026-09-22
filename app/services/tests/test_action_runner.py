@@ -2371,3 +2371,68 @@ async def test_execute_action_handles_httpx_error_carrying_no_request(
     error_details = json.loads(response.body)["detail"]
     assert error_details["error"] == "Could not reach the provider — connection failed"
     assert error_details["error_type"] == "connectivity"
+
+
+@pytest.mark.asyncio
+async def test_execute_action_reports_the_runner_timeout_as_action_timed_out(
+        mocker, mock_gundi_client_v2, integration_v2, mock_config_manager,
+        mock_publish_event, mock_action_handlers,
+):
+    # The runner's own execution cap is not a provider failure and must not
+    # render as "Could not reach the provider" (see the savannahtracking and
+    # vectronic incidents of 2026-09-22).
+    import asyncio
+    _, config_model, transform = mock_action_handlers["pull_observations"]
+
+    async def slow_handler(**kwargs):
+        await asyncio.sleep(1)
+
+    mock_action_handlers["pull_observations"] = (slow_handler, config_model, transform)
+    mocker.patch.object(settings, "MAX_ACTION_EXECUTION_TIME", 0.01)
+    mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+
+    response = await execute_action(
+        integration_id=str(integration_v2.id),
+        action_id="pull_observations",
+    )
+
+    assert response.status_code == 504
+    error_details = json.loads(response.body)["detail"]
+    assert error_details["error"] == "Action timed out — exceeded the 0.01 s execution limit"
+    assert error_details["error_type"] == "timeout"
+    assert "Could not reach the provider" not in error_details["error"]
+
+
+def test_ephemeral_handler_timeout_reports_action_timed_out_with_504(
+        mocker, mock_gundi_client_v2, mock_config_manager,
+        mock_publish_event, mock_reference_action_handler, mock_pull_observations_action_handler,
+        mock_push_action_handler, mock_generic_action_handler,
+):
+    import asyncio
+
+    async def slow_auth_handler(**kwargs):
+        await asyncio.sleep(1)
+
+    handlers = {
+        "list_species": (mock_reference_action_handler, _MockReferenceActionConfiguration, None),
+        "pull_observations": (mock_pull_observations_action_handler, MockPullActionConfiguration, None),
+        "auth": (slow_auth_handler, _MockAuthActionConfiguration, None),
+        "push_observations": (mock_push_action_handler, MockPushActionConfiguration, None),
+        "generic_lookup": (mock_generic_action_handler, _MockGenericActionConfiguration, None),
+    }
+    mocker.patch.object(settings, "MAX_ACTION_EXECUTION_TIME", 0.01)
+    mocker.patch("app.services.action_runner.action_handlers", handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+
+    response = api_client.post("/v1/actions/execute/", json=_ephemeral_body(action_id="auth"))
+
+    assert response.status_code == 504
+    # Runner-authored title only: the ephemeral path drops the message segment.
+    assert response.json() == {"detail": {"action_id": "auth", "error": "Action timed out"}}

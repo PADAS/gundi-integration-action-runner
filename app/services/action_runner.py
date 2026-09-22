@@ -28,7 +28,10 @@ from .config_manager import IntegrationConfigurationManager
 from .state import IntegrationStateManager
 from .utils import find_config_for_action
 from .activity_logger import publish_event, log_action_activity, ephemeral_run
-from .errors import classify_error, format_classified_error, source_status_code, IntegrationError, IntegrationConfigurationError
+from .errors import (
+    ActionTimeoutError, classify_error, format_classified_error, source_status_code,
+    IntegrationError, IntegrationConfigurationError,
+)
 from .url_policy import validate_outbound_url
 from .gundi import EphemeralWriteBlocked
 
@@ -627,8 +630,11 @@ async def _execute_action_impl(
             timeout=settings.MAX_ACTION_EXECUTION_TIME
         )
     except asyncio.TimeoutError:
+        # The runner's own cap, not the provider failing to answer: an
+        # asyncio.TimeoutError here would classify as connectivity and send
+        # the operator to check the provider.
         return await _handle_error(
-            asyncio.TimeoutError(f"Action '{action_id}' timed out"),
+            ActionTimeoutError(f"exceeded the {settings.MAX_ACTION_EXECUTION_TIME} s execution limit"),
             integration_id, action_id,
             config_data=handler_error_config_data(),
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
