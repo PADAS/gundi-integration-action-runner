@@ -84,6 +84,19 @@ class IntegrationConfigurationError(IntegrationError):
     default_title = "Invalid configuration"
 
 
+class ActionTimeoutError(Exception):
+    """The runner cancelled a handler that outran MAX_ACTION_EXECUTION_TIME.
+
+    Deliberately not an IntegrationError (connectors never raise it, and the
+    ephemeral path's redaction rules key off that hierarchy) and not an
+    asyncio.TimeoutError (which classify_error reads as the provider not
+    answering). The message says what happened, without the action id: the
+    portal already prefixes "Error running action '<id>': ".
+    """
+    error_type = "timeout"
+    default_title = "Action timed out"
+
+
 # Titles for failures of the runner's own requests to Gundi (raised by
 # gundi-client-v2). Kept apart from the provider titles above: a Gundi 401 is
 # the runner's OAuth configuration, not the source's credentials.
@@ -159,6 +172,10 @@ def classify_error(exc: Exception) -> Optional[ClassifiedError]:
     keep the generic format.
     """
     status_code = source_status_code(exc)
+    if isinstance(exc, ActionTimeoutError):
+        # The runner's own execution cap: a verdict about the action, not the
+        # provider, so neither the connectivity title nor an HTTP status.
+        return ClassifiedError(exc.error_type, exc.default_title, str(exc), None)
     if isinstance(exc, IntegrationError):
         return ClassifiedError(
             error_type=exc.error_type,
