@@ -6,6 +6,7 @@ import pytest
 from gundi_client_v2.errors import AuthenticationError, GundiAPIError
 
 from app.services.errors import (
+    ActionTimeoutError,
     IntegrationError,
     IntegrationAuthError,
     IntegrationConnectionError,
@@ -268,3 +269,25 @@ def test_classify_error_reads_aiohttp_response_status(status, expected_type):
     assert classified is not None
     assert classified.error_type == expected_type
     assert classified.status_code == status
+
+
+def test_action_timeout_is_classified_as_a_runner_timeout_not_a_provider_failure():
+    # Two connectors' activity logs filled with "Could not reach the provider —
+    # Action 'x' timed out" when the runner's own MAX_ACTION_EXECUTION_TIME cap
+    # fired, sending operators to check the provider. The cap is the runner's
+    # verdict, so it gets its own category and a title that says so.
+    classified = classify_error(ActionTimeoutError("exceeded the 540 s execution limit"))
+
+    assert classified.error_type == "timeout"
+    assert classified.title == "Action timed out"
+    assert classified.status_code is None
+    assert format_error_message(ActionTimeoutError("exceeded the 540 s execution limit")) == (
+        "Action timed out — exceeded the 540 s execution limit"
+    )
+
+
+def test_action_timeout_is_not_an_integration_error():
+    # It must not inherit the "third-party failure" contract: connectors never
+    # raise it, and the ephemeral path's redaction rules key off IntegrationError.
+    assert not issubclass(ActionTimeoutError, IntegrationError)
+    assert not isinstance(ActionTimeoutError(""), asyncio.TimeoutError)

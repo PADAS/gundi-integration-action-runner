@@ -28,7 +28,10 @@ from .config_manager import IntegrationConfigurationManager
 from .state import IntegrationStateManager
 from .utils import find_config_for_action
 from .activity_logger import publish_event, log_action_activity, ephemeral_run
-from .errors import classify_error, format_classified_error, source_status_code, IntegrationError, IntegrationConfigurationError
+from .errors import (
+    ActionTimeoutError, classify_error, format_classified_error, source_status_code,
+    IntegrationError, IntegrationConfigurationError,
+)
 from .url_policy import validate_outbound_url
 from .gundi import EphemeralWriteBlocked
 
@@ -385,6 +388,17 @@ async def _skip_invalid_config(integration_id, action_id, *, error):
     return {"skipped": True, "reason": "invalid_configuration"}
 
 
+async def _cancel_handler(handler_task: "asyncio.Task") -> None:
+    """Cancel a running handler and wait for it to finish unwinding, so its
+    finally blocks run before the runner reports or propagates anything (the
+    same guarantee asyncio.wait_for gave). Whatever the handler raises while
+    unwinding is the handler's business, not the runner's."""
+    handler_task.cancel()
+    # Collect the handler's exception, but let cancellation of this runner
+    # propagate. Catching CancelledError around a direct await confuses the two.
+    await asyncio.gather(handler_task, return_exceptions=True)
+
+
 async def execute_action(
         integration_id: Optional[str], action_id: Optional[str] = None, config_overrides: dict = None,
         data: dict = None, metadata: dict = None, triggered_by: Optional[str] = None,
@@ -612,6 +626,7 @@ async def _execute_action_impl(
             return None
         return {"configurations": [c.dict() for c in integration.configurations]}
 
+    deadline_expired = False
     try:  # Execute the action handler with a timeout
         start_time = time.monotonic()
         handler_kwargs = {
@@ -622,18 +637,25 @@ async def _execute_action_impl(
             handler_kwargs["data"] = parsed_data
         if metadata is not None:
             handler_kwargs["metadata"] = metadata
-        result = await asyncio.wait_for(
-            handler(**handler_kwargs),
-            timeout=settings.MAX_ACTION_EXECUTION_TIME
-        )
-    except asyncio.TimeoutError:
-        return await _handle_error(
-            asyncio.TimeoutError(f"Action '{action_id}' timed out"),
-            integration_id, action_id,
-            config_data=handler_error_config_data(),
-            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            classify_heuristics=True,
-        )
+        # Not asyncio.wait_for: it raises the same asyncio.TimeoutError for its
+        # own expired deadline and for one the handler raised (aiohttp's
+        # provider timeout), and the two must be reported differently. Waiting
+        # on the task tells them apart by whether the task finished.
+        handler_task = asyncio.ensure_future(handler(**handler_kwargs))
+        try:
+            done, _ = await asyncio.wait({handler_task}, timeout=settings.MAX_ACTION_EXECUTION_TIME)
+        except asyncio.CancelledError:
+            # Unlike wait_for, asyncio.wait leaves what it waits on running
+            # when the waiter is cancelled. The runner going away (request
+            # aborted, process shutting down) must take the handler with it,
+            # or it keeps publishing and writing state with no deadline.
+            await _cancel_handler(handler_task)
+            raise
+        if done:
+            result = handler_task.result()  # re-raises the handler's own exception unchanged
+        else:
+            deadline_expired = True
+            await _cancel_handler(handler_task)
     except Exception as e:
         # Saved-integration runs keep the historical 500; the ephemeral path
         # forwards the source system's verdict instead (_handle_error applies
@@ -642,6 +664,17 @@ async def _execute_action_impl(
             e, integration_id, action_id,
             config_data=handler_error_config_data(),
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            classify_heuristics=True,
+        )
+    if deadline_expired:
+        # The runner's own cap, not the provider failing to answer: an
+        # asyncio.TimeoutError here would classify as connectivity and send
+        # the operator to check the provider.
+        return await _handle_error(
+            ActionTimeoutError(f"exceeded the {settings.MAX_ACTION_EXECUTION_TIME} s execution limit"),
+            integration_id, action_id,
+            config_data=handler_error_config_data(),
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             classify_heuristics=True,
         )
 
