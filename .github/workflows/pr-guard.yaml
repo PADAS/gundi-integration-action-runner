@@ -1,0 +1,38 @@
+name: Guard template PRs
+
+# This repo is the shared template that every gundi-integration-* repo is forked
+# from, so GitHub defaults a fork's PR base to this repo. Team members work on
+# branches pushed directly here (branch pushes are restricted to the Gundi teams
+# by a repository ruleset), so a PR whose head lives in another repo is almost
+# always an accident. Close it with an explanation.
+#
+# pull_request_target runs with the base repo's token, which is what we need to
+# comment and close. We never check out or run the PR's code.
+
+on:
+  pull_request_target:
+    types: [opened, reopened]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  close_cross_repo_pr:
+    if: github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Comment and close
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name || 'your fork' }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file - <<MSG
+          Thanks for the PR. This repository is the shared **template** that every \`gundi-integration-*\` repo is forked from, and this PR was opened from another repository (\`$HEAD_REPO\`, branch \`$HEAD_REF\`). GitHub defaults a fork's PR base to this template, so this is usually unintended.
+
+          Closing it automatically. To land your change in your own integration repo, open the PR there and set the **base repository** to \`$HEAD_REPO\` instead of \`$GITHUB_REPOSITORY\`.
+
+          If the change really is meant for the template, ask a member of @PADAS/gundi-admins or @PADAS/gundi-team to push it as a branch here, or to reopen this PR.
+          MSG
+          gh pr close "$PR_NUMBER" --repo "$GITHUB_REPOSITORY"
