@@ -33,6 +33,7 @@ Tasks 1–6 are committed (`2356488`..`2a84585`); section A finished 2026-09-22 
 
 **C. Ship and prove it**
 > Done 2026-09-22: `v0.1.0rc4` published (run 35799312075, all jobs green; the first push of that tag was refused by the suite and re-pointed before anything reached PyPI). Proof ran entirely from the published package and the pushed tag: fresh venv → `pip install gundi-action-runner[cli,testing]==0.1.0rc4` → `gundi-runner new` (default template, tag `v0.1.0rc4`) → 2 generated tests pass → `pip install -e .[dev]` resolves → `docker build --target prod` pulls rc4 and imports → `gundi-runner register` against stage returned 201 as **`acme_tracker_e2e`** (service URL `https://acme-tracker-e2e.invalid`) — **delete that integration type from stage when done**. Upstream: issue #117 (webhook `print`). `stash@{0}` dropped.
+> 2026-09-30: re-synced through PR #119 as merge `5ff40b5` (timeout → `ActionTimeoutError`, PubSub redelivery verdict, internal actions; `pr-guard.yaml` taken). Same recipe; `main.py`'s `_should_redeliver` hand-ported into `app_factory.py`. Suite 499 passed.
 
 - [x] C1. Bump to `0.1.0rc4`; `RELEASING.md` flow; publish.
 - [x] C2. End-to-end proof: `gundi-runner new` a throwaway connector against the *published* rc4, run its tests, build its image, `gundi-runner register` against stage. That is the parity claim, demonstrated rather than asserted.
