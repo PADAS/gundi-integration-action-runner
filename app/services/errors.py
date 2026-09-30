@@ -206,29 +206,6 @@ def classify_error(exc: Exception) -> Optional[ClassifiedError]:
     return None
 
 
-# Categories where a later attempt can plausibly succeed. "auth" is left out
-# on purpose: rejected credentials do not fix themselves within PubSub's
-# backoff, and a handler that refreshes an expired token retries that itself.
-RETRYABLE_ERROR_TYPES = frozenset({"connectivity", "bad_response", "rate_limit", "timeout"})
-
-
-def is_retryable_failure(error_type: Optional[str], status_code: Optional[int] = None) -> bool:
-    """Whether a failed run is worth redelivering (see main.execute).
-
-    Takes the machine-readable category _handle_error puts in the error
-    response plus the source status it recorded. A Gundi-side failure is
-    transient only when Gundi did not answer or answered 429/5xx; a 4xx from
-    Gundi (unknown integration, rejected key) is final. Anything unclassified
-    is treated as final too: a bug or a provider 4xx does not improve by being
-    run again.
-    """
-    if error_type in RETRYABLE_ERROR_TYPES:
-        return True
-    if error_type == "gundi":
-        return status_code is None or status_code == 429 or status_code >= 500
-    return False
-
-
 def format_classified_error(classified: ClassifiedError, *, include_message: bool = True) -> str:
     """Build the clean text: "<title> — <message> (HTTP <status>)".
 

@@ -18,9 +18,16 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import settings
+from gundi_client_v2.errors import AuthenticationError, GundiAPIError
+from redis.exceptions import ConnectionError as RedisConnectionError
+
 from app.conftest import AsyncMock, MockPullActionConfiguration, MockSubActionConfiguration
 from app.main import app
-from app.services.errors import is_retryable_failure
+from app.services.errors import (
+    ActionTimeoutError, IntegrationAuthError, IntegrationBadResponseError, IntegrationConfigurationError,
+    IntegrationConnectionError, IntegrationRateLimitError,
+)
+from app.services.retry_policies import is_retryable_failure
 
 api_client = TestClient(app)
 INTEGRATION_ID = "843e0801-e81a-47e5-9ce2-b176e4736a85"
@@ -74,8 +81,10 @@ def _install_handler(mocker, handler, action_id="pull_observations", config_mode
         (_provider_error(503), 500),
         (_provider_error(429), 500),
         (httpx.ConnectError("connection refused"), 500),
+        (GundiAPIError(503, "sensors api unavailable"), 500),
+        (AuthenticationError("token endpoint unreachable", transport=True), 500),
     ],
-    ids=["provider_5xx", "provider_rate_limited", "provider_unreachable"],
+    ids=["provider_5xx", "provider_rate_limited", "provider_unreachable", "gundi_5xx", "gundi_oauth_transport"],
 )
 def test_transient_handler_failure_is_not_acked(mocker, runner_mocks, error, expected_status):
     handler = _install_handler(mocker, AsyncMock(side_effect=error))
@@ -105,8 +114,18 @@ def test_runner_timeout_is_not_acked(mocker, runner_mocks):
 
 @pytest.mark.parametrize(
     "error",
-    [_provider_error(401), _provider_error(400), Exception("a bug in the handler")],
-    ids=["provider_auth_rejected", "provider_bad_request", "unclassified"],
+    [
+        _provider_error(401),
+        _provider_error(400),
+        Exception("a bug in the handler"),
+        AuthenticationError("invalid_client", status_code=401, error="invalid_client"),
+        AuthenticationError("GUNDI_OAUTH_CLIENT_ID is not configured"),
+        GundiAPIError(404, "integration not found"),
+    ],
+    ids=[
+        "provider_auth_rejected", "provider_bad_request", "unclassified",
+        "gundi_oauth_rejected", "gundi_oauth_unconfigured", "gundi_4xx",
+    ],
 )
 def test_permanent_handler_failure_is_acked(mocker, runner_mocks, error):
     handler = _install_handler(mocker, AsyncMock(side_effect=error))
@@ -116,6 +135,37 @@ def test_permanent_handler_failure_is_acked(mocker, runner_mocks, error):
     assert response.status_code == 200
     assert response.json() == {}
     assert handler.called
+
+
+@pytest.mark.parametrize(
+    "error, expected_status",
+    [
+        (GundiAPIError(503, "portal unavailable"), 500),
+        (httpx.ConnectError("portal unreachable", request=httpx.Request("GET", "https://gundi.example")), 500),
+        (AuthenticationError("token endpoint unreachable", transport=True), 500),
+        (RedisConnectionError("redis down"), 500),
+        (GundiAPIError(404, "integration not found"), 200),
+        (AuthenticationError("invalid_client", status_code=401, error="invalid_client"), 200),
+        (AuthenticationError("GUNDI_OAUTH_CLIENT_ID is not configured"), 200),
+    ],
+    ids=[
+        "portal_5xx", "portal_unreachable", "oauth_transport", "redis_down",
+        "portal_4xx", "oauth_rejected", "oauth_unconfigured",
+    ],
+)
+def test_integration_lookup_failure_is_redelivered_only_when_transient(mocker, runner_mocks, error, expected_status):
+    # These fail in the runner before the handler runs, on the path that
+    # deliberately leaves error_type unclassified (a portal problem must not
+    # read as a provider problem). The retry decision must not depend on it.
+    handler = _install_handler(mocker, AsyncMock())
+    runner_mocks.get_integration_details.side_effect = error
+
+    response = api_client.post("/", json=_pubsub_message("pull_observations"))
+
+    assert response.status_code == expected_status
+    assert not handler.called
+    if expected_status != 200:
+        assert response.json()["detail"]["error_type"] is None
 
 
 def test_invalid_config_is_acked(mocker, runner_mocks):
@@ -153,21 +203,35 @@ def test_background_mode_acks_before_the_run_finishes(mocker, runner_mocks):
 
 
 @pytest.mark.parametrize(
-    "error_type, status_code, expected",
+    "exc, expected",
     [
-        ("connectivity", None, True),
-        ("bad_response", 502, True),
-        ("rate_limit", 429, True),
-        ("timeout", None, True),
-        ("gundi", 503, True),
-        ("gundi", None, True),
-        ("gundi", 404, False),
-        ("auth", 401, False),
-        (None, None, False),
+        (ActionTimeoutError("exceeded the cap"), True),
+        (httpx.ConnectError("refused"), True),
+        (asyncio.TimeoutError(), True),
+        (_provider_error(502), True),
+        (_provider_error(429), True),
+        (_provider_error(401), False),
+        (_provider_error(404), False),
+        (IntegrationConnectionError("down"), True),
+        (IntegrationRateLimitError("slow down"), True),
+        (IntegrationBadResponseError("garbage"), True),
+        (IntegrationAuthError("nope"), False),
+        (IntegrationConfigurationError("bad url"), False),
+        (GundiAPIError(503), True),
+        (GundiAPIError(429), True),
+        (GundiAPIError(401), False),
+        (AuthenticationError("t", transport=True), True),
+        (AuthenticationError("5xx", status_code=503), True),
+        (AuthenticationError("rejected", status_code=401, error="invalid_client"), False),
+        (AuthenticationError("unconfigured"), False),
+        (RedisConnectionError("down"), True),
+        (ValueError("bug"), False),
+        (KeyError("bug"), False),
     ],
+    ids=lambda v: v if isinstance(v, bool) else type(v).__name__ + ":" + str(getattr(v, "status_code", "") or getattr(v, "transport", "") or ""),
 )
-def test_is_retryable_failure(error_type, status_code, expected):
-    assert is_retryable_failure(error_type, status_code) is expected
+def test_is_retryable_failure(exc, expected):
+    assert is_retryable_failure(exc) is expected
 
 
 # --- internal actions run from their overrides alone --------------------------
