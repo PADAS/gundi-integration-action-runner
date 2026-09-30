@@ -21,5 +21,11 @@ jobs:
         run: pip-compile --output-file=requirements.txt requirements-base.in requirements-dev.in requirements.in
       - name: Install dependencies
         run: pip install --no-cache-dir -r requirements.txt
+      - name: Install the gundi-action-runner library (in-repo)
+        run: pip install -e . --no-deps
+      - name: Install CLI extras used by the test suite
+        # Keep in sync with the `cli` extra in pyproject.toml — the CLI and
+        # template tests import copier (which pulls jinja2/pyyaml with it).
+        run: pip install "copier~=7.2" "pyyaml-include<2" "plumbum<1.10"
       - name: Run unit tests
         run: pytest

@@ -1,0 +1,20 @@
+# Shared test job, called by pr.yaml (pull requests) and main.yaml (pushes).
+# Not a .jinja file: GitHub's ${{ }} expressions would otherwise be parsed by
+# the scaffold's template engine, so this file is copied verbatim.
+name: Run tests
+on:
+  workflow_call
+
+jobs:
+  run_unit_tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Install the connector with its test dependencies
+        run: pip install --no-cache-dir -e ".[dev]"
+      - name: Run unit tests
+        run: pytest

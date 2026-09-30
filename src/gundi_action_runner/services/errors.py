@@ -1,0 +1,229 @@
+import asyncio
+from typing import NamedTuple, Optional
+
+import aiohttp
+# gundi_action_runner.settings before gundi_client_v2: importing anything from the library's
+# package runs its .env loader, and the first loader wins per key (see
+# app/settings/base.py). Every service module that imports the library does
+# this, so the ordering holds however a module is reached first.
+from gundi_action_runner import settings  # noqa: F401
+from gundi_client_v2.errors import AuthenticationError, GundiAPIError
+import httpx
+
+
+class ActionNotFound(Exception):
+    pass
+
+
+class ConfigurationNotFound(Exception):
+    pass
+
+
+class ConfigurationValidationError(Exception):
+    pass
+
+
+class ActionExecutionError(Exception):
+    pass
+
+
+class IntegrationError(Exception):
+    """Base for classified third-party failures.
+
+    Subclasses set `error_type` (machine-readable category) and
+    `default_title` (human-first phrase shown in the portal activity log).
+
+    Cooperates with client exception hierarchies (e.g. a connector's own
+    base exception) that set `message`/`status_code` before calling
+    super().__init__(message): a status_code already set by an earlier
+    __init__ in the MRO is never clobbered with None.
+    """
+    error_type = "unknown"
+    default_title = "Error"
+
+    def __init__(self, message: str = "", status_code: Optional[int] = None):
+        super().__init__(message or self.default_title)
+        self.message = message or self.default_title
+        if status_code is not None:
+            self.status_code = status_code
+        elif not hasattr(self, "status_code"):
+            self.status_code = None
+
+
+class IntegrationAuthError(IntegrationError):
+    error_type = "auth"
+    default_title = "Authentication failed"
+
+
+class IntegrationConnectionError(IntegrationError):
+    error_type = "connectivity"
+    default_title = "Could not reach the provider"
+
+
+class IntegrationRateLimitError(IntegrationError):
+    error_type = "rate_limit"
+    default_title = "Rate limited by the provider"
+
+
+class IntegrationBadResponseError(IntegrationError):
+    error_type = "bad_response"
+    default_title = "Unexpected response from the provider"
+
+
+class IntegrationConfigurationError(IntegrationError):
+    """A problem the connector found with the integration's own configuration
+    or a query parameter (an empty site URL, an unknown event type), rather
+    than a verdict from the provider.
+
+    Connector-authored, but by contract the message describes the shape of
+    the problem without echoing the submitted values, so the ephemeral path
+    forwards it (as a 422) where it redacts every other connector message
+    (see action_runner._ephemeral_error_text).
+    """
+    error_type = "configuration"
+    default_title = "Invalid configuration"
+
+
+class ActionTimeoutError(Exception):
+    """The runner cancelled a handler that outran MAX_ACTION_EXECUTION_TIME.
+
+    Deliberately not an IntegrationError (connectors never raise it, and the
+    ephemeral path's redaction rules key off that hierarchy) and not an
+    asyncio.TimeoutError (which classify_error reads as the provider not
+    answering). The message says what happened, without the action id: the
+    portal already prefixes "Error running action '<id>': ".
+    """
+    error_type = "timeout"
+    default_title = "Action timed out"
+
+
+# Titles for failures of the runner's own requests to Gundi (raised by
+# gundi-client-v2). Kept apart from the provider titles above: a Gundi 401 is
+# the runner's OAuth configuration, not the source's credentials.
+GUNDI_API_ERROR_TITLE = "Gundi API request failed"
+GUNDI_AUTH_ERROR_TITLE = "Could not authenticate with Gundi"
+
+
+class ClassifiedError(NamedTuple):
+    error_type: str
+    title: str
+    message: str
+    status_code: Optional[int]
+
+
+# Exceptions that mean the provider could not be reached at all.
+CONNECTIVITY_EXCEPTIONS = (
+    asyncio.TimeoutError,  # distinct from builtin TimeoutError until Python 3.11
+    TimeoutError,  # builtin: also covers socket.timeout (alias since 3.10)
+    ConnectionError,  # builtin: covers ConnectionRefusedError, ConnectionResetError, etc.
+    httpx.TransportError,  # covers ConnectError, ReadTimeout, and all transport failures
+    aiohttp.ClientConnectionError,
+)
+
+
+def source_status_code(exc: Exception) -> Optional[int]:
+    """The HTTP status the third party answered with, if the exception carries one.
+
+    Four shapes carry it: `IntegrationError.status_code`, gundi-client-v2's
+    `GundiAPIError` / `AuthenticationError` `.status_code`, aiohttp's
+    `ClientResponseError.status`, and the duck-typed `.response.status_code`
+    (httpx.HTTPStatusError, requests.HTTPError, and anything else that keeps
+    the response on the exception). This is the single reader shared by the
+    classifier and the ephemeral status forwarding, so wherever a status is
+    forwarded at all, it is the one the text names.
+
+    The one deliberate divergence is a Gundi-side failure, where the text
+    keeps Gundi's status ("Gundi API request failed (HTTP 401)") while the
+    ephemeral response carries the runner's own: Gundi's verdict is named in
+    the text, and forwarding it as the status would read in the portal as the
+    provider rejecting the draft's credentials (action_runner
+    ._ephemeral_status_for).
+
+    Connectors are free to pre-set `status_code` on their own exception
+    hierarchies, so it is not trusted to be an int: anything else (a "401"
+    string, a bool) reads as unknown rather than raising inside an except
+    block, which would replace the redacted error with the raw one.
+    """
+    if isinstance(exc, IntegrationError):
+        code = getattr(exc, "status_code", None)
+    elif isinstance(exc, aiohttp.ClientResponseError):
+        code = exc.status
+    elif isinstance(exc, (GundiAPIError, AuthenticationError)):
+        # gundi-client-v2 3.x wraps the Gundi API's non-2xx responses (and the
+        # token endpoint's) instead of letting httpx's error escape: the status
+        # is on the wrapper, and there is no `.response`.
+        code = exc.status_code
+    else:
+        # getattr chain: non-HTTP exceptions have no .response attribute.
+        code = getattr(getattr(exc, "response", None), "status_code", None)
+    if isinstance(code, bool) or not isinstance(code, int):
+        return None
+    return code
+
+
+def classify_error(exc: Exception) -> Optional[ClassifiedError]:
+    """Classify a third-party failure for consistent activity-log reporting.
+
+    Explicitly raised `IntegrationError` subclasses always win. A failure of
+    the runner's own call to Gundi (gundi-client-v2's errors) is reported as
+    such, never with a provider title. Otherwise fall back to heuristics based
+    on signals the action runner already reads (`exc.response.status_code`,
+    exception type). Returns None when the error can't be classified — callers
+    keep the generic format.
+    """
+    status_code = source_status_code(exc)
+    if isinstance(exc, ActionTimeoutError):
+        # The runner's own execution cap: a verdict about the action, not the
+        # provider, so neither the connectivity title nor an HTTP status.
+        return ClassifiedError(exc.error_type, exc.default_title, str(exc), None)
+    if isinstance(exc, IntegrationError):
+        return ClassifiedError(
+            error_type=exc.error_type,
+            title=exc.default_title,
+            message=getattr(exc, "message", None) or "",
+            status_code=status_code,
+        )
+
+    # httpx.HTTPStatusError from raise_for_status() stringifies to multi-line
+    # text (URL plus a "For more information check: ..." line) — only the
+    # first line is useful as a short, human-first message.
+    first_line = (str(exc).splitlines() or [""])[0]
+    if isinstance(exc, (GundiAPIError, AuthenticationError)):
+        # Raised by gundi-client-v2: the runner's own request to Gundi, or to
+        # Gundi's identity provider, failed. Not a verdict from the provider,
+        # so none of the provider titles below, which would send an operator
+        # to the source's credentials when the fault is on the Gundi side.
+        title = GUNDI_AUTH_ERROR_TITLE if isinstance(exc, AuthenticationError) else GUNDI_API_ERROR_TITLE
+        return ClassifiedError("gundi", title, first_line, status_code)
+    if status_code in (401, 403):
+        return ClassifiedError("auth", IntegrationAuthError.default_title, first_line, status_code)
+    if status_code == 429:
+        return ClassifiedError("rate_limit", IntegrationRateLimitError.default_title, first_line, status_code)
+    if status_code is not None and status_code >= 500:
+        return ClassifiedError("bad_response", IntegrationBadResponseError.default_title, first_line, status_code)
+    if isinstance(exc, CONNECTIVITY_EXCEPTIONS):
+        return ClassifiedError("connectivity", IntegrationConnectionError.default_title, first_line, None)
+    return None
+
+
+def format_classified_error(classified: ClassifiedError, *, include_message: bool = True) -> str:
+    """Build the clean text: "<title> — <message> (HTTP <status>)".
+
+    The portal prepends "Error running action '<id>': " to this string, so it
+    must be short and lead with what an operator needs to see. The message
+    segment is skipped when redundant, or when the caller passes
+    include_message=False (the ephemeral path, where the message may carry
+    str(exc) from the source); the HTTP suffix when unknown.
+    """
+    text = classified.title
+    if include_message and classified.message and classified.message != classified.title:
+        text = f"{text} — {classified.message}"
+    if classified.status_code:
+        text = f"{text} (HTTP {classified.status_code})"
+    return text
+
+
+def format_error_message(exc: Exception) -> Optional[str]:
+    """Return clean, human-first error text for classified errors, or None."""
+    classified = classify_error(exc)
+    return format_classified_error(classified) if classified else None

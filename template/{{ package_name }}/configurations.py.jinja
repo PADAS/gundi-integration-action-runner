@@ -1,0 +1,45 @@
+from gundi_action_runner.actions.core import AuthActionConfiguration{% if include_pull %}, PullActionConfiguration{% endif %}
+from gundi_action_runner.services.utils import (
+    FieldWithUIOptions,
+    GlobalUISchemaOptions,
+    UIOptions,
+)
+{% if include_webhook %}from gundi_action_runner.webhooks.core import WebhookConfiguration, WebhookPayload{% endif %}
+
+
+class AuthConfig(AuthActionConfiguration):
+    api_key: str = FieldWithUIOptions(
+        ...,
+        title="API Key",
+        description="API key for the {{ project_name }} API",
+        format="password",
+        ui_options=UIOptions(widget="password"),
+    )
+    ui_global_options = GlobalUISchemaOptions(order=["api_key"])
+{% if include_pull %}
+
+
+class PullObservationsConfig(PullActionConfiguration):
+    lookback_days: int = FieldWithUIOptions(
+        7,
+        ge=1,
+        le=30,
+        title="Lookback Days",
+        description="How many days back to fetch on the first run",
+        ui_options=UIOptions(widget="range"),
+    )
+    ui_global_options = GlobalUISchemaOptions(order=["lookback_days"])
+{% endif %}
+{% if include_webhook %}
+
+
+class {{ package_name | replace('_', ' ') | title | replace(' ', '') }}WebhookPayload(WebhookPayload):
+    device_id: str
+    lat: float
+    lon: float
+    recorded_at: str
+
+
+class {{ package_name | replace('_', ' ') | title | replace(' ', '') }}WebhookConfig(WebhookConfiguration):
+    default_subject_type: str = "unknown"
+{% endif %}
