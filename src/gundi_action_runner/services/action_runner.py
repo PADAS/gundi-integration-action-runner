@@ -17,21 +17,27 @@ from gundi_client_v2 import GundiClient
 from gundi_client_v2.errors import AuthenticationError, GundiAPIError
 
 from gundi_action_runner.actions import action_handlers, get_action_handler_by_data_type
-from gundi_action_runner.registry import registry
 from fastapi import status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from gundi_core.events import IntegrationActionFailed, ActionExecutionFailed, LogLevel
 
-from gundi_action_runner.actions.core import AuthActionConfiguration, PullActionConfiguration, ReferenceActionConfiguration
+from gundi_action_runner.actions.core import (
+    AuthActionConfiguration, InternalActionConfiguration, PullActionConfiguration, ReferenceActionConfiguration,
+)
 from gundi_action_runner.api_schemas import IntegrationState
 from .config_manager import IntegrationConfigurationManager
 from .state import IntegrationStateManager
 from .utils import find_config_for_action
 from .activity_logger import publish_event, log_action_activity, ephemeral_run
-from .errors import classify_error, format_classified_error, source_status_code, IntegrationError, IntegrationConfigurationError
+from .retry_policies import is_retryable_failure
+from .errors import (
+    ActionTimeoutError, classify_error, format_classified_error, source_status_code,
+    IntegrationError, IntegrationConfigurationError,
+)
 from .url_policy import validate_outbound_url
 from .gundi import EphemeralWriteBlocked
+from gundi_action_runner.registry import registry
 
 _portal = GundiClient()
 config_manager = IntegrationConfigurationManager()
@@ -276,6 +282,10 @@ async def _handle_error(
         # Machine-readable category. Only reaches the JSON response below;
         # ActionExecutionFailed is a gundi-core model that drops unknown fields.
         "error_type": classified.error_type if classified else None,
+        # Whether redelivering the triggering message could help (main.execute
+        # reads it). From the exception itself, so it holds on the paths above
+        # that leave error_type unset on purpose.
+        "retryable": is_retryable_failure(exc),
         "error_traceback": traceback.format_exc()
     }
 
@@ -384,6 +394,17 @@ async def _skip_invalid_config(integration_id, action_id, *, error):
                 f"(integration '{integration_id}'): {log_error}"
             )
     return {"skipped": True, "reason": "invalid_configuration"}
+
+
+async def _cancel_handler(handler_task: "asyncio.Task") -> None:
+    """Cancel a running handler and wait for it to finish unwinding, so its
+    finally blocks run before the runner reports or propagates anything (the
+    same guarantee asyncio.wait_for gave). Whatever the handler raises while
+    unwinding is the handler's business, not the runner's."""
+    handler_task.cancel()
+    # Collect the handler's exception, but let cancellation of this runner
+    # propagate. Catching CancelledError around a direct await confuses the two.
+    await asyncio.gather(handler_task, return_exceptions=True)
 
 
 async def execute_action(
@@ -537,16 +558,26 @@ async def _execute_action_impl(
     is_reference_action = isinstance(config_model, type) and issubclass(
         config_model, ReferenceActionConfiguration
     )
-    skip_missing_config = is_ephemeral or is_reference_action
+    # Internal actions (sub-actions another handler triggers, e.g. one per
+    # source in a fan-out) are never registered in Gundi, so the portal holds
+    # no row for them and everything they need arrives in config_overrides.
+    # Looking a row up anyway misses redis every time, and the reload that
+    # follows a miss writes absence sentinels only for the type's registered
+    # actions: a full portal fetch per triggered run.
+    is_internal_action = isinstance(config_model, type) and issubclass(
+        config_model, InternalActionConfiguration
+    )
+    skip_missing_config = is_ephemeral or is_reference_action or is_internal_action
 
     # Get the configuration needed to execute the action
     if is_ephemeral:
         action_config = find_config_for_action(integration.configurations, action_id)
-    elif is_reference_action:
-        # Stateless by contract, so there is no row to find. Looking one up
-        # anyway would miss redis every time, and get_action_configuration
-        # reloads the integration from the portal on a miss: a portal call on
-        # every dropdown open.
+    elif is_reference_action or is_internal_action:
+        # Neither has a row to find (reference actions are stateless by
+        # contract, internal ones unregistered). Looking one up anyway would
+        # miss redis every time, and get_action_configuration reloads the
+        # integration from the portal on a miss: a portal call on every
+        # dropdown open, or on every triggered sub-action.
         action_config = None
     else:
         action_config = await config_manager.get_action_configuration(integration_id, action_id)
@@ -617,6 +648,7 @@ async def _execute_action_impl(
             return None
         return {"configurations": [c.dict() for c in integration.configurations]}
 
+    deadline_expired = False
     try:  # Execute the action handler with a timeout
         start_time = time.monotonic()
         handler_kwargs = {
@@ -627,18 +659,25 @@ async def _execute_action_impl(
             handler_kwargs["data"] = parsed_data
         if metadata is not None:
             handler_kwargs["metadata"] = metadata
-        result = await asyncio.wait_for(
-            handler(**handler_kwargs),
-            timeout=settings.MAX_ACTION_EXECUTION_TIME
-        )
-    except asyncio.TimeoutError:
-        return await _handle_error(
-            asyncio.TimeoutError(f"Action '{action_id}' timed out"),
-            integration_id, action_id,
-            config_data=handler_error_config_data(),
-            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            classify_heuristics=True,
-        )
+        # Not asyncio.wait_for: it raises the same asyncio.TimeoutError for its
+        # own expired deadline and for one the handler raised (aiohttp's
+        # provider timeout), and the two must be reported differently. Waiting
+        # on the task tells them apart by whether the task finished.
+        handler_task = asyncio.ensure_future(handler(**handler_kwargs))
+        try:
+            done, _ = await asyncio.wait({handler_task}, timeout=settings.MAX_ACTION_EXECUTION_TIME)
+        except asyncio.CancelledError:
+            # Unlike wait_for, asyncio.wait leaves what it waits on running
+            # when the waiter is cancelled. The runner going away (request
+            # aborted, process shutting down) must take the handler with it,
+            # or it keeps publishing and writing state with no deadline.
+            await _cancel_handler(handler_task)
+            raise
+        if done:
+            result = handler_task.result()  # re-raises the handler's own exception unchanged
+        else:
+            deadline_expired = True
+            await _cancel_handler(handler_task)
     except Exception as e:
         # Saved-integration runs keep the historical 500; the ephemeral path
         # forwards the source system's verdict instead (_handle_error applies
@@ -647,6 +686,17 @@ async def _execute_action_impl(
             e, integration_id, action_id,
             config_data=handler_error_config_data(),
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            classify_heuristics=True,
+        )
+    if deadline_expired:
+        # The runner's own cap, not the provider failing to answer: an
+        # asyncio.TimeoutError here would classify as connectivity and send
+        # the operator to check the provider.
+        return await _handle_error(
+            ActionTimeoutError(f"exceeded the {settings.MAX_ACTION_EXECUTION_TIME} s execution limit"),
+            integration_id, action_id,
+            config_data=handler_error_config_data(),
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             classify_heuristics=True,
         )
 

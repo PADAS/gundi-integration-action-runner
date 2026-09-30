@@ -8,7 +8,7 @@ from fastapi import BackgroundTasks, FastAPI, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from gundi_action_runner import settings
 from gundi_action_runner.registry import registry
@@ -18,6 +18,24 @@ from gundi_action_runner.services.self_registration import register_integration_
 from gundi_action_runner.services.webhooks import close_diagnostic_client
 
 logger = logging.getLogger(__name__)
+
+
+def _should_redeliver(result) -> bool:
+    """True for an execute_action error response whose failure is transient.
+
+    Successful runs return the handler's own result (a dict), errors a
+    JSONResponse from _handle_error whose body carries the verdict
+    (`retryable`, from retry_policies.is_retryable_failure on the exception).
+    Only 5xx responses qualify: the runner answers 4xx for request and
+    configuration problems, which are final.
+    """
+    if not isinstance(result, Response) or result.status_code < 500:
+        return False
+    try:
+        detail = json.loads(result.body).get("detail") or {}
+    except (ValueError, AttributeError):
+        return False
+    return detail.get("retryable") is True
 
 
 def create_app(handlers_modules=None):
@@ -87,6 +105,10 @@ def create_app(handlers_modules=None):
             json_data["message"].get("attributes") or {}
         ).get("triggered_by")
         if settings.PROCESS_PUBSUB_MESSAGES_IN_BACKGROUND:
+            # Acked on receipt: whatever the run does afterwards, PubSub never
+            # hears of it, so a transient failure is not redelivered in this
+            # mode. Deployments that rely on redelivery (per-source fan-outs) keep
+            # the setting off.
             background_tasks.add_task(
                 execute_action,
                 integration_id=json_payload.get("integration_id"),
@@ -95,12 +117,18 @@ def create_app(handlers_modules=None):
                 triggered_by=triggered_by,
             )
         else:
-            await execute_action(
+            result = await execute_action(
                 integration_id=json_payload.get("integration_id"),
                 action_id=json_payload.get("action_id"),
                 config_overrides=json_payload.get("config_overrides"),
                 triggered_by=triggered_by,
             )
+            if _should_redeliver(result):
+                # Non-2xx: PubSub redelivers with backoff. Every other outcome is
+                # acked below, including failures a retry cannot fix (missing or
+                # invalid configuration, rejected credentials, a provider 4xx, a
+                # bug), which would otherwise be redelivered until they expire.
+                return result
         return {}
 
     @app.post("/push-data", summary="Process messages from PubSub and run push actions")
