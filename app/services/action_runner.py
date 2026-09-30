@@ -22,7 +22,9 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from gundi_core.events import IntegrationActionFailed, ActionExecutionFailed, LogLevel
 
-from app.actions.core import AuthActionConfiguration, PullActionConfiguration, ReferenceActionConfiguration
+from app.actions.core import (
+    AuthActionConfiguration, InternalActionConfiguration, PullActionConfiguration, ReferenceActionConfiguration,
+)
 from app.api_schemas import IntegrationState
 from .config_manager import IntegrationConfigurationManager
 from .state import IntegrationStateManager
@@ -546,16 +548,26 @@ async def _execute_action_impl(
     is_reference_action = isinstance(config_model, type) and issubclass(
         config_model, ReferenceActionConfiguration
     )
-    skip_missing_config = is_ephemeral or is_reference_action
+    # Internal actions (sub-actions another handler triggers, e.g. one per
+    # source in a fan-out) are never registered in Gundi, so the portal holds
+    # no row for them and everything they need arrives in config_overrides.
+    # Looking a row up anyway misses redis every time, and the reload that
+    # follows a miss writes absence sentinels only for the type's registered
+    # actions: a full portal fetch per triggered run.
+    is_internal_action = isinstance(config_model, type) and issubclass(
+        config_model, InternalActionConfiguration
+    )
+    skip_missing_config = is_ephemeral or is_reference_action or is_internal_action
 
     # Get the configuration needed to execute the action
     if is_ephemeral:
         action_config = find_config_for_action(integration.configurations, action_id)
-    elif is_reference_action:
-        # Stateless by contract, so there is no row to find. Looking one up
-        # anyway would miss redis every time, and get_action_configuration
-        # reloads the integration from the portal on a miss: a portal call on
-        # every dropdown open.
+    elif is_reference_action or is_internal_action:
+        # Neither has a row to find (reference actions are stateless by
+        # contract, internal ones unregistered). Looking one up anyway would
+        # miss redis every time, and get_action_configuration reloads the
+        # integration from the portal on a miss: a portal call on every
+        # dropdown open, or on every triggered sub-action.
         action_config = None
     else:
         action_config = await config_manager.get_action_configuration(integration_id, action_id)

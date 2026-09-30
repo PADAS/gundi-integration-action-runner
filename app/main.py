@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, status, BackgroundTasks
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 # app.settings first: the routers pull in gundi_client_v2, which loads a .env of
 # its own, and the first loader wins per key (see app/settings/base.py).
 import app.settings as settings
@@ -14,6 +14,7 @@ from app.routers import actions, webhooks, config_events
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.services.action_runner import execute_action, _portal
+from app.services.errors import is_retryable_failure
 from app.services.self_registration import register_integration_in_gundi
 from app.services.webhooks import close_diagnostic_client
 
@@ -94,6 +95,10 @@ async def execute(
         json_data["message"].get("attributes") or {}
     ).get("triggered_by")
     if settings.PROCESS_PUBSUB_MESSAGES_IN_BACKGROUND:
+        # Acked on receipt: whatever the run does afterwards, PubSub never
+        # hears of it, so a transient failure is not redelivered in this
+        # mode. Deployments that rely on redelivery (per-source fan-outs) keep
+        # the setting off.
         background_tasks.add_task(
             execute_action,
             integration_id=json_payload.get("integration_id"),
@@ -102,13 +107,36 @@ async def execute(
             triggered_by=triggered_by,
         )
     else:
-        await execute_action(
+        result = await execute_action(
             integration_id=json_payload.get("integration_id"),
             action_id=json_payload.get("action_id"),
             config_overrides=json_payload.get("config_overrides"),
             triggered_by=triggered_by,
         )
+        if _should_redeliver(result):
+            # Non-2xx: PubSub redelivers with backoff. Every other outcome is
+            # acked below, including failures a retry cannot fix (missing or
+            # invalid configuration, rejected credentials, a provider 4xx, a
+            # bug), which would otherwise be redelivered until they expire.
+            return result
     return {}
+
+
+def _should_redeliver(result) -> bool:
+    """True for an execute_action error response whose failure is transient.
+
+    Successful runs return the handler's own result (a dict), errors a
+    JSONResponse from _handle_error whose body carries the classified
+    error_type and the source status. Only 5xx responses qualify: the runner
+    answers 4xx for configuration problems, which are final.
+    """
+    if not isinstance(result, Response) or result.status_code < 500:
+        return False
+    try:
+        detail = json.loads(result.body).get("detail") or {}
+    except (ValueError, AttributeError):
+        return False
+    return is_retryable_failure(detail.get("error_type"), detail.get("server_response_status"))
 
 
 @app.post(
