@@ -18,7 +18,13 @@ permissions:
 
 jobs:
   close_cross_repo_pr:
-    if: github.event.pull_request.head.repo.full_name != github.repository
+    # Every gundi-integration-* fork merges this repo's main to pick up
+    # framework changes, so this file lands in each of them. The repository
+    # check keeps the job inert there: a fork's own PRs come from its own
+    # branches, and the message below would be wrong for a fork anyway.
+    if: >-
+      github.repository == 'PADAS/gundi-integration-action-runner' &&
+      github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     steps:
       - name: Comment and close
