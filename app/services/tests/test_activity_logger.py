@@ -504,3 +504,33 @@ async def test_log_webhook_activity_redacts_secrets_in_the_given_config_data(
 
     event = mock_publish_event.call_args.kwargs["event"]
     assert event.payload.config_data == {"site": "s", "secret": REDACTED}
+
+
+class _NestedDetails(pydantic.BaseModel):
+    code: str = pydantic.Field(..., format="password")
+    realm: str
+
+
+class _NestingConfiguration(pydantic.BaseModel):
+    details: _NestedDetails
+    site: str
+
+
+@pytest.mark.asyncio
+async def test_activity_logger_decorator_redacts_model_declared_secrets_below_the_root(
+        mocker, mock_publish_event, integration_v2,
+):
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+
+    @activity_logger()
+    async def action_pull(integration, action_config):
+        return {}
+
+    await action_pull(
+        integration=integration_v2,
+        action_config=_NestingConfiguration(details={"code": "nested-password", "realm": "r"}, site="s"),
+    )
+
+    for call in mock_publish_event.call_args_list:
+        event = call.kwargs["event"]
+        assert event.payload.config_data == {"details": {"code": REDACTED, "realm": "r"}, "site": "s"}

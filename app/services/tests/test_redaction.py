@@ -1,3 +1,5 @@
+import typing
+
 import pydantic
 import pytest
 
@@ -85,7 +87,7 @@ def test_secret_field_names_is_empty_for_a_model_without_secrets():
 def test_redacts_fields_the_model_declares_as_secret_even_with_innocent_names():
     data = {"username": "u", "pin": "1234", "code": "abcd", "plain": "p"}
 
-    out = redact_secrets(data, secret_fields=secret_field_names(_Config))
+    out = redact_secrets(data, model=_Config)
 
     assert out == {"username": "u", "pin": REDACTED, "code": REDACTED, "plain": "p"}
 
@@ -152,3 +154,91 @@ def test_redact_config_data_tolerates_rows_without_an_action_or_data():
 
 def test_redact_config_data_normalizes_none_to_an_empty_dict():
     assert redact_config_data(None, config_models={}) == {}
+
+
+# --- Review on PR #120: aliases and nested models ---
+
+class _AliasedAuthConfig(pydantic.BaseModel):
+    username: str
+    login_code: pydantic.SecretStr = pydantic.Field(..., alias="code")
+
+
+def test_secret_field_names_includes_aliases():
+    assert secret_field_names(_AliasedAuthConfig) == frozenset({"login_code", "code"})
+
+
+def test_redacts_a_model_declared_secret_saved_under_its_alias():
+    # The portal saves a configuration under the field's alias; the decorator
+    # path serializes it under the field name. Both spellings are the secret.
+    models = {"auth": _AliasedAuthConfig}
+
+    by_alias = redact_config_data({"username": "u", "code": "alias-secret"}, action_id="auth", config_models=models)
+    by_name = redact_config_data({"username": "u", "login_code": "name-secret"}, action_id="auth", config_models=models)
+
+    assert by_alias == {"username": "u", "code": REDACTED}
+    assert by_name == {"username": "u", "login_code": REDACTED}
+
+
+def test_redacts_a_model_declared_secret_saved_under_its_alias_in_a_configuration_row():
+    config_data = {"configurations": [{"action": {"value": "auth"}, "data": {"username": "u", "code": "alias-secret"}}]}
+
+    out = redact_config_data(config_data, config_models={"auth": _AliasedAuthConfig})
+
+    assert out["configurations"][0]["data"] == {"username": "u", "code": REDACTED}
+
+
+class _NestedDetails(pydantic.BaseModel):
+    pin: pydantic.SecretStr
+    code: str = pydantic.Field(..., format="password")
+    label: str
+
+
+class _NestingConfig(pydantic.BaseModel):
+    details: _NestedDetails
+    history: typing.List[_NestedDetails]
+    by_site: typing.Dict[str, _NestedDetails]
+    optional_details: typing.Optional[_NestedDetails] = None
+    plain: str
+
+
+_NESTED_RAW = {"pin": "nested-pin", "code": "nested-password", "label": "kept"}
+_NESTED_MASKED = {"pin": REDACTED, "code": REDACTED, "label": "kept"}
+
+
+def test_redacts_model_declared_secrets_below_the_root():
+    data = {
+        "details": dict(_NESTED_RAW),
+        "history": [dict(_NESTED_RAW), dict(_NESTED_RAW)],
+        "by_site": {"site-a": dict(_NESTED_RAW)},
+        "optional_details": dict(_NESTED_RAW),
+        "plain": "p",
+    }
+
+    out = redact_secrets(data, model=_NestingConfig)
+
+    assert out == {
+        "details": _NESTED_MASKED,
+        "history": [_NESTED_MASKED, _NESTED_MASKED],
+        "by_site": {"site-a": _NESTED_MASKED},
+        "optional_details": _NESTED_MASKED,
+        "plain": "p",
+    }
+
+
+def test_redact_config_data_applies_nested_model_declarations_to_a_configuration_row():
+    config_data = {"configurations": [{"action": {"value": "pull"}, "data": {"details": dict(_NESTED_RAW), "history": [], "by_site": {}, "plain": "p"}}]}
+
+    out = redact_config_data(config_data, config_models={"pull": _NestingConfig})
+
+    assert out["configurations"][0]["data"]["details"] == _NESTED_MASKED
+
+
+def test_a_sensitive_named_container_keeps_its_structure_and_masks_every_leaf_beneath_it():
+    # A stored OAuth token dict: the inner keys say nothing about secrecy,
+    # the outer one says everything.
+    data = {"auth_token": {"access": "a", "refresh": "r", "expires_in": 3600, "scopes": ["read", "write"]}, "site": "s"}
+
+    assert redact_secrets(data) == {
+        "auth_token": {"access": REDACTED, "refresh": REDACTED, "expires_in": REDACTED, "scopes": [REDACTED, REDACTED]},
+        "site": "s",
+    }

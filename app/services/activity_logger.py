@@ -29,7 +29,7 @@ from gundi_core.events import (
 )
 from app import settings
 from app.services.errors import format_error_message
-from app.services.redaction import redact_secrets, secret_field_names
+from app.services.redaction import redact_secrets
 
 
 logger = logging.getLogger(__name__)
@@ -230,11 +230,12 @@ async def log_webhook_activity(
 def _redacted_config_dict(config) -> dict:
     """The config a decorated handler ran with, serialized for its activity
     events with secrets masked. Masks by key name and by what the config's
-    model declares secret (SecretStr, format="password", password widget), so
-    a password typed as plain str does not reach the feed in clear."""
+    model declares secret (SecretStr, format="password", password widget, at
+    any depth), so a password typed as plain str does not reach the feed in
+    clear."""
     if not config:
         return {}
-    return redact_secrets(config.dict(), secret_fields=secret_field_names(type(config)))
+    return redact_secrets(config.dict(), model=type(config))
 
 
 def activity_logger(on_start=True, on_completion=True, on_error=True):
