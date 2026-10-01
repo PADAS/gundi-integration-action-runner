@@ -18,9 +18,10 @@ Two signals mark a value as secret, and either one is enough:
   model (direct, ``Optional``, in a ``List`` or a ``Dict`` value) counts
   too, and a field is matched by its name or its alias: the portal saves a
   configuration under the alias, ``.dict()`` serializes it under the name.
-  For a ``Union`` of models every variant's declarations apply: masking by
-  a variant the data did not select costs at most a readable value, while
-  guessing the variant wrong would leak one.
+  Containers of any nesting (``List[Dict[str, Model]]``, ...) are followed
+  level by level. For a ``Union`` every variant's declarations apply, a
+  ``Union[SecretStr, int]`` included: masking by a variant the data did not
+  select costs at most a readable value, guessing wrong would leak one.
 
 Unset secrets (``None`` or ``""``) stay as they are: "nothing configured" is
 what an operator debugging a failed auth needs to see, and discloses nothing.
@@ -28,7 +29,7 @@ what an operator debugging a failed auth needs to see, and discloses nothing.
 from typing import Any, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Tuple, Type, Union
 
 import pydantic
-from pydantic.fields import ModelField
+from pydantic.fields import ModelField, SHAPE_SINGLETON
 
 REDACTED = "**********"  # the mask pydantic itself uses for SecretStr
 
@@ -61,7 +62,7 @@ def _is_set(value: Any) -> bool:
 Models = Union[None, Type[pydantic.BaseModel], Sequence[Type[pydantic.BaseModel]]]
 
 
-def redact_secrets(value: Any, *, model: Models = None, _inherited: bool = False) -> Any:
+def redact_secrets(value: Any, *, model: Models = None) -> Any:
     """Return a copy of ``value`` with every secret replaced by ``REDACTED``.
 
     Walks dicts and lists. A dict entry is secret when its key is sensitive
@@ -70,36 +71,46 @@ def redact_secrets(value: Any, *, model: Models = None, _inherited: bool = False
     declares the field as secret. A secret leaf becomes ``REDACTED``; a
     secret container (a stored OAuth token dict, say) keeps its structure
     and every leaf beneath it is masked, whatever the inner keys are called.
-    Nested model declarations are followed as the walk descends. Non-empty
-    values only; see the module docstring.
+    The model's field metadata is followed level by level as the walk
+    descends, through nested models and containers alike. Non-empty values
+    only; see the module docstring.
     """
+    return _walk(value, specs=(), models=_as_models(model), inherited=False)
+
+
+def _walk(value: Any, *, specs: Sequence[ModelField], models: Sequence[Type[pydantic.BaseModel]], inherited: bool) -> Any:
+    """``specs`` are the fields whose value this may be (several under a
+    union), ``models`` the model types it may be an instance of; both may be
+    empty, leaving the key-name check. ``inherited`` is set below a secret
+    container and masks every leaf."""
+    specs = _expand_unions(specs)
     if isinstance(value, _SECRET_TYPES):
         # A plain string, so the event does not depend on how its serializer
         # prints a SecretStr. An empty one stays empty, like an unset key.
         return REDACTED if _is_set(value) else value.get_secret_value()
     if isinstance(value, dict):
-        fields = _fields_by_key(_as_models(model))
+        # The dict is an instance of one of these models...
+        instance_of = list(models) + [
+            s.type_ for s in specs
+            if s.shape == SHAPE_SINGLETON and isinstance(s.type_, type) and issubclass(s.type_, pydantic.BaseModel)
+        ]
+        # ...or a mapping whose values these sub-fields describe; a key gets
+        # both readings, since under a union it may be either.
+        mapping_values = [sub for s in specs if s.key_field is not None for sub in (s.sub_fields or [])]
+        fields_by_key = _fields_by_key(instance_of)
         redacted = {}
         for key, item in value.items():
-            declared = fields.get(key, [])
-            secret = _inherited or _is_sensitive_key(key) or any(_is_secret_field(f) for f in declared)
-            nested = _nested_models(declared)
+            child = fields_by_key.get(key, []) + mapping_values
+            secret = inherited or _is_sensitive_key(key) or any(_is_secret_field(c) for c in child)
             if secret and not isinstance(item, (dict, list)):
                 redacted[key] = REDACTED if _is_set(item) else item
-            elif any(f.key_field is not None for f in declared) and isinstance(item, dict):
-                # A Dict[str, ...] field: the keys are data, so they get the
-                # same name check as any other key; the values are instances
-                # of the field's model(s), if it has any.
-                redacted[key] = {
-                    k: redact_secrets(v, model=nested, _inherited=secret or _is_sensitive_key(k))
-                    for k, v in item.items()
-                }
             else:
-                redacted[key] = redact_secrets(item, model=nested, _inherited=secret)
+                redacted[key] = _walk(item, specs=child, models=(), inherited=secret)
         return redacted
     if isinstance(value, list):
-        return [redact_secrets(item, model=model, _inherited=_inherited) for item in value]
-    if _inherited:
+        elements = [sub for s in specs if s.key_field is None and s.shape != SHAPE_SINGLETON for sub in (s.sub_fields or [])]
+        return [_walk(item, specs=elements, models=models, inherited=inherited) for item in value]
+    if inherited:
         return REDACTED if _is_set(value) else value
     return value
 
@@ -109,10 +120,11 @@ def secret_field_names(config_model: Models) -> FrozenSet[str]:
 
     Each secret field contributes its name and its alias (the portal saves
     under the alias). Reads three declarations: a ``SecretStr``/``SecretBytes``
-    annotation, ``Field(..., format="password")`` (the JSON-schema hint the
-    portal renders as a password input), and ``FieldWithUIOptions(ui_options=
-    UIOptions(widget="password"))``. Root level only; ``redact_secrets``
-    follows nested models itself. Empty for anything that is not a model.
+    annotation (directly, in a container or in a union), ``Field(...,
+    format="password")`` (the JSON-schema hint the portal renders as a
+    password input), and ``FieldWithUIOptions(ui_options=UIOptions(widget=
+    "password"))``. Root level only; ``redact_secrets`` follows nested models
+    itself. Empty for anything that is not a model.
     """
     return frozenset(
         key for key, fields in _fields_by_key(_as_models(config_model)).items()
@@ -143,36 +155,34 @@ def _fields_by_key(models: Iterable[Type[pydantic.BaseModel]]) -> Dict[str, List
     return by_key
 
 
+def _expand_unions(specs: Sequence[ModelField]) -> List[ModelField]:
+    """Replace a field whose single value may be any of several types (a
+    Union: singleton shape with one sub-field per variant) by those variants,
+    so each level of the walk sees concrete shapes. Container fields keep
+    their sub-fields, which describe their elements, not alternatives."""
+    expanded: List[ModelField] = []
+    for spec in specs:
+        if spec.shape == SHAPE_SINGLETON and spec.sub_fields:
+            expanded.extend(_expand_unions(spec.sub_fields))
+        else:
+            expanded.append(spec)
+    return expanded
+
+
 def _is_secret_field(field: ModelField) -> bool:
+    """Whether a field's value is a secret: its own type, its schema hint or
+    widget say so, or a type anywhere inside its containers or union does
+    (``List[SecretStr]``, ``Union[SecretStr, int]``), in which case the whole
+    value is masked."""
     if isinstance(field.type_, type) and issubclass(field.type_, _SECRET_TYPES):
         return True
     field_info = field.field_info
     if (getattr(field_info, "extra", None) or {}).get("format") == "password":
         return True
     ui_options = getattr(field_info, "ui_options", None)
-    return getattr(ui_options, "widget", None) == "password"
-
-
-def _nested_models(fields: Iterable[ModelField]) -> Tuple[Type[pydantic.BaseModel], ...]:
-    """The pydantic models the values of ``fields`` may be instances of.
-
-    pydantic v1 unwraps Optional, List and Dict to the inner type in
-    ``type_``. A Union is left as is, with one ``sub_fields`` entry per
-    member, and a List or Dict of a Union nests those one level deeper, so
-    the sub-field tree is walked. Every variant is returned.
-    """
-    found: List[Type[pydantic.BaseModel]] = []
-
-    def visit(field: ModelField) -> None:
-        candidate = field.type_
-        if isinstance(candidate, type) and issubclass(candidate, pydantic.BaseModel) and candidate not in found:
-            found.append(candidate)
-        for sub in field.sub_fields or []:
-            visit(sub)
-
-    for field in fields:
-        visit(field)
-    return tuple(found)
+    if getattr(ui_options, "widget", None) == "password":
+        return True
+    return any(_is_secret_field(sub) for sub in (field.sub_fields or []))
 
 
 def redact_config_data(

@@ -315,3 +315,69 @@ def test_redact_config_data_applies_a_later_union_variants_declarations_to_a_con
     out = redact_config_data({"configurations": [row]}, config_models={"pull": _DiscriminatedUnionConfig})
 
     assert out["configurations"][0]["data"]["details"] == {"kind": "second", "pin": REDACTED, "code": REDACTED, "label": "l"}
+
+
+# --- Third review on PR #120: nested containers and scalar unions ---
+
+class _NestedContainersConfig(pydantic.BaseModel):
+    groups: typing.List[typing.Dict[str, _NestedDetails]] = []
+    by_site: typing.Dict[str, typing.List[_NestedDetails]] = {}
+    matrix: typing.List[typing.List[_NestedDetails]] = []
+    either: typing.Union[typing.Dict[str, _NestedDetails], typing.List[_NestedDetails], None] = None
+
+
+def test_model_declarations_survive_a_list_of_mappings_and_other_nested_containers_in_raw_data():
+    data = {
+        "groups": [{"main": dict(_NESTED_RAW)}],
+        "by_site": {"site-a": [dict(_NESTED_RAW)]},
+        "matrix": [[dict(_NESTED_RAW)]],
+        "either": {"x": dict(_NESTED_RAW)},
+    }
+
+    out = redact_secrets(data, model=_NestedContainersConfig)
+
+    assert out == {
+        "groups": [{"main": _NESTED_MASKED}],
+        "by_site": {"site-a": [_NESTED_MASKED]},
+        "matrix": [[_NESTED_MASKED]],
+        "either": {"x": _NESTED_MASKED},
+    }
+
+
+def test_model_declarations_survive_a_list_of_mappings_in_a_parsed_configuration():
+    # The decorator path: a parsed config serialized with .dict(). The
+    # SecretStr is masked by its type; the password-format str only by the
+    # declaration, which has to be found through the containers.
+    config = _NestedContainersConfig(groups=[{"main": _NESTED_RAW}], either=[_NESTED_RAW])
+
+    out = redact_secrets(config.dict(), model=type(config))
+
+    assert out["groups"] == [{"main": _NESTED_MASKED}]
+    assert out["either"] == [_NESTED_MASKED]
+
+
+def test_redact_config_data_follows_a_list_of_mappings_in_a_configuration_row():
+    row = {"action": {"value": "pull"}, "data": {"groups": [{"main": dict(_NESTED_RAW)}]}}
+
+    out = redact_config_data({"configurations": [row]}, config_models={"pull": _NestedContainersConfig})
+
+    assert out["configurations"][0]["data"]["groups"] == [{"main": _NESTED_MASKED}]
+
+
+class _ScalarUnionConfig(pydantic.BaseModel):
+    code: typing.Union[pydantic.SecretStr, int]
+    maybe: typing.Optional[typing.Union[int, pydantic.SecretBytes]] = None
+    codes: typing.List[typing.Union[pydantic.SecretStr, int]] = []
+    plain: typing.Union[str, int] = ""
+
+
+def test_secret_field_names_sees_a_secret_type_inside_a_scalar_union():
+    assert secret_field_names(_ScalarUnionConfig) == frozenset({"code", "maybe", "codes"})
+
+
+def test_a_secret_type_inside_a_scalar_union_masks_the_raw_value():
+    data = {"code": "sensitive-code", "maybe": "bytes", "codes": ["a", 1], "plain": "kept"}
+
+    out = redact_secrets(data, model=_ScalarUnionConfig)
+
+    assert out == {"code": REDACTED, "maybe": REDACTED, "codes": [REDACTED, REDACTED], "plain": "kept"}
