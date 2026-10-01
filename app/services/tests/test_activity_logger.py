@@ -1,4 +1,5 @@
 import json
+import pydantic
 import pytest
 from unittest.mock import ANY
 from gundi_core.events import (
@@ -18,6 +19,7 @@ from app.services.activity_logger import (
     log_action_activity, log_webhook_activity, PUBSUB_MAX_MESSAGES_PER_PUBLISH, PUBSUB_MAX_BYTES_PER_PUBLISH,
 )
 from app.services.errors import IntegrationAuthError
+from app.services.redaction import REDACTED
 from app.webhooks import GenericJsonPayload, GenericJsonTransformConfig
 
 
@@ -415,3 +417,90 @@ def test_publish_byte_limit_is_the_pubsub_quota():
     # 10 MB per publish request, per https://cloud.google.com/pubsub/quotas
     assert PUBSUB_MAX_BYTES_PER_PUBLISH <= 10 * 1000 * 1000
     assert PUBSUB_MAX_MESSAGES_PER_PUBLISH == 1000
+
+
+class _PlainStringPasswordConfiguration(pydantic.BaseModel):
+    # A str (not SecretStr) marked as a password only through the schema
+    # hint: pydantic's own serialization would print it in clear.
+    username: str
+    password: str = pydantic.Field(..., format="password")
+
+
+@pytest.mark.asyncio
+async def test_activity_logger_decorator_redacts_secrets_in_the_published_config(
+        mocker, mock_publish_event, integration_v2,
+):
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+
+    @activity_logger()
+    async def action_auth(integration, action_config):
+        raise RuntimeError("login rejected")
+
+    with pytest.raises(RuntimeError):
+        await action_auth(
+            integration=integration_v2,
+            action_config=_PlainStringPasswordConfiguration(username="me", password="hunter2"),
+        )
+
+    assert mock_publish_event.call_count == 2  # start + failure
+    for call in mock_publish_event.call_args_list:
+        event = call.kwargs["event"]
+        assert event.payload.config_data == {"username": "me", "password": REDACTED}
+        assert "hunter2" not in event.json()
+
+
+@pytest.mark.asyncio
+async def test_webhook_activity_logger_decorator_redacts_secrets_in_the_published_config(
+        mocker, mock_publish_event, integration_v2,
+):
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+
+    class _HookConfig(pydantic.BaseModel):
+        token: str
+        topic: str
+
+    @webhook_activity_logger()
+    async def webhook_handler(payload, integration, webhook_config):
+        return {"ok": True}
+
+    await webhook_handler(
+        payload={}, integration=integration_v2, webhook_config=_HookConfig(token="tok-123", topic="t"),
+    )
+
+    assert mock_publish_event.call_count == 2  # start + completion
+    for call in mock_publish_event.call_args_list:
+        event = call.kwargs["event"]
+        assert event.payload.config_data == {"token": REDACTED, "topic": "t"}
+
+
+@pytest.mark.asyncio
+async def test_log_action_activity_redacts_secrets_in_the_given_config_data(
+        mocker, integration_v2, mock_publish_event,
+):
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+
+    await log_action_activity(
+        integration_id=integration_v2.id,
+        action_id="pull_observations",
+        title="Fetching",
+        config_data={"site": "s", "api_key": "key-789"},
+    )
+
+    event = mock_publish_event.call_args.kwargs["event"]
+    assert event.payload.config_data == {"site": "s", "api_key": REDACTED}
+
+
+@pytest.mark.asyncio
+async def test_log_webhook_activity_redacts_secrets_in_the_given_config_data(
+        mocker, integration_v2, mock_publish_event,
+):
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+
+    await log_webhook_activity(
+        integration_id=integration_v2.id,
+        title="Received",
+        config_data={"site": "s", "secret": "sec-000"},
+    )
+
+    event = mock_publish_event.call_args.kwargs["event"]
+    assert event.payload.config_data == {"site": "s", "secret": REDACTED}
