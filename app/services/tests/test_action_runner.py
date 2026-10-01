@@ -2565,3 +2565,82 @@ async def test_cancelling_execute_action_during_deadline_cleanup_propagates(
     finally:
         runner.cancel()
         await asyncio.gather(runner, return_exceptions=True)
+
+
+class _InnocentlyNamedSecretAuthConfiguration(AuthActionConfiguration):
+    username: str
+    login_code: pydantic.SecretStr
+
+
+@pytest.mark.asyncio
+async def test_handler_failure_redacts_the_stored_configurations_it_attaches(
+        mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event, mock_action_handlers,
+        integration_v2_as_dict,
+):
+    # A saved-integration failure attaches every configuration row to the
+    # IntegrationActionFailed event and the JSON response, auth row included.
+    # Secrets must be masked whether they are recognizable by name ("token")
+    # or only by the connector's model ("login_code" is a SecretStr); the rest
+    # of the configuration stays readable for whoever debugs the failure.
+    from gundi_core.schemas.v2 import Integration
+    from app.services.redaction import REDACTED
+    stored = integration_v2_as_dict
+    for row in stored["configurations"]:
+        if row["action"]["value"] == "auth":
+            row["data"] = {"username": "me@example.com", "token": "tok-123", "login_code": "code-456"}
+    integration = Integration.parse_obj(stored)
+    mock_config_manager.get_integration_details = AsyncMock(return_value=integration)
+    handler, _, _ = mock_action_handlers["pull_observations"]
+    handler.side_effect = RuntimeError("provider exploded")
+    mock_action_handlers["auth"] = (AsyncMock(), _InnocentlyNamedSecretAuthConfiguration, None)
+    mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+
+    response = api_client.post(
+        "/v1/actions/execute/",
+        json={"integration_id": str(integration.id), "action_id": "pull_observations"},
+    )
+
+    assert response.status_code == 500
+    assert "tok-123" not in response.text
+    assert "code-456" not in response.text
+    rows = {row["action"]["value"]: row["data"] for row in response.json()["detail"]["config_data"]["configurations"]}
+    assert rows["auth"] == {"username": "me@example.com", "token": REDACTED, "login_code": REDACTED}
+    assert rows["pull_events"] == {"start_datetime": "2023-11-16T00:00:00-03:00"}
+    events = _published_events_of_type(mock_publish_event, IntegrationActionFailed)
+    assert len(events) == 1
+    published_rows = {row["action"]["value"]: row["data"] for row in events[0].payload.config_data["configurations"]}
+    assert published_rows["auth"] == {"username": "me@example.com", "token": REDACTED, "login_code": REDACTED}
+    assert "tok-123" not in events[0].json()
+    assert "code-456" not in events[0].json()
+
+
+@pytest.mark.asyncio
+async def test_invalid_config_failure_redacts_the_action_config_it_attaches(
+        mocker, mock_gundi_client_v2, integration_v2, mock_config_manager,
+        mock_publish_event, mock_action_handlers,
+):
+    # A manual run whose config fails validation attaches that config (the
+    # flat action-config shape, not the configurations list) to the failure.
+    from app.services.redaction import REDACTED
+    mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+    bad_config = mocker.MagicMock()
+    bad_config.data = {"lookback_days": "two", "api_key": "key-789"}
+    mock_config_manager.get_action_configuration.return_value = async_return(bad_config)
+
+    response = await execute_action(
+        integration_id=str(integration_v2.id), action_id="pull_observations", triggered_by="manual",
+    )
+
+    assert response.status_code == 422
+    assert "key-789" not in response.body.decode()
+    events = _published_events_of_type(mock_publish_event, IntegrationActionFailed)
+    assert len(events) == 1
+    assert events[0].payload.config_data == {"lookback_days": "two", "api_key": REDACTED}

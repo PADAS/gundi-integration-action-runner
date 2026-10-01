@@ -29,6 +29,7 @@ from gundi_core.events import (
 )
 from app import settings
 from app.services.errors import format_error_message
+from app.services.redaction import redact_secrets
 
 
 logger = logging.getLogger(__name__)
@@ -188,7 +189,7 @@ async def log_action_activity(integration_id: str, action_id: str, title: str, l
             payload=CustomActivityLog(
                 integration_id=integration_id,
                 action_id=action_id,
-                config_data=config_data or {},
+                config_data=redact_secrets(config_data or {}),
                 title=title,
                 level=level,
                 data=data
@@ -216,7 +217,7 @@ async def log_webhook_activity(
             payload=CustomWebhookLog(
                 integration_id=integration_id,
                 webhook_id=webhook_id,
-                config_data=config_data or {},
+                config_data=redact_secrets(config_data or {}),
                 title=title,
                 level=level,
                 data=data
@@ -224,6 +225,17 @@ async def log_webhook_activity(
         ),
         topic_name=settings.INTEGRATION_EVENTS_TOPIC,
     )
+
+
+def _redacted_config_dict(config) -> dict:
+    """The config a decorated handler ran with, serialized for its activity
+    events with secrets masked. Masks by key name and by what the config's
+    model declares secret (SecretStr, format="password", password widget, at
+    any depth), so a password typed as plain str does not reach the feed in
+    clear."""
+    if not config:
+        return {}
+    return redact_secrets(config.dict(), model=type(config))
 
 
 def activity_logger(on_start=True, on_completion=True, on_error=True):
@@ -234,7 +246,7 @@ def activity_logger(on_start=True, on_completion=True, on_error=True):
             integration_id = str(integration.id) if integration else None
             action_id = func.__name__.replace("action_", "")
             action_config = kwargs.get("action_config")
-            config_data = action_config.dict() if action_config else {} or {}
+            config_data = _redacted_config_dict(action_config)
             if on_start:
                 await publish_event(
                     event=IntegrationActionStarted(
@@ -287,7 +299,7 @@ def webhook_activity_logger(on_start=True, on_completion=True, on_error=True):
             integration = kwargs.get("integration")
             integration_id = str(integration.id) if integration else None
             webhook_config = kwargs.get("webhook_config")
-            config_data = webhook_config.dict() if webhook_config else {} or {}
+            config_data = _redacted_config_dict(webhook_config)
             webhook_id = str(integration.webhook_configuration.webhook.value) if integration and integration.webhook_configuration else "webhook"
             if on_start:
                 await publish_event(

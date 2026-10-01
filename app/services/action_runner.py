@@ -30,6 +30,7 @@ from .config_manager import IntegrationConfigurationManager
 from .state import IntegrationStateManager
 from .utils import find_config_for_action
 from .activity_logger import publish_event, log_action_activity, ephemeral_run
+from .redaction import redact_config_data
 from .retry_policies import is_retryable_failure
 from .errors import (
     ActionTimeoutError, classify_error, format_classified_error, source_status_code,
@@ -276,7 +277,14 @@ async def _handle_error(
     error_details = {
         "integration_id": integration_id,
         "action_id": action_id,
-        "config_data": config_data or {},
+        # The saved configurations (auth row included) or the action's own
+        # config, as the portal stores them: raw dicts, secrets in clear.
+        # Masked here, the one place both the published event and the JSON
+        # response are built from.
+        "config_data": redact_config_data(
+            config_data, action_id=action_id,
+            config_models={aid: model for aid, (_, model, _) in action_handlers.items()},
+        ),
         "error": message,
         # Machine-readable category. Only reaches the JSON response below;
         # ActionExecutionFailed is a gundi-core model that drops unknown fields.

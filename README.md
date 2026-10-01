@@ -16,6 +16,7 @@ Template repo for integration in Gundi v2.
     - Webhook execution complete
     - Error occurred during webhook execution
 - Optionally, use  `log_action_activity()` or `log_webhook_activity()` to log custom messages which you can later see in the portal
+- The configuration attached to every activity-log event is redacted before publishing (`app/services/redaction.py`): values under secret-looking keys (`password`, `token`, `api_key`, `secret`, ...) and fields your config model declares as `SecretStr`, `Field(format="password")` or `UIOptions(widget="password")` are replaced with `**********`, matched by field name or alias and at any depth of nested models. Declare secrets that way and they never reach the portal's activity log in clear, whatever their name.
 - Optionally, use  `@crontab_schedule()` or `register.py --schedule` to make an action to run on a custom schedule
 
 
