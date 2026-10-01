@@ -18,11 +18,14 @@ Two signals mark a value as secret, and either one is enough:
   model (direct, ``Optional``, in a ``List`` or a ``Dict`` value) counts
   too, and a field is matched by its name or its alias: the portal saves a
   configuration under the alias, ``.dict()`` serializes it under the name.
+  For a ``Union`` of models every variant's declarations apply: masking by
+  a variant the data did not select costs at most a readable value, while
+  guessing the variant wrong would leak one.
 
 Unset secrets (``None`` or ``""``) stay as they are: "nothing configured" is
 what an operator debugging a failed auth needs to see, and discloses nothing.
 """
-from typing import Any, Dict, FrozenSet, Mapping, Optional, Type
+from typing import Any, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Tuple, Type, Union
 
 import pydantic
 from pydantic.fields import ModelField
@@ -55,36 +58,44 @@ def _is_set(value: Any) -> bool:
     return value is not None and value != ""
 
 
-def redact_secrets(value: Any, *, model: Optional[Type[pydantic.BaseModel]] = None, _inherited: bool = False) -> Any:
+Models = Union[None, Type[pydantic.BaseModel], Sequence[Type[pydantic.BaseModel]]]
+
+
+def redact_secrets(value: Any, *, model: Models = None, _inherited: bool = False) -> Any:
     """Return a copy of ``value`` with every secret replaced by ``REDACTED``.
 
     Walks dicts and lists. A dict entry is secret when its key is sensitive
     by name, or when ``model`` (the pydantic model this level of the data was
-    saved from) declares the field as secret. A secret leaf becomes
-    ``REDACTED``; a secret container (a stored OAuth token dict, say) keeps
-    its structure and every leaf beneath it is masked, whatever the inner
-    keys are called. Nested model declarations are followed as the walk
-    descends. Non-empty values only; see the module docstring.
+    saved from; several when the data may be any of a union's variants)
+    declares the field as secret. A secret leaf becomes ``REDACTED``; a
+    secret container (a stored OAuth token dict, say) keeps its structure
+    and every leaf beneath it is masked, whatever the inner keys are called.
+    Nested model declarations are followed as the walk descends. Non-empty
+    values only; see the module docstring.
     """
     if isinstance(value, _SECRET_TYPES):
         # A plain string, so the event does not depend on how its serializer
         # prints a SecretStr. An empty one stays empty, like an unset key.
         return REDACTED if _is_set(value) else value.get_secret_value()
     if isinstance(value, dict):
-        fields = _fields_by_key(model)
+        fields = _fields_by_key(_as_models(model))
         redacted = {}
         for key, item in value.items():
-            field = fields.get(key)
-            secret = _inherited or _is_sensitive_key(key) or (field is not None and _is_secret_field(field))
+            declared = fields.get(key, [])
+            secret = _inherited or _is_sensitive_key(key) or any(_is_secret_field(f) for f in declared)
+            nested = _nested_models(declared)
             if secret and not isinstance(item, (dict, list)):
                 redacted[key] = REDACTED if _is_set(item) else item
-            elif field is not None and field.key_field is not None and isinstance(item, dict):
-                # A Dict[str, Model] field: the keys are data, the values are
-                # instances of the nested model.
-                nested = _nested_model(field)
-                redacted[key] = {k: redact_secrets(v, model=nested, _inherited=secret) for k, v in item.items()}
+            elif any(f.key_field is not None for f in declared) and isinstance(item, dict):
+                # A Dict[str, ...] field: the keys are data, so they get the
+                # same name check as any other key; the values are instances
+                # of the field's model(s), if it has any.
+                redacted[key] = {
+                    k: redact_secrets(v, model=nested, _inherited=secret or _is_sensitive_key(k))
+                    for k, v in item.items()
+                }
             else:
-                redacted[key] = redact_secrets(item, model=_nested_model(field), _inherited=secret)
+                redacted[key] = redact_secrets(item, model=nested, _inherited=secret)
         return redacted
     if isinstance(value, list):
         return [redact_secrets(item, model=model, _inherited=_inherited) for item in value]
@@ -93,7 +104,7 @@ def redact_secrets(value: Any, *, model: Optional[Type[pydantic.BaseModel]] = No
     return value
 
 
-def secret_field_names(config_model: Optional[Type[pydantic.BaseModel]]) -> FrozenSet[str]:
+def secret_field_names(config_model: Models) -> FrozenSet[str]:
     """The keys under which a connector's config model stores a secret.
 
     Each secret field contributes its name and its alias (the portal saves
@@ -103,22 +114,32 @@ def secret_field_names(config_model: Optional[Type[pydantic.BaseModel]]) -> Froz
     UIOptions(widget="password"))``. Root level only; ``redact_secrets``
     follows nested models itself. Empty for anything that is not a model.
     """
-    names = set()
-    for key, field in _fields_by_key(config_model).items():
-        if _is_secret_field(field):
-            names.add(key)
-    return frozenset(names)
+    return frozenset(
+        key for key, fields in _fields_by_key(_as_models(config_model)).items()
+        if any(_is_secret_field(f) for f in fields)
+    )
 
 
-def _fields_by_key(model: Optional[Type[pydantic.BaseModel]]) -> Dict[str, ModelField]:
-    fields = getattr(model, "__fields__", None)
-    if not isinstance(fields, dict):
-        return {}
-    by_key = {}
-    for name, field in fields.items():
-        by_key[name] = field
-        if field.alias:
-            by_key[field.alias] = field
+def _as_models(model: Models) -> Tuple[Type[pydantic.BaseModel], ...]:
+    if model is None:
+        return ()
+    if isinstance(model, type):
+        return (model,) if issubclass(model, pydantic.BaseModel) else ()
+    return tuple(m for m in model if isinstance(m, type) and issubclass(m, pydantic.BaseModel))
+
+
+def _fields_by_key(models: Iterable[Type[pydantic.BaseModel]]) -> Dict[str, List[ModelField]]:
+    """Every field of ``models`` reachable under a key, by name and alias.
+    Several when the models are union variants sharing a key."""
+    by_key: Dict[str, List[ModelField]] = {}
+    for model in models:
+        fields = getattr(model, "__fields__", None)
+        if not isinstance(fields, dict):
+            continue
+        for name, field in fields.items():
+            by_key.setdefault(name, []).append(field)
+            if field.alias and field.alias != name:
+                by_key.setdefault(field.alias, []).append(field)
     return by_key
 
 
@@ -132,20 +153,26 @@ def _is_secret_field(field: ModelField) -> bool:
     return getattr(ui_options, "widget", None) == "password"
 
 
-def _nested_model(field: Optional[ModelField]) -> Optional[Type[pydantic.BaseModel]]:
-    """The pydantic model a field's values are instances of, if any.
+def _nested_models(fields: Iterable[ModelField]) -> Tuple[Type[pydantic.BaseModel], ...]:
+    """The pydantic models the values of ``fields`` may be instances of.
 
     pydantic v1 unwraps Optional, List and Dict to the inner type in
-    ``type_``. A Union is left as is; its members are in ``sub_fields``, and
-    the first model among them is used.
+    ``type_``. A Union is left as is, with one ``sub_fields`` entry per
+    member, and a List or Dict of a Union nests those one level deeper, so
+    the sub-field tree is walked. Every variant is returned.
     """
-    if field is None:
-        return None
-    candidates = [field.type_] + [sub.type_ for sub in (field.sub_fields or [])]
-    for candidate in candidates:
-        if isinstance(candidate, type) and issubclass(candidate, pydantic.BaseModel):
-            return candidate
-    return None
+    found: List[Type[pydantic.BaseModel]] = []
+
+    def visit(field: ModelField) -> None:
+        candidate = field.type_
+        if isinstance(candidate, type) and issubclass(candidate, pydantic.BaseModel) and candidate not in found:
+            found.append(candidate)
+        for sub in field.sub_fields or []:
+            visit(sub)
+
+    for field in fields:
+        visit(field)
+    return tuple(found)
 
 
 def redact_config_data(

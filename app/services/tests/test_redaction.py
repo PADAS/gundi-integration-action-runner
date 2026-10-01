@@ -242,3 +242,76 @@ def test_a_sensitive_named_container_keeps_its_structure_and_masks_every_leaf_be
         "auth_token": {"access": REDACTED, "refresh": REDACTED, "expires_in": REDACTED, "scopes": [REDACTED, REDACTED]},
         "site": "s",
     }
+
+
+# --- Second review on PR #120: typed mappings and union variants ---
+
+class _TypedMappingConfig(pydantic.BaseModel):
+    options: typing.Dict[str, str]
+    sites: typing.Dict[str, _NestedDetails]
+
+
+def test_typed_mapping_entries_keep_the_key_name_check():
+    # Supplying the model must never switch off the protection the data gets
+    # without one.
+    data = {"options": {"password": "map-secret", "api_key": "map-key", "site": "kept"}, "sites": {}}
+
+    out = redact_secrets(data, model=_TypedMappingConfig)
+
+    assert out["options"] == {"password": REDACTED, "api_key": REDACTED, "site": "kept"}
+    assert out == redact_secrets(data)
+
+
+def test_typed_mapping_with_a_sensitive_key_masks_every_leaf_of_that_entry():
+    data = {"options": {}, "sites": {"credentials": dict(_NESTED_RAW), "main": dict(_NESTED_RAW)}}
+
+    out = redact_secrets(data, model=_TypedMappingConfig)
+
+    assert out["sites"]["credentials"] == {"pin": REDACTED, "code": REDACTED, "label": REDACTED}
+    assert out["sites"]["main"] == _NESTED_MASKED
+
+
+class _FirstVariant(pydantic.BaseModel):
+    kind: typing.Literal["first"]
+    label: str
+
+
+class _SecondVariant(pydantic.BaseModel):
+    kind: typing.Literal["second"]
+    pin: pydantic.SecretStr
+    code: str = pydantic.Field(..., format="password")
+    label: str
+
+
+class _DiscriminatedUnionConfig(pydantic.BaseModel):
+    details: typing.Union[_FirstVariant, _SecondVariant] = pydantic.Field(..., discriminator="kind")
+
+
+class _PlainUnionConfig(pydantic.BaseModel):
+    details: typing.Union[_FirstVariant, _SecondVariant, None] = None
+    many: typing.List[typing.Union[_FirstVariant, _SecondVariant]] = []
+
+
+@pytest.mark.parametrize("config_model", [_DiscriminatedUnionConfig, _PlainUnionConfig])
+def test_secrets_declared_on_a_later_union_variant_are_masked(config_model):
+    data = {"details": {"kind": "second", "pin": "variant-pin", "code": "variant-password", "label": "kept"}}
+
+    out = redact_secrets(data, model=config_model)
+
+    assert out["details"] == {"kind": "second", "pin": REDACTED, "code": REDACTED, "label": "kept"}
+
+
+def test_secrets_declared_on_a_later_union_variant_are_masked_inside_a_list():
+    data = {"many": [{"kind": "first", "label": "a"}, {"kind": "second", "pin": "p", "code": "c", "label": "b"}]}
+
+    out = redact_secrets(data, model=_PlainUnionConfig)
+
+    assert out["many"] == [{"kind": "first", "label": "a"}, {"kind": "second", "pin": REDACTED, "code": REDACTED, "label": "b"}]
+
+
+def test_redact_config_data_applies_a_later_union_variants_declarations_to_a_configuration_row():
+    row = {"action": {"value": "pull"}, "data": {"details": {"kind": "second", "pin": "p", "code": "c", "label": "l"}}}
+
+    out = redact_config_data({"configurations": [row]}, config_models={"pull": _DiscriminatedUnionConfig})
+
+    assert out["configurations"][0]["data"]["details"] == {"kind": "second", "pin": REDACTED, "code": REDACTED, "label": "l"}
