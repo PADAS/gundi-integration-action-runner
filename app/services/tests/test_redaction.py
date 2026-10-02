@@ -381,3 +381,57 @@ def test_a_secret_type_inside_a_scalar_union_masks_the_raw_value():
     out = redact_secrets(data, model=_ScalarUnionConfig)
 
     assert out == {"code": REDACTED, "maybe": REDACTED, "codes": [REDACTED, REDACTED], "plain": "kept"}
+
+
+# --- Request and response bodies attached to failure events ---
+
+from app.services.redaction import redact_body, redact_url  # noqa: E402
+
+
+def test_redact_body_masks_secrets_in_a_form_encoded_token_post():
+    # The password-grant body httpx sends to an OAuth token endpoint, which
+    # _handle_error attaches as request_data when that POST fails.
+    body = b"grant_type=password&client_id=api-telemetry&username=me%40example.com&password=s3cr3t%21"
+
+    assert redact_body(body) == (
+        "grant_type=password&client_id=api-telemetry&username=me%40example.com&password=**********"
+    )
+
+
+def test_redact_body_masks_secrets_in_a_json_body_at_any_depth():
+    body = b'{"username": "u", "password": "p", "auth": {"api_key": "k", "site": "s"}}'
+
+    assert redact_body(body) == '{"username": "u", "password": "**********", "auth": {"api_key": "**********", "site": "s"}}'
+
+
+def test_redact_body_masks_a_token_echoed_in_a_json_response():
+    assert redact_body('{"access_token": "abc", "expires_in": 300}') == '{"access_token": "**********", "expires_in": 300}'
+
+
+def test_redact_body_leaves_a_body_without_secrets_as_decoded_text():
+    assert redact_body(b'{"start_time": "2024-01-10T05:30:00-00:00"}') == '{"start_time": "2024-01-10T05:30:00-00:00"}'
+    assert redact_body("<html><body>403 Forbidden</body></html>") == "<html><body>403 Forbidden</body></html>"
+    assert redact_body(b"") == ""
+    assert redact_body(None) == ""
+
+
+def test_redact_body_replaces_an_unparseable_body_that_names_a_secret():
+    # Neither JSON nor a form (a SOAP login, say): the keys cannot be walked,
+    # so the whole body goes rather than guess where the value ends.
+    assert redact_body(b"<login><user>u</user><password>p</password></login>") == REDACTED
+
+
+def test_redact_body_tolerates_bytes_that_are_not_utf8():
+    assert redact_body(b"\xff\xfe plain") == "�� plain"
+
+
+def test_redact_body_masks_secrets_in_a_dict_or_list_body():
+    assert redact_body({"password": "p", "a": 1}) == '{"password": "**********", "a": 1}'
+
+
+def test_redact_url_masks_secret_query_parameters_and_keeps_the_rest():
+    assert redact_url("https://api.example.com/v1/items?api_key=k123&page=2&token=t") == (
+        "https://api.example.com/v1/items?api_key=**********&page=2&token=**********"
+    )
+    assert redact_url("https://api.example.com/v1/items") == "https://api.example.com/v1/items"
+    assert redact_url("https://api.example.com/v1/items?page=2") == "https://api.example.com/v1/items?page=2"

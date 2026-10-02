@@ -25,8 +25,17 @@ Two signals mark a value as secret, and either one is enough:
 
 Unset secrets (``None`` or ``""``) stay as they are: "nothing configured" is
 what an operator debugging a failed auth needs to see, and discloses nothing.
+
+A failure event also carries the failed HTTP request and response
+(``request_url``, ``request_data``, ``server_response_body``). A connector's
+password-grant token POST that the provider rejects puts the password in
+``request_data``, a key in the URL query, and a token in the response:
+``redact_body`` and ``redact_url`` mask those by the same key rules.
 """
+import json
+import re
 from typing import Any, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Tuple, Type, Union
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import pydantic
 from pydantic.fields import ModelField, SHAPE_SINGLETON
@@ -219,3 +228,62 @@ def _redact_configuration_row(row: Any, config_models: Mapping[str, Type[pydanti
     if isinstance(row.get("data"), dict):
         redacted["data"] = redact_secrets(row["data"], model=config_models.get(action_value) if action_value else None)
     return redacted
+
+
+_FORM_BODY = re.compile(r"^[^=&\s]+=[^&\s]*(?:&[^=&\s]+=[^&\s]*)*$")
+
+
+def redact_body(body: Any) -> str:
+    """The text of an HTTP request or response body with secrets masked.
+
+    Bytes are decoded as UTF-8 (undecodable bytes replaced). A JSON object
+    or array, or a dict/list given directly, is walked by ``redact_secrets``
+    and re-serialized when something was masked. A form-encoded body (``grant_type=password&...``) is
+    masked per field and re-encoded. Anything else cannot be walked by key,
+    so if it so much as names a secret-looking key (a SOAP login with a
+    ``<password>`` element, say) the whole body is replaced; otherwise it is
+    returned as is. Over-redaction of a plain-text error that merely mentions
+    "token" is the accepted cost.
+    """
+    if body is None:
+        return ""
+    if isinstance(body, (dict, list)):
+        return json.dumps(redact_secrets(body))
+    if isinstance(body, (bytes, bytearray)):
+        text = bytes(body).decode("utf-8", errors="replace")
+    else:
+        text = str(body)
+    if not text.strip():
+        return text
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        parsed = None
+    if isinstance(parsed, (dict, list)):
+        redacted = redact_secrets(parsed)
+        # Re-serialized only when something was masked, so an innocent body
+        # is attached exactly as it went over the wire.
+        return text if redacted == parsed else json.dumps(redacted)
+    if _FORM_BODY.match(text):
+        redacted = _redact_query(text)
+        return text if redacted == urlencode(parse_qsl(text, keep_blank_values=True), safe="*") else redacted
+    if _is_sensitive_key(text):
+        return REDACTED
+    return text
+
+
+def redact_url(url: str) -> str:
+    """``url`` with secret-looking query parameters masked; untouched when it
+    has no query string."""
+    parts = urlsplit(str(url))
+    if not parts.query:
+        return str(url)
+    return urlunsplit(parts._replace(query=_redact_query(parts.query)))
+
+
+def _redact_query(query: str) -> str:
+    pairs = parse_qsl(query, keep_blank_values=True)
+    return urlencode(
+        [(key, REDACTED if _is_sensitive_key(key) and value else value) for key, value in pairs],
+        safe="*",
+    )
