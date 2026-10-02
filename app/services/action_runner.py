@@ -30,7 +30,7 @@ from .config_manager import IntegrationConfigurationManager
 from .state import IntegrationStateManager
 from .utils import find_config_for_action
 from .activity_logger import publish_event, log_action_activity, ephemeral_run
-from .redaction import redact_config_data
+from .redaction import redact_body, redact_config_data, redact_url
 from .retry_policies import is_retryable_failure
 from .errors import (
     ActionTimeoutError, classify_error, format_classified_error, source_status_code,
@@ -314,16 +314,20 @@ async def _handle_error(
     carrier = exc.__cause__ if isinstance(exc, GundiAPIError) else exc
     request = _request_of(carrier)
     response = getattr(carrier, "response", None)  # bool(response) on status errors returns False
+    # The request may be the connector's own login (a password-grant token
+    # POST carries the password in its body, a key may sit in the URL query)
+    # and the response may echo a token: masked by the same key rules as
+    # config_data above.
     if request is not None:
         error_details.update({
             "request_verb": str(request.method),
-            "request_url": str(request.url),
-            "request_data": str(getattr(request, "content", getattr(request, "body", None)) or "")
+            "request_url": redact_url(str(request.url)),
+            "request_data": redact_body(getattr(request, "content", getattr(request, "body", None)))
         })
     if response is not None:
         error_details.update({
             "server_response_status": getattr(response, "status_code", None),
-            "server_response_body": str(getattr(response, "text", getattr(response, "content", None)) or "")
+            "server_response_body": redact_body(getattr(response, "text", getattr(response, "content", None)))
         })
 
     await publish_event(

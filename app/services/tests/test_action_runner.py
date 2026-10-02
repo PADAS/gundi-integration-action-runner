@@ -676,7 +676,8 @@ async def test_execute_action_with_handler_error(
     assert "error_traceback" in error_details
     assert error_details.get("request_verb") == expected_error.request.method
     assert error_details.get("request_url") == str(expected_error.request.url)
-    assert error_details.get("request_data") == str(expected_error.request.content or expected_error.request.body)
+    # Bodies are attached as decoded text (secrets masked), not as str(bytes)
+    assert error_details.get("request_data") == expected_error.request.content.decode()
     assert error_details.get("server_response_status") == expected_error.response.status_code
     assert error_details.get("server_response_body") == str(expected_error.response.text)
 
@@ -693,7 +694,7 @@ async def test_execute_action_with_handler_error(
     assert event.payload.error_traceback
     assert event.payload.request_verb == expected_error.request.method
     assert event.payload.request_url == str(expected_error.request.url)
-    assert event.payload.request_data == str(expected_error.request.content or expected_error.request.body)
+    assert event.payload.request_data == expected_error.request.content.decode()
     assert event.payload.server_response_status == expected_error.response.status_code
     assert event.payload.server_response_body == str(expected_error.response.text)
 
@@ -2644,3 +2645,52 @@ async def test_invalid_config_failure_redacts_the_action_config_it_attaches(
     events = _published_events_of_type(mock_publish_event, IntegrationActionFailed)
     assert len(events) == 1
     assert events[0].payload.config_data == {"lookback_days": "two", "api_key": REDACTED}
+
+
+@pytest.mark.asyncio
+async def test_handler_failure_redacts_the_request_and_response_it_attaches(
+        mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event, mock_action_handlers, integration_v2,
+):
+    # A connector's own password-grant token POST that the provider rejects:
+    # the httpx error carries the request (body holds the password, URL may
+    # hold a key) and the response (may echo a token). All three are
+    # attached to the IntegrationActionFailed event and the JSON response,
+    # and must be masked like config_data is.
+    from app.services.redaction import REDACTED
+    request = httpx.Request(
+        "POST", "https://account.example.com/auth/token?api_key=k-999",
+        data={"grant_type": "password", "client_id": "api-telemetry", "username": "me@example.com", "password": "hunter2"},
+    )
+    response = httpx.Response(
+        status_code=403, request=request,
+        content=b'{"error": "forbidden", "access_token": "tok-123"}', headers={"Content-Type": "application/json"},
+    )
+    handler, _, _ = mock_action_handlers["pull_observations"]
+    handler.side_effect = httpx.HTTPStatusError("403 Forbidden", request=request, response=response)
+    mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+
+    http_response = api_client.post(
+        "/v1/actions/execute/",
+        json={"integration_id": str(integration_v2.id), "action_id": "pull_observations"},
+    )
+
+    assert http_response.status_code == 500
+    for secret in ("hunter2", "k-999", "tok-123"):
+        assert secret not in http_response.text
+    details = http_response.json()["detail"]
+    assert details["request_data"] == (
+        f"grant_type=password&client_id=api-telemetry&username=me%40example.com&password={REDACTED}"
+    )
+    assert details["request_url"] == f"https://account.example.com/auth/token?api_key={REDACTED}"
+    assert details["server_response_body"] == f'{{"error": "forbidden", "access_token": "{REDACTED}"}}'
+    events = _published_events_of_type(mock_publish_event, IntegrationActionFailed)
+    assert len(events) == 1
+    for secret in ("hunter2", "k-999", "tok-123"):
+        assert secret not in events[0].json()
+    assert events[0].payload.request_data == details["request_data"]
+    assert events[0].payload.request_url == details["request_url"]
+    assert events[0].payload.server_response_body == details["server_response_body"]
