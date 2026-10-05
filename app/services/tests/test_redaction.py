@@ -381,3 +381,190 @@ def test_a_secret_type_inside_a_scalar_union_masks_the_raw_value():
     out = redact_secrets(data, model=_ScalarUnionConfig)
 
     assert out == {"code": REDACTED, "maybe": REDACTED, "codes": [REDACTED, REDACTED], "plain": "kept"}
+
+
+# --- Request and response bodies attached to failure events ---
+
+from app.services.redaction import redact_body, redact_text, redact_url  # noqa: E402
+
+
+def test_redact_body_masks_secrets_in_a_form_encoded_token_post():
+    # The password-grant body httpx sends to an OAuth token endpoint, which
+    # _handle_error attaches as request_data when that POST fails.
+    body = b"grant_type=password&client_id=api-telemetry&username=me%40example.com&password=s3cr3t%21"
+
+    assert redact_body(body) == (
+        "grant_type=password&client_id=api-telemetry&username=me%40example.com&password=**********"
+    )
+
+
+def test_redact_body_masks_secrets_in_a_json_body_at_any_depth():
+    body = b'{"username": "u", "password": "p", "auth": {"api_key": "k", "site": "s"}}'
+
+    assert redact_body(body) == '{"username": "u", "password": "**********", "auth": {"api_key": "**********", "site": "s"}}'
+
+
+def test_redact_body_masks_a_token_echoed_in_a_json_response():
+    assert redact_body('{"access_token": "abc", "expires_in": 300}') == '{"access_token": "**********", "expires_in": 300}'
+
+
+def test_redact_body_leaves_a_body_without_secrets_as_decoded_text():
+    assert redact_body(b'{"start_time": "2024-01-10T05:30:00-00:00"}') == '{"start_time": "2024-01-10T05:30:00-00:00"}'
+    assert redact_body("<html><body>403 Forbidden</body></html>") == "<html><body>403 Forbidden</body></html>"
+    assert redact_body(b"") == ""
+    assert redact_body(None) == ""
+
+
+def test_redact_body_replaces_an_unparseable_body_that_names_a_secret():
+    # Neither JSON nor a form (a SOAP login, say): the keys cannot be walked,
+    # so the whole body goes rather than guess where the value ends.
+    assert redact_body(b"<login><user>u</user><password>p</password></login>") == REDACTED
+
+
+def test_redact_body_does_not_take_xml_holding_an_equals_sign_for_a_form():
+    # Without whitespace and with one "=", this once matched the form shape,
+    # and per-field masking then folded the password into a "field name"
+    # that was kept in clear.
+    body = b"<login><password>hunter2</password><note>a=b</note></login>"
+
+    assert redact_body(body) == REDACTED
+    assert "hunter2" not in redact_body(body)
+
+
+def test_redact_body_reserializes_a_json_object_that_repeats_a_key():
+    # json.loads keeps the last value, so the walk sees an empty password
+    # and masks nothing; the original text still holds the first one.
+    assert redact_body(b'{"password":"hunter2","password":""}') == '{"password": ""}'
+    assert redact_body(b'{"auth":{"token":"tok-1","token":""},"a":1}') == '{"auth": {"token": ""}, "a": 1}'
+    assert redact_body(b'[{"secret":"s","secret":""}]') == '[{"secret": ""}]'
+
+
+def test_redact_body_sees_a_secret_key_through_percent_encoding_and_json_escapes():
+    # Neither a form (a trailing "&", a "*" in a field name) nor JSON, so
+    # the fallback decides, and it must look past the encoding.
+    assert redact_body(b"api%5Fkey=k-999&") == REDACTED
+    assert redact_body(b"%70assword*=s3cr3t") == REDACTED
+    assert redact_body('"pass\\u0077ord=hunter2"') == REDACTED
+
+
+def test_redact_body_replaces_a_json_shaped_body_that_does_not_parse():
+    # Truncated JSON cannot be walked and its keys may hide behind escapes.
+    assert redact_body(b'{"pass\\u0077ord":"hunter2"') == REDACTED
+    assert redact_body(b'[{"token": "t-1"') == REDACTED
+    assert redact_body(b'  {"start_time": "2024-01-10') == REDACTED
+    assert redact_body(b"<html>{not json}</html>") == "<html>{not json}</html>"
+
+
+def test_redact_body_tolerates_bytes_that_are_not_utf8():
+    assert redact_body(b"\xff\xfe plain") == "�� plain"
+
+
+def test_redact_body_masks_secrets_in_a_dict_or_list_body():
+    assert redact_body({"password": "p", "a": 1}) == '{"password": "**********", "a": 1}'
+
+
+def test_redact_url_masks_secret_query_parameters_and_keeps_the_rest():
+    assert redact_url("https://api.example.com/v1/items?api_key=k123&page=2&token=t") == (
+        "https://api.example.com/v1/items?api_key=**********&page=2&token=**********"
+    )
+    assert redact_url("https://api.example.com/v1/items") == "https://api.example.com/v1/items"
+    assert redact_url("https://api.example.com/v1/items?page=2") == "https://api.example.com/v1/items?page=2"
+
+
+def test_redact_text_masks_secret_query_parameters_quoted_in_free_text():
+    # What httpx's raise_for_status() puts in the exception message, and
+    # what the traceback repeats.
+    text = (
+        "Client error '403 Forbidden' for url 'https://api.example.com/v1/items?api_key=k-999&page=2'\n"
+        "For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403"
+    )
+
+    assert redact_text(text) == (
+        f"Client error '403 Forbidden' for url 'https://api.example.com/v1/items?api_key={REDACTED}&page=2'\n"
+        "For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403"
+    )
+
+
+def test_redact_text_masks_every_secret_pair_and_keeps_the_rest():
+    assert redact_text("token=t1 then password=p%21 but page=2 and user=u") == (
+        f"token={REDACTED} then password={REDACTED} but page=2 and user=u"
+    )
+    assert redact_text("https://x.test/a?token=t\"https://y.test/b?secret=s") == (
+        f"https://x.test/a?token={REDACTED}\"https://y.test/b?secret={REDACTED}"
+    )
+
+
+def test_redact_text_leaves_text_without_secret_pairs_as_is():
+    assert redact_text("ConnectError: [Errno 61] Connection refused") == "ConnectError: [Errno 61] Connection refused"
+    assert redact_text("https://api.example.com/v1/items?page=2") == "https://api.example.com/v1/items?page=2"
+    assert redact_text("    response = client.get(url, params=params)") == "    response = client.get(url, params=params)"
+    assert redact_text("") == ""
+    assert redact_text(None) == ""
+
+
+def test_redact_url_masks_a_url_it_cannot_parse_instead_of_raising():
+    assert redact_url("https://[broken]?token=abc") == REDACTED
+
+
+def test_redact_text_masks_a_malformed_url_whole_and_never_raises():
+    # Redaction runs inside the runner's error handling: raising there
+    # would lose the failure event and the structured response.
+    assert redact_text("Client error for url 'https://[broken]?token=abc' (HTTP 403)") == (
+        f"Client error for url '{REDACTED}' (HTTP 403)"
+    )
+    assert redact_text("https://[broken]?token=abc then page=2") == f"{REDACTED} then page=2"
+
+
+def test_redact_text_masks_the_whole_value_of_a_sensitive_key():
+    assert redact_text('password="hunter2"') == f"password={REDACTED}"
+    assert redact_text('password="hunter two" page=2') == f"password={REDACTED} page=2"
+    assert redact_text("password=https://example.com/hunter2 next") == f"password={REDACTED} next"
+    assert redact_text('password="hunter2') == f"password={REDACTED}"
+    assert redact_text("password=<hunter2> next") == f"password={REDACTED} next"
+    assert redact_text("password=a&b c") == f"password={REDACTED} c"
+
+
+def test_redact_text_scans_an_innocent_value_for_what_it_holds():
+    assert redact_text('url="https://x.test/a?token=t&page=2" next') == f'url="https://x.test/a?token={REDACTED}&page=2" next'
+    assert redact_text('data="see password=hunter2 here" page=2') == f'data="see password={REDACTED} here" page=2'
+    assert redact_text("note=plain page=2") == "note=plain page=2"
+    # Nested pairs are followed a bounded number of levels, then masked
+    # whole rather than recursed into without end.
+    assert redact_text("a=b=c=password=hunter2") == f"a=b=c=password={REDACTED}"
+    deep = "=".join(f"k{i}" for i in range(2000)) + "=v"
+    assert redact_text(deep).endswith(f"={REDACTED}")
+    assert "=v" not in redact_text(deep)
+
+
+def test_redact_text_masks_the_url_as_redact_url_does_from_a_real_status_error():
+    # Encoded parameter names and apostrophes in values are legal in a URL
+    # and httpx keeps them; the free-text pass must parse the query like
+    # redact_url does, or the structured request_url and the error text
+    # disagree on what is secret.
+    import httpx
+    url = "https://api.example.com/v1/items?api%5Fkey=k-999&%74oken=alpha'beta&page=2"
+    request = httpx.Request("GET", url)
+    try:
+        httpx.Response(403, request=request).raise_for_status()
+    except httpx.HTTPStatusError as e:
+        error = e
+    assert "k-999" in str(error) and "alpha'beta" in str(error)
+
+    text = redact_text(str(error))
+
+    for secret in ("k-999", "alpha", "beta"):
+        assert secret not in text
+    assert text.startswith(
+        f"Client error '403 Forbidden' for url 'https://api.example.com/v1/items?api_key={REDACTED}&token={REDACTED}&page=2'\n"
+    )
+    assert redact_text(f"for url '{url}'") == f"for url '{redact_url(url)}'"
+
+
+def test_redact_text_masks_encoded_names_and_apostrophes_outside_a_url_too():
+    assert redact_text("%74oken=abc api%5Fkey=k page=2") == f"%74oken={REDACTED} api%5Fkey={REDACTED} page=2"
+    assert redact_text("token='alpha'beta' then page=2") == f"token={REDACTED} then page=2"
+    assert redact_text('for url "https://x.test/a?token=t&page=2" (HTTP 401)') == (
+        f'for url "https://x.test/a?token={REDACTED}&page=2" (HTTP 401)'
+    )
+    # A URL as the value of an innocent pair is still parsed as a URL.
+    assert redact_text("url=https://x.test/a?token=t&page=2 next") == f"url=https://x.test/a?token={REDACTED}&page=2 next"
