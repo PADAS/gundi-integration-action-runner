@@ -421,6 +421,24 @@ def test_redact_body_replaces_an_unparseable_body_that_names_a_secret():
     assert redact_body(b"<login><user>u</user><password>p</password></login>") == REDACTED
 
 
+def test_redact_body_does_not_take_xml_holding_an_equals_sign_for_a_form():
+    # Without whitespace and with one "=", this once matched the form shape,
+    # and per-field masking then folded the password into a "field name"
+    # that was kept in clear.
+    body = b"<login><password>hunter2</password><note>a=b</note></login>"
+
+    assert redact_body(body) == REDACTED
+    assert "hunter2" not in redact_body(body)
+
+
+def test_redact_body_reserializes_a_json_object_that_repeats_a_key():
+    # json.loads keeps the last value, so the walk sees an empty password
+    # and masks nothing; the original text still holds the first one.
+    assert redact_body(b'{"password":"hunter2","password":""}') == '{"password": ""}'
+    assert redact_body(b'{"auth":{"token":"tok-1","token":""},"a":1}') == '{"auth": {"token": ""}, "a": 1}'
+    assert redact_body(b'[{"secret":"s","secret":""}]') == '[{"secret": ""}]'
+
+
 def test_redact_body_tolerates_bytes_that_are_not_utf8():
     assert redact_body(b"\xff\xfe plain") == "�� plain"
 
@@ -466,3 +484,37 @@ def test_redact_text_leaves_text_without_secret_pairs_as_is():
     assert redact_text("    response = client.get(url, params=params)") == "    response = client.get(url, params=params)"
     assert redact_text("") == ""
     assert redact_text(None) == ""
+
+
+def test_redact_text_masks_the_url_as_redact_url_does_from_a_real_status_error():
+    # Encoded parameter names and apostrophes in values are legal in a URL
+    # and httpx keeps them; the free-text pass must parse the query like
+    # redact_url does, or the structured request_url and the error text
+    # disagree on what is secret.
+    import httpx
+    url = "https://api.example.com/v1/items?api%5Fkey=k-999&%74oken=alpha'beta&page=2"
+    request = httpx.Request("GET", url)
+    try:
+        httpx.Response(403, request=request).raise_for_status()
+    except httpx.HTTPStatusError as e:
+        error = e
+    assert "k-999" in str(error) and "alpha'beta" in str(error)
+
+    text = redact_text(str(error))
+
+    for secret in ("k-999", "alpha", "beta"):
+        assert secret not in text
+    assert text.startswith(
+        f"Client error '403 Forbidden' for url 'https://api.example.com/v1/items?api_key={REDACTED}&token={REDACTED}&page=2'\n"
+    )
+    assert redact_text(f"for url '{url}'") == f"for url '{redact_url(url)}'"
+
+
+def test_redact_text_masks_encoded_names_and_apostrophes_outside_a_url_too():
+    assert redact_text("%74oken=abc api%5Fkey=k page=2") == f"%74oken={REDACTED} api%5Fkey={REDACTED} page=2"
+    assert redact_text("token='alpha'beta' then page=2") == f"token={REDACTED} then page=2"
+    assert redact_text('for url "https://x.test/a?token=t&page=2" (HTTP 401)') == (
+        f'for url "https://x.test/a?token={REDACTED}&page=2" (HTTP 401)'
+    )
+    # A URL as the value of an innocent pair is still parsed as a URL.
+    assert redact_text("url=https://x.test/a?token=t&page=2 next") == f"url=https://x.test/a?token={REDACTED}&page=2 next"

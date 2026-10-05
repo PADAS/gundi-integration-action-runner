@@ -286,6 +286,101 @@ async def test_webhook_activity_logger_decorator_publishes_classified_error_text
     )
 
 
+def _raise_status_error_naming_a_secret_url():
+    import httpx
+    request = httpx.Request("GET", "https://api.example.com/v1/items?api_key=k-999&page=2")
+    httpx.Response(401, request=request).raise_for_status()
+
+
+def _failed_events(mock_publish_event, event_type):
+    events = [
+        call.kwargs.get("event") or call.args[0]
+        for call in mock_publish_event.mock_calls
+        if call.kwargs.get("event") is not None or call.args
+    ]
+    return [e for e in events if isinstance(e, event_type)]
+
+
+@pytest.mark.asyncio
+async def test_activity_logger_decorator_redacts_the_url_quoted_in_the_error_text(
+        mocker, mock_publish_event, integration_v2, pull_observations_config
+):
+    # The decorator publishes its own IntegrationActionFailed before the
+    # runner's: a raise_for_status() message names the full request URL,
+    # query string included, and must be masked here as well.
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    import httpx
+
+    @activity_logger()
+    async def action_pull_observations(integration, action_config):
+        _raise_status_error_naming_a_secret_url()
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await action_pull_observations(integration=integration_v2, action_config=pull_observations_config)
+
+    failed_events = _failed_events(mock_publish_event, IntegrationActionFailed)
+    assert len(failed_events) == 1
+    assert "k-999" not in failed_events[0].json()
+    assert failed_events[0].payload.error == (
+        f"Authentication failed — Client error '401 Unauthorized' for url "
+        f"'https://api.example.com/v1/items?api_key={REDACTED}&page=2' (HTTP 401)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_activity_logger_decorator_redacts_the_url_in_an_unclassified_error_text(
+        mocker, mock_publish_event, integration_v2, pull_observations_config
+):
+    # No classification (a 404 is neither auth, rate limit nor 5xx): the
+    # decorator falls back to str(e), which is the whole httpx message.
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    import httpx
+
+    @activity_logger()
+    async def action_pull_observations(integration, action_config):
+        request = httpx.Request("GET", "https://api.example.com/v1/items?token=t-1")
+        httpx.Response(404, request=request).raise_for_status()
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await action_pull_observations(integration=integration_v2, action_config=pull_observations_config)
+
+    failed_events = _failed_events(mock_publish_event, IntegrationActionFailed)
+    assert len(failed_events) == 1
+    assert "t-1" not in failed_events[0].json()
+    assert failed_events[0].payload.error.startswith(
+        f"Client error '404 Not Found' for url 'https://api.example.com/v1/items?token={REDACTED}'"
+    )
+
+
+@pytest.mark.asyncio
+async def test_webhook_activity_logger_decorator_redacts_the_url_quoted_in_the_error_text(
+        mocker, mock_publish_event, integration_v2_with_webhook_generic,
+        mock_generic_webhook_config, mock_webhook_request_payload_for_dynamic_schema
+):
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    import httpx
+
+    @webhook_activity_logger()
+    async def webhook_handler(payload: GenericJsonPayload, integration=None,
+                              webhook_config: GenericJsonTransformConfig = None):
+        _raise_status_error_naming_a_secret_url()
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await webhook_handler(
+            payload=GenericJsonPayload(data=mock_webhook_request_payload_for_dynamic_schema),
+            integration=integration_v2_with_webhook_generic,
+            webhook_config=GenericJsonTransformConfig(**mock_generic_webhook_config)
+        )
+
+    failed_events = _failed_events(mock_publish_event, IntegrationWebhookFailed)
+    assert len(failed_events) == 1
+    assert "k-999" not in failed_events[0].json()
+    assert failed_events[0].payload.error == (
+        f"Authentication failed — Client error '401 Unauthorized' for url "
+        f"'https://api.example.com/v1/items?api_key={REDACTED}&page=2' (HTTP 401)"
+    )
+
+
 @pytest.mark.asyncio
 async def test_log_activity_default_level_is_a_valid_log_level(mocker, integration_v2, mock_publish_event):
     """gundi-core's LogLevel is an IntEnum, so the string default "INFO" the

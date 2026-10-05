@@ -29,7 +29,7 @@ from gundi_core.events import (
 )
 from app import settings
 from app.services.errors import format_error_message
-from app.services.redaction import redact_secrets
+from app.services.redaction import redact_secrets, redact_text
 
 
 logger = logging.getLogger(__name__)
@@ -268,7 +268,10 @@ def activity_logger(on_start=True, on_completion=True, on_error=True):
                                 integration_id=integration_id,
                                 action_id=action_id,
                                 config_data=config_data,
-                                error=format_error_message(e) or str(e)
+                                # May quote the failed request's URL, query
+                                # string included (httpx's raise_for_status()
+                                # message does): masked like the runner's own.
+                                error=redact_text(format_error_message(e) or str(e)),
                             )
                         ),
                         topic_name=settings.INTEGRATION_EVENTS_TOPIC,
@@ -322,7 +325,10 @@ def webhook_activity_logger(on_start=True, on_completion=True, on_error=True):
                                 integration_id=integration_id,
                                 webhook_id=webhook_id,
                                 config_data=config_data,
-                                error=format_error_message(e) or str(e)
+                                # May quote the failed request's URL, query
+                                # string included (httpx's raise_for_status()
+                                # message does): masked like the runner's own.
+                                error=redact_text(format_error_message(e) or str(e)),
                             )
                         ),
                         topic_name=settings.INTEGRATION_EVENTS_TOPIC,
