@@ -2649,13 +2649,16 @@ async def test_invalid_config_failure_redacts_the_action_config_it_attaches(
 
 @pytest.mark.asyncio
 async def test_handler_failure_redacts_the_request_and_response_it_attaches(
-        mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event, mock_action_handlers, integration_v2,
+        mocker, caplog, mock_gundi_client_v2, mock_config_manager, mock_publish_event, mock_action_handlers, integration_v2,
 ):
     # A connector's own password-grant token POST that the provider rejects:
     # the httpx error carries the request (body holds the password, URL may
     # hold a key) and the response (may echo a token). All three are
     # attached to the IntegrationActionFailed event and the JSON response,
-    # and must be masked like config_data is.
+    # and must be masked like config_data is. The error is the one
+    # raise_for_status() builds, whose message names the full URL, query
+    # string included: that text reaches the event's error and traceback
+    # and the application log, and must be masked there too.
     from app.services.redaction import REDACTED
     request = httpx.Request(
         "POST", "https://account.example.com/auth/token?api_key=k-999",
@@ -2666,7 +2669,12 @@ async def test_handler_failure_redacts_the_request_and_response_it_attaches(
         content=b'{"error": "forbidden", "access_token": "tok-123"}', headers={"Content-Type": "application/json"},
     )
     handler, _, _ = mock_action_handlers["pull_observations"]
-    handler.side_effect = httpx.HTTPStatusError("403 Forbidden", request=request, response=response)
+
+    def raise_for_status(*args, **kwargs):
+        response.raise_for_status()
+
+    handler.side_effect = raise_for_status
+    caplog.set_level("ERROR", logger="app.services.action_runner")
     mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
     mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
     mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
@@ -2681,7 +2689,13 @@ async def test_handler_failure_redacts_the_request_and_response_it_attaches(
     assert http_response.status_code == 500
     for secret in ("hunter2", "k-999", "tok-123"):
         assert secret not in http_response.text
+        assert secret not in caplog.text
     details = http_response.json()["detail"]
+    assert details["error"] == (
+        f"Authentication failed — Client error '403 Forbidden' for url 'https://account.example.com/auth/token?api_key={REDACTED}' (HTTP 403)"
+    )
+    assert "HTTPStatusError" in details["error_traceback"]
+    assert f"auth/token?api_key={REDACTED}'" in details["error_traceback"]
     assert details["request_data"] == (
         f"grant_type=password&client_id=api-telemetry&username=me%40example.com&password={REDACTED}"
     )
@@ -2691,6 +2705,8 @@ async def test_handler_failure_redacts_the_request_and_response_it_attaches(
     assert len(events) == 1
     for secret in ("hunter2", "k-999", "tok-123"):
         assert secret not in events[0].json()
+    assert events[0].payload.error == details["error"]
+    assert events[0].payload.error_traceback == details["error_traceback"]
     assert events[0].payload.request_data == details["request_data"]
     assert events[0].payload.request_url == details["request_url"]
     assert events[0].payload.server_response_body == details["server_response_body"]

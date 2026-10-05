@@ -30,7 +30,10 @@ A failure event also carries the failed HTTP request and response
 (``request_url``, ``request_data``, ``server_response_body``). A connector's
 password-grant token POST that the provider rejects puts the password in
 ``request_data``, a key in the URL query, and a token in the response:
-``redact_body`` and ``redact_url`` mask those by the same key rules.
+``redact_body`` and ``redact_url`` mask those by the same key rules. The
+error text and traceback may quote that URL too (httpx's
+``raise_for_status()`` message names it, query string included):
+``redact_text`` masks ``key=value`` pairs wherever they appear in free text.
 """
 import json
 import re
@@ -286,4 +289,27 @@ def _redact_query(query: str) -> str:
     return urlencode(
         [(key, REDACTED if _is_sensitive_key(key) and value else value) for key, value in pairs],
         safe="*",
+    )
+
+
+# A key=value pair as it appears in a URL query string quoted inside free
+# text (an exception message, a traceback line). The value stops at the next
+# separator or quote, so `for url 'https://x/a?api_key=k'` keeps its quote.
+_KEY_VALUE = re.compile(r"([A-Za-z0-9_.\-\[\]]+)=([^&\s'\"<>]+)")
+
+
+def redact_text(text: Optional[str]) -> str:
+    """``text`` with the value of every secret-looking ``key=value`` pair
+    masked, by the same key rules as the structured fields.
+
+    For free text that cannot be walked by key: str(exc) and the traceback
+    attached to a failure event. An httpx ``HTTPStatusError`` from
+    ``raise_for_status()`` names the full request URL, query string
+    included, and the traceback repeats it (and any chained cause's).
+    """
+    if not text:
+        return text or ""
+    return _KEY_VALUE.sub(
+        lambda m: f"{m.group(1)}={REDACTED}" if _is_sensitive_key(m.group(1)) else m.group(0),
+        text,
     )

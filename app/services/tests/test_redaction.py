@@ -385,7 +385,7 @@ def test_a_secret_type_inside_a_scalar_union_masks_the_raw_value():
 
 # --- Request and response bodies attached to failure events ---
 
-from app.services.redaction import redact_body, redact_url  # noqa: E402
+from app.services.redaction import redact_body, redact_text, redact_url  # noqa: E402
 
 
 def test_redact_body_masks_secrets_in_a_form_encoded_token_post():
@@ -435,3 +435,34 @@ def test_redact_url_masks_secret_query_parameters_and_keeps_the_rest():
     )
     assert redact_url("https://api.example.com/v1/items") == "https://api.example.com/v1/items"
     assert redact_url("https://api.example.com/v1/items?page=2") == "https://api.example.com/v1/items?page=2"
+
+
+def test_redact_text_masks_secret_query_parameters_quoted_in_free_text():
+    # What httpx's raise_for_status() puts in the exception message, and
+    # what the traceback repeats.
+    text = (
+        "Client error '403 Forbidden' for url 'https://api.example.com/v1/items?api_key=k-999&page=2'\n"
+        "For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403"
+    )
+
+    assert redact_text(text) == (
+        f"Client error '403 Forbidden' for url 'https://api.example.com/v1/items?api_key={REDACTED}&page=2'\n"
+        "For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403"
+    )
+
+
+def test_redact_text_masks_every_secret_pair_and_keeps_the_rest():
+    assert redact_text("token=t1 then password=p%21 but page=2 and user=u") == (
+        f"token={REDACTED} then password={REDACTED} but page=2 and user=u"
+    )
+    assert redact_text("https://x.test/a?token=t\"https://y.test/b?secret=s") == (
+        f"https://x.test/a?token={REDACTED}\"https://y.test/b?secret={REDACTED}"
+    )
+
+
+def test_redact_text_leaves_text_without_secret_pairs_as_is():
+    assert redact_text("ConnectError: [Errno 61] Connection refused") == "ConnectError: [Errno 61] Connection refused"
+    assert redact_text("https://api.example.com/v1/items?page=2") == "https://api.example.com/v1/items?page=2"
+    assert redact_text("    response = client.get(url, params=params)") == "    response = client.get(url, params=params)"
+    assert redact_text("") == ""
+    assert redact_text(None) == ""

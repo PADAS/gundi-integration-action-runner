@@ -30,7 +30,7 @@ from .config_manager import IntegrationConfigurationManager
 from .state import IntegrationStateManager
 from .utils import find_config_for_action
 from .activity_logger import publish_event, log_action_activity, ephemeral_run
-from .redaction import redact_body, redact_config_data, redact_url
+from .redaction import redact_body, redact_config_data, redact_text, redact_url
 from .retry_policies import is_retryable_failure
 from .errors import (
     ActionTimeoutError, classify_error, format_classified_error, source_status_code,
@@ -264,15 +264,21 @@ async def _handle_error(
         logger.error(f"Error in ephemeral action '{action_id}': {logged}\n{frames}".rstrip())
         return _request_error_response(action_id, safe_text, status_code)
 
-    log_message = f"Error in action '{action_id}' for integration '{integration_id}': {type(exc).__name__}: {exc}"
-    logger.exception(log_message)
+    # str(exc) and the traceback may quote the failed request's URL, query
+    # string included: httpx's raise_for_status() message names it, and a
+    # chained cause repeats it. Masked like request_url below, before the
+    # text reaches the application log, the event or the response.
+    error_text = redact_text(f"{type(exc).__name__}: {exc}")
+    error_traceback = redact_text(traceback.format_exc())
+    log_message = f"Error in action '{action_id}' for integration '{integration_id}': {error_text}"
+    logger.error(f"{log_message}\n{error_traceback}")
 
     # Classified errors (auth, connectivity, rate limit, bad response) get
     # short human-first text — the portal prepends "Error running action
     # '<id>': " and truncates, so the useful part must come first. Anything
     # unclassified keeps the verbose format. Full details always remain in
     # error_traceback and the request/response fields below.
-    message = format_classified_error(classified) if classified else log_message
+    message = redact_text(format_classified_error(classified)) if classified else log_message
 
     error_details = {
         "integration_id": integration_id,
@@ -293,7 +299,7 @@ async def _handle_error(
         # reads it). From the exception itself, so it holds on the paths above
         # that leave error_type unset on purpose.
         "retryable": is_retryable_failure(exc),
-        "error_traceback": traceback.format_exc()
+        "error_traceback": error_traceback,
     }
 
     # Extract additional request/response details if available.
