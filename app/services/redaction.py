@@ -250,10 +250,13 @@ def redact_body(body: Any) -> str:
     or array, or a dict/list given directly, is walked by ``redact_secrets``
     and re-serialized when something was masked. A form-encoded body
     (``grant_type=password&...``) is masked per field and re-encoded.
-    Anything else cannot be walked by key, so if it so much as names a
-    secret-looking key (a SOAP login with a ``<password>`` element, say) the
-    whole body is replaced; otherwise it is returned as is. Over-redaction of
-    a plain-text error that merely mentions "token" is the accepted cost.
+    A body shaped like a JSON object or array that does not parse (truncated,
+    say) cannot be walked either and its keys may hide behind escapes, so it
+    is replaced whole. Anything else cannot be walked by key, so if it so
+    much as names a secret-looking key (a SOAP login with a ``<password>``
+    element, say), percent-encoded or JSON-escaped included, the whole body
+    is replaced; otherwise it is returned as is. Over-redaction of a
+    plain-text error that merely mentions "token" is the accepted cost.
     """
     if body is None:
         return ""
@@ -276,9 +279,20 @@ def redact_body(body: Any) -> str:
         return text if redacted == parsed and not has_duplicate_keys else json.dumps(redacted)
     if _FORM_BODY.match(text):
         return _redact_query(text)
-    if _is_sensitive_key(text):
+    if text.lstrip()[:1] in ("{", "[") or _names_a_secret(text):
         return REDACTED
     return text
+
+
+_JSON_UNICODE_ESCAPE = re.compile(r"\\u([0-9a-fA-F]{4})")
+
+
+def _names_a_secret(text: str) -> bool:
+    """Whether free text contains a secret-looking key under any of the
+    spellings a body may use: as is, percent-encoded (``%70assword``) or
+    JSON-escaped (``pass\\u0077ord``)."""
+    unescaped = _JSON_UNICODE_ESCAPE.sub(lambda m: chr(int(m.group(1), 16)), text)
+    return any(_is_sensitive_key(t) for t in (text, unquote(text), unescaped, unquote(unescaped)))
 
 
 def _parse_json(text: str) -> Tuple[Any, bool]:
@@ -303,9 +317,15 @@ def _parse_json(text: str) -> Tuple[Any, bool]:
 
 def redact_url(url: str) -> str:
     """``url`` with secret-looking query parameters masked; returned as given
-    when it has no query string or nothing in it is secret."""
+    when it has no query string or nothing in it is secret. A URL that
+    cannot be parsed (``https://[broken]?token=abc`` raises in ``urlsplit``)
+    is replaced whole: redaction runs inside the runner's error handling,
+    where raising would lose the failure event and the response."""
     url = str(url)
-    parts = urlsplit(url)
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return REDACTED
     if not parts.query:
         return url
     query = _redact_query(parts.query)
@@ -329,13 +349,16 @@ def _redact_query(query: str) -> str:
 #     When the URL was quoted, one matching closing quote is taken back off
 #     the end; whatever else trails a sensitive value is masked along with
 #     it rather than guessed at.
-#   - a bare key=value pair, with the key decoded before the check
-#     (%74oken is token) and the value running to the next separator,
-#     apostrophes included. The value stops short of a URL, so "url=https://
-#     x?token=t" is not swallowed as one innocent pair.
+#   - a bare key=value pair. The value runs to the next whitespace, a
+#     quoted run ("hunter two", whitespace and all) counting as one piece,
+#     so a URL or a quoted string is the whole value. A sensitive key (its
+#     name decoded first: %74oken is token) has the whole value masked. An
+#     innocent key's value is scanned again on its own, so "url=https://
+#     x?token=t" still has its query masked and a pair quoted inside a
+#     value is still found.
 _URL_OR_PAIR = re.compile(
     r"""(?P<quote>['"])?(?P<url>https?://[^\s<>"]+)"""
-    r"""|(?P<key>[A-Za-z0-9_.\-\[\]%]+)=(?P<value>(?:(?!https?://)[^&\s<>"])+)"""
+    r"""|(?P<key>[A-Za-z0-9_.\-\[\]%]+)=(?P<value>(?:"[^"]*"|'[^']*'|[^\s])+)"""
 )
 
 
@@ -351,9 +374,16 @@ def redact_text(text: Optional[str]) -> str:
     URL's query is parsed exactly as ``redact_url`` parses the structured
     ``request_url``, so the two can never disagree on what is secret.
     """
-    if not text:
-        return text or ""
+    return _redact_text(text, depth=0) if text else (text or "")
 
+
+# How deep an innocent value is rescanned ("x=y=z=..."): past this the value
+# is masked whole rather than let a pathological string recurse without end,
+# since this runs inside the runner's error handling.
+_RESCAN_DEPTH = 8
+
+
+def _redact_text(text: str, depth: int) -> str:
     def mask(match):
         url = match.group("url")
         if url is not None:
@@ -361,9 +391,9 @@ def redact_text(text: Optional[str]) -> str:
             closing = quote if quote and url.endswith(quote) else ""
             url = url[:len(url) - len(closing)]
             return f"{quote}{redact_url(url)}{closing}"
-        key = match.group("key")
-        if _is_sensitive_key(unquote(key)):
+        key, value = match.group("key"), match.group("value")
+        if _is_sensitive_key(unquote(key)) or depth >= _RESCAN_DEPTH:
             return f"{key}={REDACTED}"
-        return match.group(0)
+        return f"{key}={_redact_text(value, depth + 1)}"
 
     return _URL_OR_PAIR.sub(mask, text)
