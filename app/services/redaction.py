@@ -316,20 +316,28 @@ def _parse_json(text: str) -> Tuple[Any, bool]:
 
 
 def redact_url(url: str) -> str:
-    """``url`` with secret-looking query parameters masked; returned as given
-    when it has no query string or nothing in it is secret. A URL that
-    cannot be parsed (``https://[broken]?token=abc`` raises in ``urlsplit``)
-    is replaced whole: redaction runs inside the runner's error handling,
-    where raising would lose the failure event and the response."""
+    """``url`` with its userinfo and secret-looking query parameters masked;
+    returned as given when it carries neither. The userinfo
+    (``https://user:password@host/``, or a bare token before the ``@``) is
+    masked whole rather than by part: a username alone is often the API key
+    (HTTP basic auth with an empty password), and the mask still shows that
+    credentials were there. A URL that cannot be parsed
+    (``https://[broken]?token=abc`` raises in ``urlsplit``) is replaced
+    whole: redaction runs inside the runner's error handling, where raising
+    would lose the failure event and the response."""
     url = str(url)
     try:
         parts = urlsplit(url)
     except ValueError:
         return REDACTED
-    if not parts.query:
+    # An unencoded "@" is legal in the authority only as the userinfo
+    # delimiter, so everything before the last one is userinfo.
+    userinfo, at, host = parts.netloc.rpartition("@")
+    netloc = f"{REDACTED}@{host}" if at else parts.netloc
+    query = _redact_query(parts.query) if parts.query else parts.query
+    if netloc == parts.netloc and query == parts.query:
         return url
-    query = _redact_query(parts.query)
-    return url if query == parts.query else urlunsplit(parts._replace(query=query))
+    return urlunsplit(parts._replace(netloc=netloc, query=query))
 
 
 def _redact_query(query: str) -> str:
