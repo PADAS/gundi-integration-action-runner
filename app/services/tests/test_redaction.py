@@ -9,7 +9,7 @@ from app.services.redaction import (
     redact_secrets,
     secret_field_names,
 )
-from app.services.utils import FieldWithUIOptions, UIOptions
+from app.services.utils import FieldWithUIOptions, UIOptions, UISchemaModelMixin
 
 
 def test_redacts_values_under_sensitive_key_names_at_any_depth():
@@ -70,11 +70,32 @@ class _Config(pydantic.BaseModel):
     password: pydantic.SecretStr
     pin: str = pydantic.Field(..., format="password")
     code: str = FieldWithUIOptions(..., ui_options=UIOptions(widget="password"))
+    devices: str = FieldWithUIOptions(..., writeOnly=True)
+    certificate: str = pydantic.Field(..., writeOnly=True)
     plain: str
 
 
-def test_secret_field_names_reads_secret_str_password_format_and_password_widget():
-    assert secret_field_names(_Config) == frozenset({"password", "pin", "code"})
+def test_secret_field_names_reads_secret_str_password_format_password_widget_and_write_only():
+    assert secret_field_names(_Config) == frozenset({"password", "pin", "code", "devices", "certificate"})
+
+
+def test_write_only_declaration_leaves_the_portal_form_unchanged():
+    # A write-only secret still renders as an ordinary text input: no
+    # password format in the JSON schema and no widget in the UI schema.
+    class _Devices(UISchemaModelMixin, pydantic.BaseModel):
+        devices: str = FieldWithUIOptions(..., title="Devices", writeOnly=True)
+
+    prop = _Devices.schema()["properties"]["devices"]
+    assert prop["type"] == "string"
+    assert "format" not in prop
+    assert _Devices.ui_schema() == {}
+
+
+def test_write_only_false_is_not_a_secret():
+    class _Readable(pydantic.BaseModel):
+        notes: str = pydantic.Field(..., writeOnly=False)
+
+    assert secret_field_names(_Readable) == frozenset()
 
 
 def test_secret_field_names_is_empty_for_a_model_without_secrets():
@@ -85,11 +106,11 @@ def test_secret_field_names_is_empty_for_a_model_without_secrets():
 
 
 def test_redacts_fields_the_model_declares_as_secret_even_with_innocent_names():
-    data = {"username": "u", "pin": "1234", "code": "abcd", "plain": "p"}
+    data = {"username": "u", "pin": "1234", "code": "abcd", "devices": '[{"key": "K"}]', "plain": "p"}
 
     out = redact_secrets(data, model=_Config)
 
-    assert out == {"username": "u", "pin": REDACTED, "code": REDACTED, "plain": "p"}
+    assert out == {"username": "u", "pin": REDACTED, "code": REDACTED, "devices": REDACTED, "plain": "p"}
 
 
 class _AuthConfig(pydantic.BaseModel):
