@@ -12,8 +12,12 @@ Two signals mark a value as secret, and either one is enough:
   ``_``) contains one of ``SENSITIVE_KEY_FRAGMENTS``. Deliberately broad:
   ``token_url`` is redacted too, and that over-redaction is the safe side.
 - Its field declaration. The connector's config model marks the field as
-  ``SecretStr``/``SecretBytes``, ``format="password"``, or a ``password`` UI
-  widget. That catches secrets with innocent names such as ``client_id``.
+  ``SecretStr``/``SecretBytes``, ``format="password"``, a ``password`` UI
+  widget, or ``writeOnly=True``. That catches secrets with innocent names
+  such as ``client_id``. ``writeOnly`` (the JSON Schema keyword for a value
+  that is submitted but never read back) is the one that leaves the portal
+  form unchanged: use it for a secret that is not a password input, such as
+  a JSON document of device keys or a pasted certificate.
   The model is walked alongside the data, so a declaration on a nested
   model (direct, ``Optional``, in a ``List`` or a ``Dict`` value) counts
   too, and a field is matched by its name or its alias: the portal saves a
@@ -132,12 +136,13 @@ def secret_field_names(config_model: Models) -> FrozenSet[str]:
     """The keys under which a connector's config model stores a secret.
 
     Each secret field contributes its name and its alias (the portal saves
-    under the alias). Reads three declarations: a ``SecretStr``/``SecretBytes``
+    under the alias). Reads four declarations: a ``SecretStr``/``SecretBytes``
     annotation (directly, in a container or in a union), ``Field(...,
     format="password")`` (the JSON-schema hint the portal renders as a
-    password input), and ``FieldWithUIOptions(ui_options=UIOptions(widget=
-    "password"))``. Root level only; ``redact_secrets`` follows nested models
-    itself. Empty for anything that is not a model.
+    password input), ``FieldWithUIOptions(ui_options=UIOptions(widget=
+    "password"))``, and ``Field(..., writeOnly=True)`` (a secret the portal
+    renders as an ordinary input). Root level only; ``redact_secrets``
+    follows nested models itself. Empty for anything that is not a model.
     """
     return frozenset(
         key for key, fields in _fields_by_key(_as_models(config_model)).items()
@@ -190,7 +195,8 @@ def _is_secret_field(field: ModelField) -> bool:
     if isinstance(field.type_, type) and issubclass(field.type_, _SECRET_TYPES):
         return True
     field_info = field.field_info
-    if (getattr(field_info, "extra", None) or {}).get("format") == "password":
+    extra = getattr(field_info, "extra", None) or {}
+    if extra.get("format") == "password" or extra.get("writeOnly") is True:
         return True
     ui_options = getattr(field_info, "ui_options", None)
     if getattr(ui_options, "widget", None) == "password":
