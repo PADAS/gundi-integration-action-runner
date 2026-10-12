@@ -362,9 +362,13 @@ def _redact_query(query: str) -> str:
 #     innocent key's value is scanned again on its own, so "url=https://
 #     x?token=t" still has its query masked and a pair quoted inside a
 #     value is still found.
+# A key starts only where a run of key characters starts. A start inside the
+# run could only find the "=" the run's start already found (the key is
+# greedy), and retrying from every position of a long run with no "=" (a JWT,
+# a hex blob) took quadratic time inside the async error handling.
 _URL_OR_PAIR = re.compile(
     r"""(?P<quote>['"])?(?P<url>https?://[^\s<>"]+)"""
-    r"""|(?P<key>[A-Za-z0-9_.\-\[\]%]+)=(?P<value>(?:"[^"]*"|'[^']*'|[^\s])+)"""
+    r"""|(?<![A-Za-z0-9_.\-\[\]%])(?P<key>[A-Za-z0-9_.\-\[\]%]+)=(?P<value>(?:"[^"]*"|'[^']*'|[^\s])+)"""
 )
 
 
