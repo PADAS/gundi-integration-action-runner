@@ -1,3 +1,4 @@
+import time
 import typing
 
 import pydantic
@@ -589,3 +590,15 @@ def test_redact_text_masks_encoded_names_and_apostrophes_outside_a_url_too():
     )
     # A URL as the value of an innocent pair is still parsed as a URL.
     assert redact_text("url=https://x.test/a?token=t&page=2 next") == f"url=https://x.test/a?token={REDACTED}&page=2 next"
+
+
+def test_redact_text_is_linear_on_long_runs_without_equals():
+    # A long token quoted in an exception (a JWT, a hex or base64 blob) used
+    # to take quadratic time: the key=value branch retried from every
+    # position of the run. This runs inside the async error handling, so a
+    # slow scan stalls the instance's event loop. The bound is generous; the
+    # quadratic version took over 40 s on these inputs.
+    start = time.perf_counter()
+    for text in ("a" * 50_000, "h" * 50_000, "x" + "http" * 12_500):
+        assert redact_text(text) == text
+    assert time.perf_counter() - start < 1
