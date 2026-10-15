@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 
@@ -12,7 +13,7 @@ from gundi_core.events.transformers import ObservationTransformedER
 from app import settings
 import pydantic
 
-from app.actions.core import AuthActionConfiguration, ReferenceActionConfiguration
+from app.actions.core import AuthActionConfiguration, PullActionConfiguration, ReferenceActionConfiguration
 from app.actions.core import GenericActionConfiguration
 from app.conftest import AsyncMock, MockSubActionConfiguration, MockPushActionConfiguration, MockPullActionConfiguration, async_return
 from app.main import app
@@ -21,7 +22,7 @@ from app.api_schemas import IntegrationState
 from app.services.action_runner import execute_action
 from app.services.errors import IntegrationAuthError
 from gundi_client_v2.errors import AuthenticationError, GundiAPIError
-from app.services.utils import find_config_for_action
+from app.services.utils import FieldWithUIOptions, find_config_for_action
 
 api_client = TestClient(app)
 
@@ -2617,6 +2618,61 @@ async def test_handler_failure_redacts_the_stored_configurations_it_attaches(
     assert published_rows["auth"] == {"username": "me@example.com", "token": REDACTED, "login_code": REDACTED}
     assert "tok-123" not in events[0].json()
     assert "code-456" not in events[0].json()
+
+
+class _WriteOnlySecretPullConfiguration(PullActionConfiguration):
+    # A secret the portal renders as an ordinary input (a JSON document of
+    # device keys), marked only by writeOnly.
+    devices: str = FieldWithUIOptions("[]", writeOnly=True)
+    lookback_hours: int = 12
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("deadline_expires,status_code", [(False, 500), (True, 504)])
+async def test_handler_failure_and_timeout_redact_write_only_config_secrets(
+        mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event, mock_action_handlers,
+        integration_v2_as_dict, deadline_expires, status_code,
+):
+    # GUNDI-5801: a failed or timed-out run attaches every stored
+    # configuration row. A secret declared only by writeOnly (no password
+    # format or widget, no secret-looking name) must still be masked in both
+    # the IntegrationActionFailed event and the JSON response.
+    from gundi_core.schemas.v2 import Integration
+    from app.services.redaction import REDACTED
+    stored = integration_v2_as_dict
+    for row in stored["configurations"]:
+        if row["action"]["value"] == "pull_observations":
+            row["data"] = {"devices": '[{"id": "37590", "key": "DEVICE-KEY-123"}]', "lookback_hours": 12}
+    integration = Integration.parse_obj(stored)
+    assert any(r.action.value == "pull_observations" for r in integration.configurations)
+    mock_config_manager.get_integration_details = AsyncMock(return_value=integration)
+    if deadline_expires:
+        # The runner's own execution limit, not an error the handler raised.
+        mocker.patch.object(settings, "MAX_ACTION_EXECUTION_TIME", 0.01)
+
+        async def handler(**kwargs):
+            await asyncio.sleep(5)
+    else:
+        handler = AsyncMock(side_effect=RuntimeError("provider exploded"))
+    mock_action_handlers["pull_observations"] = (handler, _WriteOnlySecretPullConfiguration, None)
+    mocker.patch("app.services.action_runner.action_handlers", mock_action_handlers)
+    mocker.patch("app.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("app.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("app.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("app.services.action_runner.publish_event", mock_publish_event)
+
+    response = api_client.post(
+        "/v1/actions/execute/",
+        json={"integration_id": str(integration.id), "action_id": "pull_observations"},
+    )
+
+    assert response.status_code == status_code
+    assert "DEVICE-KEY-123" not in response.text
+    rows = {row["action"]["value"]: row["data"] for row in response.json()["detail"]["config_data"]["configurations"]}
+    assert rows["pull_observations"] == {"devices": REDACTED, "lookback_hours": 12}
+    events = _published_events_of_type(mock_publish_event, IntegrationActionFailed)
+    assert len(events) == 1
+    assert "DEVICE-KEY-123" not in events[0].json()
 
 
 @pytest.mark.asyncio
