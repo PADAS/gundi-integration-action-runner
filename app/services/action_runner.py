@@ -33,8 +33,8 @@ from .activity_logger import publish_event, log_action_activity, ephemeral_run
 from .redaction import redact_body, redact_config_data, redact_text, redact_url
 from .retry_policies import is_retryable_failure
 from .errors import (
-    ActionTimeoutError, classify_error, format_classified_error, source_status_code,
-    IntegrationError, IntegrationConfigurationError,
+    ActionTimeoutError, classify_error, format_classified_error, is_http_failure_status,
+    source_status_code, IntegrationError, IntegrationConfigurationError,
 )
 from .url_policy import validate_outbound_url
 from .gundi import EphemeralWriteBlocked
@@ -212,7 +212,7 @@ def _ephemeral_status_for(exc: Exception, fallback: int) -> int:
         return status.HTTP_401_UNAUTHORIZED
     if isinstance(exc, IntegrationConfigurationError):
         return status.HTTP_422_UNPROCESSABLE_ENTITY
-    if source_status is not None and 400 <= source_status <= 599:
+    if source_status is not None and is_http_failure_status(source_status):
         return source_status
     return fallback
 

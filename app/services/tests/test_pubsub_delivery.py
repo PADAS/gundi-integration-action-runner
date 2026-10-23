@@ -67,6 +67,26 @@ def runner_mocks(mocker, mock_gundi_client_v2, mock_config_manager, mock_publish
     return mock_config_manager
 
 
+def _raised_from(exc, cause):
+    """`exc` as `raise exc from cause` leaves it: the status stays on the cause."""
+    exc.__cause__ = cause
+    return exc
+
+
+def _raised_while_handling(exc, context, suppress=False):
+    """`exc` as `except ...: raise exc` leaves it: the status stays on the
+    implicit context (or is cut off by `raise exc from None`)."""
+    try:
+        raise context
+    except Exception:
+        try:
+            if suppress:
+                raise exc from None
+            raise exc
+        except Exception as chained:
+            return chained
+
+
 def _install_handler(mocker, handler, action_id="pull_observations", config_model=MockPullActionConfiguration):
     mocker.patch("app.services.action_runner.action_handlers", {action_id: (handler, config_model, None)})
     return handler
@@ -215,6 +235,32 @@ def test_background_mode_acks_before_the_run_finishes(mocker, runner_mocks):
         (IntegrationConnectionError("down"), True),
         (IntegrationRateLimitError("slow down"), True),
         (IntegrationBadResponseError("garbage"), True),
+        # A classified provider failure that names a permanent status is
+        # final: a deleted resource (404), a rejected payload (400/422) does
+        # not fix itself within PubSub's backoff.
+        (IntegrationBadResponseError("gone", status_code=404), False),
+        (IntegrationBadResponseError("rejected", status_code=400), False),
+        (IntegrationBadResponseError("invalid", status_code=422), False),
+        (IntegrationBadResponseError("flaky", status_code=500), True),
+        (IntegrationBadResponseError("busy", status_code=429), True),
+        # A status below 400 is not a provider verdict (a 200 maintenance
+        # page, a 3xx from a proxy): retried on the category, like no status.
+        (IntegrationBadResponseError("not JSON", status_code=200), True),
+        (IntegrationBadResponseError("redirected", status_code=302), True),
+        # The status may sit on the cause (`raise ... from http_err`) or on
+        # the implicit context (`except HTTPStatusError: raise ...`); both are
+        # read, a non-HTTP cause is not a verdict, and `from None` cuts the
+        # context off.
+        (_raised_from(IntegrationBadResponseError("gone"), _provider_error(404)), False),
+        (_raised_from(IntegrationBadResponseError("flaky"), _provider_error(503)), True),
+        (_raised_while_handling(IntegrationBadResponseError("gone"), _provider_error(404)), False),
+        (_raised_while_handling(IntegrationBadResponseError("flaky"), _provider_error(502)), True),
+        (_raised_while_handling(IntegrationBadResponseError("gone"), _provider_error(404), suppress=True), True),
+        (_raised_from(IntegrationBadResponseError("not JSON"), ValueError("no json")), True),
+        # A non-failure status on the error itself does not stop the walk.
+        (_raised_from(IntegrationBadResponseError("not JSON", status_code=200), _provider_error(404)), False),
+        # A connector's own rate-limit mapping (EarthRanger's 409) stays retryable.
+        (IntegrationRateLimitError("one per second", status_code=409), True),
         (IntegrationAuthError("nope"), False),
         (IntegrationConfigurationError("bad url"), False),
         (GundiAPIError(503), True),

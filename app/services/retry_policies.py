@@ -10,13 +10,16 @@ time.sleep, which inside a coroutine stalls the whole event loop for the
 length of the back-off.
 """
 # app.settings before gundi_client_v2 (see app/services/errors.py).
+from typing import Optional
+
 from app import settings  # noqa: F401
 import httpx
 from gundi_client_v2.errors import AuthenticationError, GundiAPIError
 from redis.exceptions import RedisError
 
 from .errors import (
-    ActionTimeoutError, CONNECTIVITY_EXCEPTIONS, IntegrationError, source_status_code,
+    ActionTimeoutError, CONNECTIVITY_EXCEPTIONS, IntegrationError, is_http_failure_status,
+    source_status_code,
 )
 
 REDIS_RETRY = dict(on=RedisError, attempts=5, wait_initial=1.0, wait_max=30, wait_jitter=3.0)
@@ -56,10 +59,39 @@ def is_transient_gundi_error(exc: BaseException) -> bool:
 
 
 # IntegrationError categories a connector raises for failures that may pass
-# on a later attempt. "auth" and "configuration" are final: rejected
-# credentials and a bad setting do not fix themselves within PubSub's backoff,
-# and a handler that refreshes an expired token retries that itself.
-RETRYABLE_INTEGRATION_ERROR_TYPES = frozenset({"connectivity", "rate_limit", "bad_response"})
+# on a later attempt, whatever status they carry. "auth" and "configuration"
+# are final: rejected credentials and a bad setting do not fix themselves
+# within PubSub's backoff, and a handler that refreshes an expired token
+# retries that itself. "bad_response" is not listed because it is decided by
+# its HTTP status in is_retryable_failure, not by the category alone.
+RETRYABLE_INTEGRATION_ERROR_TYPES = frozenset({"connectivity", "rate_limit"})
+
+
+def _failure_status(exc: BaseException) -> Optional[int]:
+    """The 4xx/5xx a classified failure answers for: on the error, or down its chain.
+
+    A connector that wraps instead of copying ``status_code=`` leaves the
+    status on the cause (``raise IntegrationBadResponseError(msg) from
+    http_err``) or, in the usual ``except HTTPStatusError: raise
+    IntegrationBadResponseError(msg)``, on the implicit context. Both are
+    read, the context only when the raise did not suppress it (``from
+    None``). A status below 400 on the way is not a verdict and the walk goes
+    on. This walk is the retry verdict's alone: the classified text and the
+    ephemeral status keep reading the error itself (errors.source_status_code).
+    """
+    depth = 0
+    while exc is not None and depth < 10:
+        status_code = source_status_code(exc)
+        if status_code is not None and is_http_failure_status(status_code):
+            return status_code
+        if exc.__cause__ is not None:
+            exc = exc.__cause__
+        elif not exc.__suppress_context__:
+            exc = exc.__context__
+        else:
+            break
+        depth += 1
+    return None
 
 
 def is_retryable_failure(exc: BaseException) -> bool:
@@ -71,9 +103,10 @@ def is_retryable_failure(exc: BaseException) -> bool:
     problem, and a retry verdict must not depend on that wording. The verdict
     is the same whichever side raised: Gundi's client errors go through
     ``is_transient_gundi_error`` (429/5xx, no answer, the OAuth transport
-    flag), a provider's status through the same 429/5xx rule, a connectivity
-    exception is transient, a Redis failure is transient, and anything else
-    (a provider 4xx, a rejected or unconfigured OAuth client, a bug) is final.
+    flag), a provider's status through the same 429/5xx rule (whether raw or
+    wrapped in a classified bad_response), a connectivity exception is
+    transient, a Redis failure is transient, and anything else (a provider
+    4xx, a rejected or unconfigured OAuth client, a bug) is final.
     """
     if isinstance(exc, ActionTimeoutError):
         return True  # the runner's own cap; the next run may be quicker
@@ -82,6 +115,18 @@ def is_retryable_failure(exc: BaseException) -> bool:
     if isinstance(exc, RedisError):
         return True
     if isinstance(exc, IntegrationError):
+        if exc.error_type == "bad_response":
+            # A connector classifies any unexpected answer as bad_response,
+            # permanent 4xx included (EarthRanger's deleted resource is a
+            # classified 404). A failure status it carries, on itself or down
+            # its chain, decides as it would for a raw HTTP error. A status
+            # below 400 is not a provider verdict (a 200 maintenance page, a
+            # 3xx from a proxy; the ephemeral path draws the same line), so
+            # it and a status-less bad response are retried on the category
+            # alone. rate_limit stays retryable whatever status the connector
+            # mapped to it (EarthRanger's 409).
+            status_code = _failure_status(exc)
+            return _retryable_status(status_code) if status_code is not None else True
         return exc.error_type in RETRYABLE_INTEGRATION_ERROR_TYPES
     status_code = source_status_code(exc)
     if status_code is not None:
