@@ -51,13 +51,15 @@ def run(handlers, host, port, reload):
 @click.option("--slug", default=None, help="Slug ID for the integration type")
 @click.option("--name", default=None,
               help="Display name for the integration type (defaults to a name derived from the slug)")
+@click.option("--description", default=None,
+              help='Description shown in the Gundi portal (defaults to "Default type for integrations with <name>")')
 @click.option("--service-url", default=None,
               help="Service URL used to trigger actions or receive webhooks")
 @click.option("--handlers", "-m", multiple=True,
               help="Import path(s) of handler modules (defaults to env/legacy discovery)")
 @click.option("--schedule", multiple=True,
               help='Schedules as "action_id:crontab" (e.g. "pull_events:0 */4 * * *")')
-def register(slug, name, service_url, handlers, schedule):
+def register(slug, name, description, service_url, handlers, schedule):
     """Register this integration type (actions, schemas, schedules) in Gundi."""
     _apply_handlers_setting(handlers)
     schedules = {}
@@ -76,6 +78,7 @@ def register(slug, name, service_url, handlers, schedule):
             gundi_client=_portal,
             type_slug=slug,
             type_name=name,
+            type_description=description,
             service_url=service_url,
             action_schedules=schedules,
         )

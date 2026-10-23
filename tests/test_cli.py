@@ -66,6 +66,20 @@ def test_register_forwards_options(runner, mocker):
     assert "pull_observations" in kwargs["action_schedules"]
 
 
+def test_register_forwards_the_description(runner, mocker):
+    # --description must reach register_integration_in_gundi by keyword: a
+    # reordered option or renamed kwarg would still import and silently
+    # register the default "Default type for integrations with <name>".
+    register = mocker.patch(
+        "gundi_action_runner.cli.register_integration_in_gundi", new_callable=AsyncMock
+    )
+    result = runner.invoke(
+        cli, ["register", "--slug", "x_tracker", "--description", "X Tracker collars"]
+    )
+    assert result.exit_code == 0, result.output
+    assert register.await_args.kwargs["type_description"] == "X Tracker collars"
+
+
 def test_register_rejects_bad_schedule(runner, mocker):
     mocker.patch(
         "gundi_action_runner.cli.register_integration_in_gundi", new_callable=AsyncMock
