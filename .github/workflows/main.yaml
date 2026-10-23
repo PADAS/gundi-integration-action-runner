@@ -38,7 +38,13 @@ jobs:
 
   deploy_dev:
     uses: PADAS/gundi-workflows/.github/workflows/update_hcl.yml@v2.1
-    if: startsWith(github.ref, 'refs/heads/main')
+    # Every gundi-integration-* fork merges this repo's main, so this file
+    # lands in each of them. The template itself has no environment in
+    # gundi-integrations-v2-infra, so deploying it only fails update_terraform.
+    # The repository check keeps the deploy jobs live in forks and inert here.
+    if: >-
+      github.repository != 'PADAS/gundi-integration-action-runner' &&
+      startsWith(github.ref, 'refs/heads/main')
     needs: [vars, build]
     with:
       git_repository: PADAS/gundi-integrations-v2-infra
@@ -51,7 +57,9 @@ jobs:
 
   deploy_stage:
     uses: PADAS/gundi-workflows/.github/workflows/update_hcl.yml@v2.1
-    if: startsWith(github.ref, 'refs/heads/release')
+    if: >-
+      github.repository != 'PADAS/gundi-integration-action-runner' &&
+      startsWith(github.ref, 'refs/heads/release')
     needs: [vars, build]
     with:
       git_repository: PADAS/gundi-integrations-v2-infra
@@ -64,7 +72,9 @@ jobs:
 
   deploy_prod:
     uses: PADAS/gundi-workflows/.github/workflows/update_hcl.yml@v2.1
-    if: startsWith(github.ref, 'refs/heads/release')
+    if: >-
+      github.repository != 'PADAS/gundi-integration-action-runner' &&
+      startsWith(github.ref, 'refs/heads/release')
     needs: [vars, build, deploy_stage]
     with:
       git_repository: PADAS/gundi-integrations-v2-infra
