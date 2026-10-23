@@ -71,9 +71,10 @@ def is_retryable_failure(exc: BaseException) -> bool:
     problem, and a retry verdict must not depend on that wording. The verdict
     is the same whichever side raised: Gundi's client errors go through
     ``is_transient_gundi_error`` (429/5xx, no answer, the OAuth transport
-    flag), a provider's status through the same 429/5xx rule, a connectivity
-    exception is transient, a Redis failure is transient, and anything else
-    (a provider 4xx, a rejected or unconfigured OAuth client, a bug) is final.
+    flag), a provider's status through the same 429/5xx rule (whether raw or
+    wrapped in a classified bad_response), a connectivity exception is
+    transient, a Redis failure is transient, and anything else (a provider
+    4xx, a rejected or unconfigured OAuth client, a bug) is final.
     """
     if isinstance(exc, ActionTimeoutError):
         return True  # the runner's own cap; the next run may be quicker
@@ -82,6 +83,15 @@ def is_retryable_failure(exc: BaseException) -> bool:
     if isinstance(exc, RedisError):
         return True
     if isinstance(exc, IntegrationError):
+        if exc.error_type == "bad_response":
+            # A connector classifies any unexpected answer as bad_response,
+            # permanent 4xx included (EarthRanger's deleted resource is a
+            # classified 404). The status it carries decides, as it would for
+            # a raw HTTP error; only a status-less bad response is retried on
+            # the category alone. rate_limit stays retryable whatever status
+            # the connector mapped to it (EarthRanger's 409).
+            status_code = source_status_code(exc)
+            return _retryable_status(status_code) if status_code is not None else True
         return exc.error_type in RETRYABLE_INTEGRATION_ERROR_TYPES
     status_code = source_status_code(exc)
     if status_code is not None:

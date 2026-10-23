@@ -215,6 +215,16 @@ def test_background_mode_acks_before_the_run_finishes(mocker, runner_mocks):
         (IntegrationConnectionError("down"), True),
         (IntegrationRateLimitError("slow down"), True),
         (IntegrationBadResponseError("garbage"), True),
+        # A classified provider failure that names a permanent status is
+        # final: a deleted resource (404), a rejected payload (400/422) does
+        # not fix itself within PubSub's backoff.
+        (IntegrationBadResponseError("gone", status_code=404), False),
+        (IntegrationBadResponseError("rejected", status_code=400), False),
+        (IntegrationBadResponseError("invalid", status_code=422), False),
+        (IntegrationBadResponseError("flaky", status_code=500), True),
+        (IntegrationBadResponseError("busy", status_code=429), True),
+        # A connector's own rate-limit mapping (EarthRanger's 409) stays retryable.
+        (IntegrationRateLimitError("one per second", status_code=409), True),
         (IntegrationAuthError("nope"), False),
         (IntegrationConfigurationError("bad url"), False),
         (GundiAPIError(503), True),
