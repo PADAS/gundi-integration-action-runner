@@ -130,7 +130,12 @@ def source_status_code(exc: Exception) -> Optional[int]:
     (httpx.HTTPStatusError, requests.HTTPError, and anything else that keeps
     the response on the exception). This is the single reader shared by the
     classifier and the ephemeral status forwarding, so wherever a status is
-    forwarded at all, it is the one the text names.
+    forwarded at all, it is the one the text names. It reads the exception
+    itself, never its cause: an `IntegrationAuthError` raised from a 400 is
+    the connector's verdict that credentials were rejected, forwarded as the
+    401 the portal keys on. The retry policy walks the chain on its own
+    (retry_policies._failure_status) because a verdict about redelivery may
+    use evidence the text does not name.
 
     The one deliberate divergence is a Gundi-side failure, where the text
     keeps Gundi's status ("Gundi API request failed (HTTP 401)") while the
@@ -159,6 +164,18 @@ def source_status_code(exc: Exception) -> Optional[int]:
     if isinstance(code, bool) or not isinstance(code, int):
         return None
     return code
+
+
+def is_http_failure_status(status_code: int) -> bool:
+    """Whether ``status_code`` is a failure the provider answered with (4xx/5xx).
+
+    A status below 400 is not a failure the portal can classify (a redirect
+    surfaced by raise_for_status with redirects off is the common one), and
+    anything outside the HTTP range is a connector bug, not a verdict. One
+    rule shared by the ephemeral status forwarding and the retry policy, so
+    the status one forwards is the status the other judges.
+    """
+    return 400 <= status_code <= 599
 
 
 def classify_error(exc: Exception) -> Optional[ClassifiedError]:
