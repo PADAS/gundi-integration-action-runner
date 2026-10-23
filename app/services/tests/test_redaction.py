@@ -550,16 +550,21 @@ def test_redact_text_masks_the_userinfo_of_a_url_quoted_in_free_text():
 
 
 def test_redact_url_masks_a_url_it_cannot_parse_instead_of_raising():
-    assert redact_url("https://[broken]?token=abc") == REDACTED
+    # An unbalanced bracket is rejected by urlsplit on every supported
+    # Python. A balanced one around a non-address host ("[broken]") is
+    # rejected only by 3.11+ and 3.10's later security releases (CI's
+    # 3.10.22 yes, uv's 3.10.14 no); where it parses, only the query gets
+    # masked and the except branch is never reached.
+    assert redact_url("https://[broken?token=abc") == REDACTED
 
 
 def test_redact_text_masks_a_malformed_url_whole_and_never_raises():
     # Redaction runs inside the runner's error handling: raising there
     # would lose the failure event and the structured response.
-    assert redact_text("Client error for url 'https://[broken]?token=abc' (HTTP 403)") == (
+    assert redact_text("Client error for url 'https://[broken?token=abc' (HTTP 403)") == (
         f"Client error for url '{REDACTED}' (HTTP 403)"
     )
-    assert redact_text("https://[broken]?token=abc then page=2") == f"{REDACTED} then page=2"
+    assert redact_text("https://[broken?token=abc then page=2") == f"{REDACTED} then page=2"
 
 
 def test_redact_text_masks_the_whole_value_of_a_sensitive_key():
