@@ -327,10 +327,10 @@ def redact_url(url: str) -> str:
     (``https://user:password@host/``, or a bare token before the ``@``) is
     masked whole rather than by part: a username alone is often the API key
     (HTTP basic auth with an empty password), and the mask still shows that
-    credentials were there. A URL that cannot be parsed
-    (``https://[broken]?token=abc`` raises in ``urlsplit``) is replaced
-    whole: redaction runs inside the runner's error handling, where raising
-    would lose the failure event and the response."""
+    credentials were there. A URL that cannot be parsed (an unbalanced
+    bracket, ``https://[broken?token=abc``, raises in ``urlsplit``) is
+    replaced whole: redaction runs inside the runner's error handling, where
+    raising would lose the failure event and the response."""
     url = str(url)
     try:
         parts = urlsplit(url)
