@@ -1,0 +1,8 @@
+# Not a .jinja file: copied verbatim so GitHub's ${{ }} expressions survive.
+name: Test integration
+on:
+  pull_request
+
+jobs:
+  pr_unit_tests:
+    uses: ./.github/workflows/_tests.yml

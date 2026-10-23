@@ -8,6 +8,9 @@ WORKDIR /code
 COPY requirements.txt .
 RUN pip install --upgrade pip && pip install -r /code/requirements.txt
 COPY ./app app/
+COPY pyproject.toml .
+COPY ./src src/
+RUN pip install -e . --no-deps
 
 FROM baseimage AS devimage
 

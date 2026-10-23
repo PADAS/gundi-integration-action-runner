@@ -1,0 +1,30 @@
+from gundi_action_runner import action{% if include_webhook %}, webhook{% endif %}
+
+from .configurations import AuthConfig{% if include_pull %}, PullObservationsConfig{% endif %}{% if include_webhook %}, {{ package_name | replace('_', ' ') | title | replace(' ', '') }}WebhookConfig, {{ package_name | replace('_', ' ') | title | replace(' ', '') }}WebhookPayload{% endif %}
+
+
+@action.auth(config=AuthConfig)
+async def auth(integration, action_config):
+    # Validate credentials against the {{ project_name }} API and return
+    # {"valid_credentials": bool}.
+    return {"valid_credentials": bool(action_config.api_key)}
+{% if include_pull %}
+
+
+@action.pull(config=PullObservationsConfig, title="Pull Observations")
+async def pull_observations(integration, action_config):
+    # Fetch from the API (client.py), transform (transformers.py), then
+    # send_observations_to_gundi(). Add @crontab_schedule(...) and
+    # @activity_logger() BELOW @action.pull — the @action decorator must be
+    # outermost (it registers the function object it receives).
+    return {"observations_extracted": 0}
+{% endif %}
+{% if include_webhook %}
+
+
+@webhook
+async def webhook_handler(payload: {{ package_name | replace('_', ' ') | title | replace(' ', '') }}WebhookPayload, integration,
+                          webhook_config: {{ package_name | replace('_', ' ') | title | replace(' ', '') }}WebhookConfig):
+    # Transform the pushed payload and forward it to Gundi.
+    return {"data_points_qty": 1}
+{% endif %}

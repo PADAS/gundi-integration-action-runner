@@ -16,9 +16,36 @@ Template repo for integration in Gundi v2.
     - Webhook execution complete
     - Error occurred during webhook execution
 - Optionally, use  `log_action_activity()` or `log_webhook_activity()` to log custom messages which you can later see in the portal
-- The configuration attached to every activity-log event is redacted before publishing (`app/services/redaction.py`): values under secret-looking keys (`password`, `token`, `api_key`, `secret`, ...) and fields your config model declares as `SecretStr`, `Field(format="password")`, `UIOptions(widget="password")` or `Field(writeOnly=True)` are replaced with `**********`, matched by field name or alias and at any depth of nested models. Declare secrets that way and they never reach the portal's activity log in clear, whatever their name. `writeOnly=True` is the declaration that leaves the portal form unchanged: use it for a secret that is not a password input, such as a JSON document of device keys. The failed request and response attached to a failure event (`request_url`, `request_data`, `server_response_body`) are masked by the same key rules, so a rejected password-grant token POST does not carry the password into the log either; secret-looking query parameters quoted in the error text and traceback (an httpx `raise_for_status()` message names the full URL) are masked too.
+- The configuration attached to every activity-log event is redacted before publishing (`gundi_action_runner.services.redaction`): values under secret-looking keys (`password`, `token`, `api_key`, `secret`, ...) and fields your config model declares as `SecretStr`, `Field(format="password")`, `UIOptions(widget="password")` or `Field(writeOnly=True)` are replaced with `**********`, matched by field name or alias and at any depth of nested models. Declare secrets that way and they never reach the portal's activity log in clear, whatever their name. `writeOnly=True` is the declaration that leaves the portal form unchanged: use it for a secret that is not a password input, such as a JSON document of device keys. The failed request and response attached to a failure event (`request_url`, `request_data`, `server_response_body`) are masked by the same key rules, so a rejected password-grant token POST does not carry the password into the log either; secret-looking query parameters quoted in the error text and traceback (an httpx `raise_for_status()` message names the full URL) are masked too.
 - Optionally, use  `@crontab_schedule()` or `register.py --schedule` to make an action to run on a custom schedule
 
+
+## Using as a library (preview)
+
+The framework in this repo now ships as an installable package,
+[`gundi-action-runner` on PyPI](https://pypi.org/project/gundi-action-runner/)
+(currently a release candidate — install with
+`pip install "gundi-action-runner[cli]==0.1.0rc4"`). Connectors register handlers with
+decorators instead of editing template files:
+
+```python
+from gundi_action_runner import action, create_app
+
+@action.pull(config=MyPullConfig, title="Pull Observations")
+async def pull_observations(integration, action_config):
+    ...
+
+app = create_app(handlers_modules=["myconnector.handlers"])
+```
+
+Existing forks are unaffected: `app/*` modules remain as compatibility shims
+(emitting `DeprecationWarning`), and `uvicorn app.main:app` still works.
+See `examples/reference_connector/` for a complete example, the
+[quickstart](docs/quickstart.md), [extension API reference](docs/extension-api.md),
+and the [fork migration guide](docs/fork-migration.md).
+
+Maintainers: see `RELEASING.md` for how releases are cut and the one-time
+PyPI trusted-publishing setup.
 
 ## Action Examples: 
 
