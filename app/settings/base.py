@@ -148,6 +148,7 @@ gundi_client_settings.GUNDI_TOKEN_CACHE_URL = GUNDI_TOKEN_CACHE_URL
 REGISTER_ON_START = env.bool("REGISTER_ON_START", False)
 INTEGRATION_TYPE_SLUG = env.str("INTEGRATION_TYPE_SLUG", None)  # Define a string id here e.g. "my_tracker"
 INTEGRATION_TYPE_NAME = env.str("INTEGRATION_TYPE_NAME", None)  # Display name e.g. "My Tracker"; defaults to a name derived from the slug
+INTEGRATION_TYPE_DESCRIPTION = env.str("INTEGRATION_TYPE_DESCRIPTION", None)  # Shown in the portal's type picker; defaults to "Default type for integrations with <name>"
 INTEGRATION_SERVICE_URL = env.str("INTEGRATION_SERVICE_URL", None)  # Define a string id here e.g. "my_tracker"
 PROCESS_PUBSUB_MESSAGES_IN_BACKGROUND = env.bool("PROCESS_PUBSUB_MESSAGES_IN_BACKGROUND", False)
 PROCESS_WEBHOOKS_IN_BACKGROUND = env.bool("PROCESS_WEBHOOKS_IN_BACKGROUND", True)
