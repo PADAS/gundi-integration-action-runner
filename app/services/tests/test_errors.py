@@ -16,6 +16,7 @@ from app.services.errors import (
     classify_error,
     format_classified_error,
     format_error_message,
+    is_http_failure_status,
     source_status_code,
     GUNDI_API_ERROR_TITLE,
     GUNDI_AUTH_ERROR_TITLE,
@@ -212,26 +213,35 @@ def test_classify_builtin_timeout_as_connectivity():
         (AuthenticationError("invalid_client", status_code=401, error="invalid_client"), 401),
         (AuthenticationError("keycloak unreachable", transport=True), None),
         (ValueError("no response here"), None),
-        # `raise IntegrationBadResponseError(msg) from http_err`: the status
-        # stays on the cause and is read from there by the same rules.
-        (_raised_from(IntegrationBadResponseError("gone"), _http_status_error(404)), 404),
-        (_raised_from(IntegrationBadResponseError("odd"), aiohttp.ClientResponseError(None, (), status=502)), 502),
-        # The error's own status wins over its cause's.
+        # The reader never walks the cause: the error's own status is the
+        # one the text names and the ephemeral path forwards. The retry
+        # policy walks the chain itself (test_pubsub_delivery).
+        (_raised_from(IntegrationBadResponseError("gone"), _http_status_error(404)), None),
         (_raised_from(IntegrationBadResponseError("own", status_code=503), _http_status_error(404)), 503),
-        # A cause without a status, or a Gundi-side cause (the runner's own
-        # call, not the provider's verdict), leaves it unknown.
-        (_raised_from(IntegrationBadResponseError("no status"), ValueError("not JSON")), None),
-        (_raised_from(IntegrationBadResponseError("gundi"), GundiAPIError(status_code=503)), None),
     ],
 )
 def test_source_status_code_reads_every_carrier(exc, expected):
     assert source_status_code(exc) == expected
 
 
-def test_classified_text_names_the_status_of_the_cause():
-    exc = _raised_from(IntegrationBadResponseError("Feed not found"), _http_status_error(404))
+def test_an_auth_error_raised_from_a_400_is_still_forwarded_as_401():
+    # The connector's verdict is "credentials rejected", which the portal
+    # keys on as 401/403; the OAuth endpoint's 400 invalid_grant underneath
+    # is evidence, not the verdict.
+    from app.services.action_runner import _ephemeral_status_for
 
-    assert format_error_message(exc) == f"{IntegrationBadResponseError.default_title} — Feed not found (HTTP 404)"
+    exc = _raised_from(IntegrationAuthError("rejected"), _http_status_error(400))
+
+    assert _ephemeral_status_for(exc, 500) == 401
+    assert format_error_message(exc) == f"{IntegrationAuthError.default_title} — rejected"
+
+
+@pytest.mark.parametrize(
+    "status_code,expected",
+    [(400, True), (404, True), (500, True), (599, True), (200, False), (302, False), (399, False), (600, False), (0, False)],
+)
+def test_is_http_failure_status(status_code, expected):
+    assert is_http_failure_status(status_code) is expected
 
 
 @pytest.mark.parametrize(
