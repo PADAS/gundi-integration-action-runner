@@ -551,8 +551,10 @@ def test_redact_text_masks_the_userinfo_of_a_url_quoted_in_free_text():
 
 def test_redact_url_masks_a_url_it_cannot_parse_instead_of_raising():
     # An unbalanced bracket is rejected by urlsplit on every supported
-    # Python. A balanced one around a non-address host ("[broken]") only
-    # raises from 3.11 on; 3.10 parses it and the query gets masked instead.
+    # Python. A balanced one around a non-address host ("[broken]") is
+    # rejected only by 3.11+ and 3.10's later security releases (CI's
+    # 3.10.22 yes, uv's 3.10.14 no); where it parses, only the query gets
+    # masked and the except branch is never reached.
     assert redact_url("https://[broken?token=abc") == REDACTED
 
 
