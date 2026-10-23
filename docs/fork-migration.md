@@ -87,6 +87,21 @@ them all at once, or keep decorating in place.
   tests → build → `update_hcl` pipeline; a fork that cuts over to the library
   layout keeps its own workflows and only changes how tests install (`pip
   install -e ".[dev]"` instead of `pip-compile`).
+- **Activity-log events are redacted.** The configuration, request and
+  response attached to every event are masked before publishing: values under
+  secret-looking keys, and fields your config model declares as `SecretStr`,
+  `Field(format="password")`, `UIOptions(widget="password")` or
+  `Field(writeOnly=True)`. Declare secrets that way and they never reach the
+  portal in clear (`gundi_action_runner.services.redaction`).
+- **A classified bad response with a permanent status is not redelivered.**
+  An `IntegrationBadResponseError` carrying a 4xx other than 429 (on itself or
+  on the exception it was raised from) is acked as final, like a raw HTTP 4xx.
+  Map a status that is transient for your provider to
+  `IntegrationRateLimitError` to keep it retried.
+- **The integration type description is configurable.** Set
+  `INTEGRATION_TYPE_DESCRIPTION`, or pass `gundi-runner register --description`,
+  instead of editing the default "Default type for integrations with <name>"
+  in the Gundi admin after each registration.
 
 ## If you customized framework files
 
