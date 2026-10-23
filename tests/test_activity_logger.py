@@ -1,4 +1,5 @@
 import json
+import pydantic
 import pytest
 from unittest.mock import ANY
 from gundi_core.events import (
@@ -18,6 +19,7 @@ from gundi_action_runner.services.activity_logger import (
     log_action_activity, log_webhook_activity, PUBSUB_MAX_MESSAGES_PER_PUBLISH, PUBSUB_MAX_BYTES_PER_PUBLISH,
 )
 from gundi_action_runner.services.errors import IntegrationAuthError
+from gundi_action_runner.services.redaction import REDACTED
 from gundi_action_runner.webhooks import GenericJsonPayload, GenericJsonTransformConfig
 
 
@@ -284,6 +286,101 @@ async def test_webhook_activity_logger_decorator_publishes_classified_error_text
     )
 
 
+def _raise_status_error_naming_a_secret_url():
+    import httpx
+    request = httpx.Request("GET", "https://api.example.com/v1/items?api_key=k-999&page=2")
+    httpx.Response(401, request=request).raise_for_status()
+
+
+def _failed_events(mock_publish_event, event_type):
+    events = [
+        call.kwargs.get("event") or call.args[0]
+        for call in mock_publish_event.mock_calls
+        if call.kwargs.get("event") is not None or call.args
+    ]
+    return [e for e in events if isinstance(e, event_type)]
+
+
+@pytest.mark.asyncio
+async def test_activity_logger_decorator_redacts_the_url_quoted_in_the_error_text(
+        mocker, mock_publish_event, integration_v2, pull_observations_config
+):
+    # The decorator publishes its own IntegrationActionFailed before the
+    # runner's: a raise_for_status() message names the full request URL,
+    # query string included, and must be masked here as well.
+    mocker.patch("gundi_action_runner.services.activity_logger.publish_event", mock_publish_event)
+    import httpx
+
+    @activity_logger()
+    async def action_pull_observations(integration, action_config):
+        _raise_status_error_naming_a_secret_url()
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await action_pull_observations(integration=integration_v2, action_config=pull_observations_config)
+
+    failed_events = _failed_events(mock_publish_event, IntegrationActionFailed)
+    assert len(failed_events) == 1
+    assert "k-999" not in failed_events[0].json()
+    assert failed_events[0].payload.error == (
+        f"Authentication failed — Client error '401 Unauthorized' for url "
+        f"'https://api.example.com/v1/items?api_key={REDACTED}&page=2' (HTTP 401)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_activity_logger_decorator_redacts_the_url_in_an_unclassified_error_text(
+        mocker, mock_publish_event, integration_v2, pull_observations_config
+):
+    # No classification (a 404 is neither auth, rate limit nor 5xx): the
+    # decorator falls back to str(e), which is the whole httpx message.
+    mocker.patch("gundi_action_runner.services.activity_logger.publish_event", mock_publish_event)
+    import httpx
+
+    @activity_logger()
+    async def action_pull_observations(integration, action_config):
+        request = httpx.Request("GET", "https://api.example.com/v1/items?token=t-1")
+        httpx.Response(404, request=request).raise_for_status()
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await action_pull_observations(integration=integration_v2, action_config=pull_observations_config)
+
+    failed_events = _failed_events(mock_publish_event, IntegrationActionFailed)
+    assert len(failed_events) == 1
+    assert "t-1" not in failed_events[0].json()
+    assert failed_events[0].payload.error.startswith(
+        f"Client error '404 Not Found' for url 'https://api.example.com/v1/items?token={REDACTED}'"
+    )
+
+
+@pytest.mark.asyncio
+async def test_webhook_activity_logger_decorator_redacts_the_url_quoted_in_the_error_text(
+        mocker, mock_publish_event, integration_v2_with_webhook_generic,
+        mock_generic_webhook_config, mock_webhook_request_payload_for_dynamic_schema
+):
+    mocker.patch("gundi_action_runner.services.activity_logger.publish_event", mock_publish_event)
+    import httpx
+
+    @webhook_activity_logger()
+    async def webhook_handler(payload: GenericJsonPayload, integration=None,
+                              webhook_config: GenericJsonTransformConfig = None):
+        _raise_status_error_naming_a_secret_url()
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await webhook_handler(
+            payload=GenericJsonPayload(data=mock_webhook_request_payload_for_dynamic_schema),
+            integration=integration_v2_with_webhook_generic,
+            webhook_config=GenericJsonTransformConfig(**mock_generic_webhook_config)
+        )
+
+    failed_events = _failed_events(mock_publish_event, IntegrationWebhookFailed)
+    assert len(failed_events) == 1
+    assert "k-999" not in failed_events[0].json()
+    assert failed_events[0].payload.error == (
+        f"Authentication failed — Client error '401 Unauthorized' for url "
+        f"'https://api.example.com/v1/items?api_key={REDACTED}&page=2' (HTTP 401)"
+    )
+
+
 @pytest.mark.asyncio
 async def test_log_activity_default_level_is_a_valid_log_level(mocker, integration_v2, mock_publish_event):
     """gundi-core's LogLevel is an IntEnum, so the string default "INFO" the
@@ -415,3 +512,120 @@ def test_publish_byte_limit_is_the_pubsub_quota():
     # 10 MB per publish request, per https://cloud.google.com/pubsub/quotas
     assert PUBSUB_MAX_BYTES_PER_PUBLISH <= 10 * 1000 * 1000
     assert PUBSUB_MAX_MESSAGES_PER_PUBLISH == 1000
+
+
+class _PlainStringPasswordConfiguration(pydantic.BaseModel):
+    # A str (not SecretStr) marked as a password only through the schema
+    # hint: pydantic's own serialization would print it in clear.
+    username: str
+    password: str = pydantic.Field(..., format="password")
+
+
+@pytest.mark.asyncio
+async def test_activity_logger_decorator_redacts_secrets_in_the_published_config(
+        mocker, mock_publish_event, integration_v2,
+):
+    mocker.patch("gundi_action_runner.services.activity_logger.publish_event", mock_publish_event)
+
+    @activity_logger()
+    async def action_auth(integration, action_config):
+        raise RuntimeError("login rejected")
+
+    with pytest.raises(RuntimeError):
+        await action_auth(
+            integration=integration_v2,
+            action_config=_PlainStringPasswordConfiguration(username="me", password="hunter2"),
+        )
+
+    assert mock_publish_event.call_count == 2  # start + failure
+    for call in mock_publish_event.call_args_list:
+        event = call.kwargs["event"]
+        assert event.payload.config_data == {"username": "me", "password": REDACTED}
+        assert "hunter2" not in event.json()
+
+
+@pytest.mark.asyncio
+async def test_webhook_activity_logger_decorator_redacts_secrets_in_the_published_config(
+        mocker, mock_publish_event, integration_v2,
+):
+    mocker.patch("gundi_action_runner.services.activity_logger.publish_event", mock_publish_event)
+
+    class _HookConfig(pydantic.BaseModel):
+        token: str
+        topic: str
+
+    @webhook_activity_logger()
+    async def webhook_handler(payload, integration, webhook_config):
+        return {"ok": True}
+
+    await webhook_handler(
+        payload={}, integration=integration_v2, webhook_config=_HookConfig(token="tok-123", topic="t"),
+    )
+
+    assert mock_publish_event.call_count == 2  # start + completion
+    for call in mock_publish_event.call_args_list:
+        event = call.kwargs["event"]
+        assert event.payload.config_data == {"token": REDACTED, "topic": "t"}
+
+
+@pytest.mark.asyncio
+async def test_log_action_activity_redacts_secrets_in_the_given_config_data(
+        mocker, integration_v2, mock_publish_event,
+):
+    mocker.patch("gundi_action_runner.services.activity_logger.publish_event", mock_publish_event)
+
+    await log_action_activity(
+        integration_id=integration_v2.id,
+        action_id="pull_observations",
+        title="Fetching",
+        config_data={"site": "s", "api_key": "key-789"},
+    )
+
+    event = mock_publish_event.call_args.kwargs["event"]
+    assert event.payload.config_data == {"site": "s", "api_key": REDACTED}
+
+
+@pytest.mark.asyncio
+async def test_log_webhook_activity_redacts_secrets_in_the_given_config_data(
+        mocker, integration_v2, mock_publish_event,
+):
+    mocker.patch("gundi_action_runner.services.activity_logger.publish_event", mock_publish_event)
+
+    await log_webhook_activity(
+        integration_id=integration_v2.id,
+        title="Received",
+        config_data={"site": "s", "secret": "sec-000"},
+    )
+
+    event = mock_publish_event.call_args.kwargs["event"]
+    assert event.payload.config_data == {"site": "s", "secret": REDACTED}
+
+
+class _NestedDetails(pydantic.BaseModel):
+    code: str = pydantic.Field(..., format="password")
+    realm: str
+
+
+class _NestingConfiguration(pydantic.BaseModel):
+    details: _NestedDetails
+    site: str
+
+
+@pytest.mark.asyncio
+async def test_activity_logger_decorator_redacts_model_declared_secrets_below_the_root(
+        mocker, mock_publish_event, integration_v2,
+):
+    mocker.patch("gundi_action_runner.services.activity_logger.publish_event", mock_publish_event)
+
+    @activity_logger()
+    async def action_pull(integration, action_config):
+        return {}
+
+    await action_pull(
+        integration=integration_v2,
+        action_config=_NestingConfiguration(details={"code": "nested-password", "realm": "r"}, site="s"),
+    )
+
+    for call in mock_publish_event.call_args_list:
+        event = call.kwargs["event"]
+        assert event.payload.config_data == {"details": {"code": REDACTED, "realm": "r"}, "site": "s"}

@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 
@@ -12,7 +13,7 @@ from gundi_core.events.transformers import ObservationTransformedER
 from gundi_action_runner import settings
 import pydantic
 
-from gundi_action_runner.actions.core import AuthActionConfiguration, ReferenceActionConfiguration
+from gundi_action_runner.actions.core import AuthActionConfiguration, PullActionConfiguration, ReferenceActionConfiguration
 from gundi_action_runner.actions.core import GenericActionConfiguration
 from gundi_action_runner.testing.fixtures import AsyncMock, MockSubActionConfiguration, MockPushActionConfiguration, MockPullActionConfiguration, async_return
 from app.main import app
@@ -21,7 +22,7 @@ from gundi_action_runner.api_schemas import IntegrationState
 from gundi_action_runner.services.action_runner import execute_action
 from gundi_action_runner.services.errors import IntegrationAuthError
 from gundi_client_v2.errors import AuthenticationError, GundiAPIError
-from gundi_action_runner.services.utils import find_config_for_action
+from gundi_action_runner.services.utils import FieldWithUIOptions, find_config_for_action
 
 api_client = TestClient(app)
 
@@ -676,7 +677,8 @@ async def test_execute_action_with_handler_error(
     assert "error_traceback" in error_details
     assert error_details.get("request_verb") == expected_error.request.method
     assert error_details.get("request_url") == str(expected_error.request.url)
-    assert error_details.get("request_data") == str(expected_error.request.content or expected_error.request.body)
+    # Bodies are attached as decoded text (secrets masked), not as str(bytes)
+    assert error_details.get("request_data") == expected_error.request.content.decode()
     assert error_details.get("server_response_status") == expected_error.response.status_code
     assert error_details.get("server_response_body") == str(expected_error.response.text)
 
@@ -693,7 +695,7 @@ async def test_execute_action_with_handler_error(
     assert event.payload.error_traceback
     assert event.payload.request_verb == expected_error.request.method
     assert event.payload.request_url == str(expected_error.request.url)
-    assert event.payload.request_data == str(expected_error.request.content or expected_error.request.body)
+    assert event.payload.request_data == expected_error.request.content.decode()
     assert event.payload.server_response_status == expected_error.response.status_code
     assert event.payload.server_response_body == str(expected_error.response.text)
 
@@ -2565,3 +2567,202 @@ async def test_cancelling_execute_action_during_deadline_cleanup_propagates(
     finally:
         runner.cancel()
         await asyncio.gather(runner, return_exceptions=True)
+
+
+class _InnocentlyNamedSecretAuthConfiguration(AuthActionConfiguration):
+    username: str
+    login_code: pydantic.SecretStr
+
+
+@pytest.mark.asyncio
+async def test_handler_failure_redacts_the_stored_configurations_it_attaches(
+        mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event, mock_action_handlers,
+        integration_v2_as_dict,
+):
+    # A saved-integration failure attaches every configuration row to the
+    # IntegrationActionFailed event and the JSON response, auth row included.
+    # Secrets must be masked whether they are recognizable by name ("token")
+    # or only by the connector's model ("login_code" is a SecretStr); the rest
+    # of the configuration stays readable for whoever debugs the failure.
+    from gundi_core.schemas.v2 import Integration
+    from gundi_action_runner.services.redaction import REDACTED
+    stored = integration_v2_as_dict
+    for row in stored["configurations"]:
+        if row["action"]["value"] == "auth":
+            row["data"] = {"username": "me@example.com", "token": "tok-123", "login_code": "code-456"}
+    integration = Integration.parse_obj(stored)
+    mock_config_manager.get_integration_details = AsyncMock(return_value=integration)
+    handler, _, _ = mock_action_handlers["pull_observations"]
+    handler.side_effect = RuntimeError("provider exploded")
+    mock_action_handlers["auth"] = (AsyncMock(), _InnocentlyNamedSecretAuthConfiguration, None)
+    mocker.patch("gundi_action_runner.services.action_runner.action_handlers", mock_action_handlers)
+    mocker.patch("gundi_action_runner.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("gundi_action_runner.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("gundi_action_runner.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("gundi_action_runner.services.action_runner.publish_event", mock_publish_event)
+
+    response = api_client.post(
+        "/v1/actions/execute/",
+        json={"integration_id": str(integration.id), "action_id": "pull_observations"},
+    )
+
+    assert response.status_code == 500
+    assert "tok-123" not in response.text
+    assert "code-456" not in response.text
+    rows = {row["action"]["value"]: row["data"] for row in response.json()["detail"]["config_data"]["configurations"]}
+    assert rows["auth"] == {"username": "me@example.com", "token": REDACTED, "login_code": REDACTED}
+    assert rows["pull_events"] == {"start_datetime": "2023-11-16T00:00:00-03:00"}
+    events = _published_events_of_type(mock_publish_event, IntegrationActionFailed)
+    assert len(events) == 1
+    published_rows = {row["action"]["value"]: row["data"] for row in events[0].payload.config_data["configurations"]}
+    assert published_rows["auth"] == {"username": "me@example.com", "token": REDACTED, "login_code": REDACTED}
+    assert "tok-123" not in events[0].json()
+    assert "code-456" not in events[0].json()
+
+
+class _WriteOnlySecretPullConfiguration(PullActionConfiguration):
+    # A secret the portal renders as an ordinary input (a JSON document of
+    # device keys), marked only by writeOnly.
+    devices: str = FieldWithUIOptions("[]", writeOnly=True)
+    lookback_hours: int = 12
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("deadline_expires,status_code", [(False, 500), (True, 504)])
+async def test_handler_failure_and_timeout_redact_write_only_config_secrets(
+        mocker, mock_gundi_client_v2, mock_config_manager, mock_publish_event, mock_action_handlers,
+        integration_v2_as_dict, deadline_expires, status_code,
+):
+    # GUNDI-5801: a failed or timed-out run attaches every stored
+    # configuration row. A secret declared only by writeOnly (no password
+    # format or widget, no secret-looking name) must still be masked in both
+    # the IntegrationActionFailed event and the JSON response.
+    from gundi_core.schemas.v2 import Integration
+    from gundi_action_runner.services.redaction import REDACTED
+    stored = integration_v2_as_dict
+    for row in stored["configurations"]:
+        if row["action"]["value"] == "pull_observations":
+            row["data"] = {"devices": '[{"id": "37590", "key": "DEVICE-KEY-123"}]', "lookback_hours": 12}
+    integration = Integration.parse_obj(stored)
+    assert any(r.action.value == "pull_observations" for r in integration.configurations)
+    mock_config_manager.get_integration_details = AsyncMock(return_value=integration)
+    if deadline_expires:
+        # The runner's own execution limit, not an error the handler raised.
+        mocker.patch.object(settings, "MAX_ACTION_EXECUTION_TIME", 0.01)
+
+        async def handler(**kwargs):
+            await asyncio.sleep(5)
+    else:
+        handler = AsyncMock(side_effect=RuntimeError("provider exploded"))
+    mock_action_handlers["pull_observations"] = (handler, _WriteOnlySecretPullConfiguration, None)
+    mocker.patch("gundi_action_runner.services.action_runner.action_handlers", mock_action_handlers)
+    mocker.patch("gundi_action_runner.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("gundi_action_runner.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("gundi_action_runner.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("gundi_action_runner.services.action_runner.publish_event", mock_publish_event)
+
+    response = api_client.post(
+        "/v1/actions/execute/",
+        json={"integration_id": str(integration.id), "action_id": "pull_observations"},
+    )
+
+    assert response.status_code == status_code
+    assert "DEVICE-KEY-123" not in response.text
+    rows = {row["action"]["value"]: row["data"] for row in response.json()["detail"]["config_data"]["configurations"]}
+    assert rows["pull_observations"] == {"devices": REDACTED, "lookback_hours": 12}
+    events = _published_events_of_type(mock_publish_event, IntegrationActionFailed)
+    assert len(events) == 1
+    assert "DEVICE-KEY-123" not in events[0].json()
+
+
+@pytest.mark.asyncio
+async def test_invalid_config_failure_redacts_the_action_config_it_attaches(
+        mocker, mock_gundi_client_v2, integration_v2, mock_config_manager,
+        mock_publish_event, mock_action_handlers,
+):
+    # A manual run whose config fails validation attaches that config (the
+    # flat action-config shape, not the configurations list) to the failure.
+    from gundi_action_runner.services.redaction import REDACTED
+    mocker.patch("gundi_action_runner.services.action_runner.action_handlers", mock_action_handlers)
+    mocker.patch("gundi_action_runner.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("gundi_action_runner.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("gundi_action_runner.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("gundi_action_runner.services.action_runner.publish_event", mock_publish_event)
+    bad_config = mocker.MagicMock()
+    bad_config.data = {"lookback_days": "two", "api_key": "key-789"}
+    mock_config_manager.get_action_configuration.return_value = async_return(bad_config)
+
+    response = await execute_action(
+        integration_id=str(integration_v2.id), action_id="pull_observations", triggered_by="manual",
+    )
+
+    assert response.status_code == 422
+    assert "key-789" not in response.body.decode()
+    events = _published_events_of_type(mock_publish_event, IntegrationActionFailed)
+    assert len(events) == 1
+    assert events[0].payload.config_data == {"lookback_days": "two", "api_key": REDACTED}
+
+
+@pytest.mark.asyncio
+async def test_handler_failure_redacts_the_request_and_response_it_attaches(
+        mocker, caplog, mock_gundi_client_v2, mock_config_manager, mock_publish_event, mock_action_handlers, integration_v2,
+):
+    # A connector's own password-grant token POST that the provider rejects:
+    # the httpx error carries the request (body holds the password, URL may
+    # hold a key) and the response (may echo a token). All three are
+    # attached to the IntegrationActionFailed event and the JSON response,
+    # and must be masked like config_data is. The error is the one
+    # raise_for_status() builds, whose message names the full URL, query
+    # string included: that text reaches the event's error and traceback
+    # and the application log, and must be masked there too.
+    from gundi_action_runner.services.redaction import REDACTED
+    request = httpx.Request(
+        "POST", "https://account.example.com/auth/token?api_key=k-999",
+        data={"grant_type": "password", "client_id": "api-telemetry", "username": "me@example.com", "password": "hunter2"},
+    )
+    response = httpx.Response(
+        status_code=403, request=request,
+        content=b'{"error": "forbidden", "access_token": "tok-123"}', headers={"Content-Type": "application/json"},
+    )
+    handler, _, _ = mock_action_handlers["pull_observations"]
+
+    def raise_for_status(*args, **kwargs):
+        response.raise_for_status()
+
+    handler.side_effect = raise_for_status
+    caplog.set_level("ERROR", logger="gundi_action_runner.services.action_runner")
+    mocker.patch("gundi_action_runner.services.action_runner.action_handlers", mock_action_handlers)
+    mocker.patch("gundi_action_runner.services.action_runner._portal", mock_gundi_client_v2)
+    mocker.patch("gundi_action_runner.services.action_runner.config_manager", mock_config_manager)
+    mocker.patch("gundi_action_runner.services.activity_logger.publish_event", mock_publish_event)
+    mocker.patch("gundi_action_runner.services.action_runner.publish_event", mock_publish_event)
+
+    http_response = api_client.post(
+        "/v1/actions/execute/",
+        json={"integration_id": str(integration_v2.id), "action_id": "pull_observations"},
+    )
+
+    assert http_response.status_code == 500
+    for secret in ("hunter2", "k-999", "tok-123"):
+        assert secret not in http_response.text
+        assert secret not in caplog.text
+    details = http_response.json()["detail"]
+    assert details["error"] == (
+        f"Authentication failed — Client error '403 Forbidden' for url 'https://account.example.com/auth/token?api_key={REDACTED}' (HTTP 403)"
+    )
+    assert "HTTPStatusError" in details["error_traceback"]
+    assert f"auth/token?api_key={REDACTED}'" in details["error_traceback"]
+    assert details["request_data"] == (
+        f"grant_type=password&client_id=api-telemetry&username=me%40example.com&password={REDACTED}"
+    )
+    assert details["request_url"] == f"https://account.example.com/auth/token?api_key={REDACTED}"
+    assert details["server_response_body"] == f'{{"error": "forbidden", "access_token": "{REDACTED}"}}'
+    events = _published_events_of_type(mock_publish_event, IntegrationActionFailed)
+    assert len(events) == 1
+    for secret in ("hunter2", "k-999", "tok-123"):
+        assert secret not in events[0].json()
+    assert events[0].payload.error == details["error"]
+    assert events[0].payload.error_traceback == details["error_traceback"]
+    assert events[0].payload.request_data == details["request_data"]
+    assert events[0].payload.request_url == details["request_url"]
+    assert events[0].payload.server_response_body == details["server_response_body"]
