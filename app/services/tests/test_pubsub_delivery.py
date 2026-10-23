@@ -67,6 +67,12 @@ def runner_mocks(mocker, mock_gundi_client_v2, mock_config_manager, mock_publish
     return mock_config_manager
 
 
+def _raised_from(exc, cause):
+    """`exc` as `raise exc from cause` leaves it: the status stays on the cause."""
+    exc.__cause__ = cause
+    return exc
+
+
 def _install_handler(mocker, handler, action_id="pull_observations", config_model=MockPullActionConfiguration):
     mocker.patch("app.services.action_runner.action_handlers", {action_id: (handler, config_model, None)})
     return handler
@@ -223,6 +229,13 @@ def test_background_mode_acks_before_the_run_finishes(mocker, runner_mocks):
         (IntegrationBadResponseError("invalid", status_code=422), False),
         (IntegrationBadResponseError("flaky", status_code=500), True),
         (IntegrationBadResponseError("busy", status_code=429), True),
+        # A status below 400 is not a provider verdict (a 200 maintenance
+        # page, a 3xx from a proxy): retried on the category, like no status.
+        (IntegrationBadResponseError("not JSON", status_code=200), True),
+        (IntegrationBadResponseError("redirected", status_code=302), True),
+        # The status may sit on the cause: `raise IntegrationBadResponseError(msg) from http_err`.
+        (_raised_from(IntegrationBadResponseError("gone"), _provider_error(404)), False),
+        (_raised_from(IntegrationBadResponseError("flaky"), _provider_error(503)), True),
         # A connector's own rate-limit mapping (EarthRanger's 409) stays retryable.
         (IntegrationRateLimitError("one per second", status_code=409), True),
         (IntegrationAuthError("nope"), False),

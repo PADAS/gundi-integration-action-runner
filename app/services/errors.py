@@ -128,9 +128,13 @@ def source_status_code(exc: Exception) -> Optional[int]:
     `GundiAPIError` / `AuthenticationError` `.status_code`, aiohttp's
     `ClientResponseError.status`, and the duck-typed `.response.status_code`
     (httpx.HTTPStatusError, requests.HTTPError, and anything else that keeps
-    the response on the exception). This is the single reader shared by the
-    classifier and the ephemeral status forwarding, so wherever a status is
-    forwarded at all, it is the one the text names.
+    the response on the exception). An `IntegrationError` without its own
+    status is read through its `__cause__` by the same rules: the common
+    `raise IntegrationBadResponseError(msg) from http_err` leaves the status
+    on the cause, and a connector that wraps instead of copying `status_code=`
+    gets the same verdict. This is the single reader shared by the
+    classifier, the retry policy and the ephemeral status forwarding, so
+    wherever a status is forwarded at all, it is the one the text names.
 
     The one deliberate divergence is a Gundi-side failure, where the text
     keeps Gundi's status ("Gundi API request failed (HTTP 401)") while the
@@ -146,6 +150,11 @@ def source_status_code(exc: Exception) -> Optional[int]:
     """
     if isinstance(exc, IntegrationError):
         code = getattr(exc, "status_code", None)
+        cause = exc.__cause__
+        if code is None and cause is not None and not isinstance(cause, (GundiAPIError, AuthenticationError)):
+            # A Gundi-side cause is excluded: that is the runner's own call,
+            # not the provider's verdict (the divergence above).
+            return source_status_code(cause)
     elif isinstance(exc, aiohttp.ClientResponseError):
         code = exc.status
     elif isinstance(exc, (GundiAPIError, AuthenticationError)):

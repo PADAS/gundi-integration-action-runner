@@ -75,6 +75,12 @@ def _http_status_error(status_code: int) -> httpx.HTTPStatusError:
     return httpx.HTTPStatusError(f"HTTP {status_code}", request=request, response=response)
 
 
+def _raised_from(exc: Exception, cause: Exception) -> Exception:
+    """`exc` as `raise exc from cause` leaves it."""
+    exc.__cause__ = cause
+    return exc
+
+
 def test_classify_explicit_integration_error_wins_over_heuristics():
     exc = IntegrationBadResponseError("Provider returned XML instead of JSON", status_code=401)
 
@@ -206,10 +212,26 @@ def test_classify_builtin_timeout_as_connectivity():
         (AuthenticationError("invalid_client", status_code=401, error="invalid_client"), 401),
         (AuthenticationError("keycloak unreachable", transport=True), None),
         (ValueError("no response here"), None),
+        # `raise IntegrationBadResponseError(msg) from http_err`: the status
+        # stays on the cause and is read from there by the same rules.
+        (_raised_from(IntegrationBadResponseError("gone"), _http_status_error(404)), 404),
+        (_raised_from(IntegrationBadResponseError("odd"), aiohttp.ClientResponseError(None, (), status=502)), 502),
+        # The error's own status wins over its cause's.
+        (_raised_from(IntegrationBadResponseError("own", status_code=503), _http_status_error(404)), 503),
+        # A cause without a status, or a Gundi-side cause (the runner's own
+        # call, not the provider's verdict), leaves it unknown.
+        (_raised_from(IntegrationBadResponseError("no status"), ValueError("not JSON")), None),
+        (_raised_from(IntegrationBadResponseError("gundi"), GundiAPIError(status_code=503)), None),
     ],
 )
 def test_source_status_code_reads_every_carrier(exc, expected):
     assert source_status_code(exc) == expected
+
+
+def test_classified_text_names_the_status_of_the_cause():
+    exc = _raised_from(IntegrationBadResponseError("Feed not found"), _http_status_error(404))
+
+    assert format_error_message(exc) == f"{IntegrationBadResponseError.default_title} — Feed not found (HTTP 404)"
 
 
 @pytest.mark.parametrize(

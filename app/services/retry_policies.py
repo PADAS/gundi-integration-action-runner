@@ -56,10 +56,12 @@ def is_transient_gundi_error(exc: BaseException) -> bool:
 
 
 # IntegrationError categories a connector raises for failures that may pass
-# on a later attempt. "auth" and "configuration" are final: rejected
-# credentials and a bad setting do not fix themselves within PubSub's backoff,
-# and a handler that refreshes an expired token retries that itself.
-RETRYABLE_INTEGRATION_ERROR_TYPES = frozenset({"connectivity", "rate_limit", "bad_response"})
+# on a later attempt, whatever status they carry. "auth" and "configuration"
+# are final: rejected credentials and a bad setting do not fix themselves
+# within PubSub's backoff, and a handler that refreshes an expired token
+# retries that itself. "bad_response" is not listed because it is decided by
+# its HTTP status in is_retryable_failure, not by the category alone.
+RETRYABLE_INTEGRATION_ERROR_TYPES = frozenset({"connectivity", "rate_limit"})
 
 
 def is_retryable_failure(exc: BaseException) -> bool:
@@ -86,12 +88,17 @@ def is_retryable_failure(exc: BaseException) -> bool:
         if exc.error_type == "bad_response":
             # A connector classifies any unexpected answer as bad_response,
             # permanent 4xx included (EarthRanger's deleted resource is a
-            # classified 404). The status it carries decides, as it would for
-            # a raw HTTP error; only a status-less bad response is retried on
-            # the category alone. rate_limit stays retryable whatever status
-            # the connector mapped to it (EarthRanger's 409).
+            # classified 404). A failure status it carries, on itself or on
+            # its cause, decides as it would for a raw HTTP error. A status
+            # below 400 is not a provider verdict (a 200 maintenance page, a
+            # 3xx from a proxy; the ephemeral path draws the same line), so
+            # it and a status-less bad response are retried on the category
+            # alone. rate_limit stays retryable whatever status the connector
+            # mapped to it (EarthRanger's 409).
             status_code = source_status_code(exc)
-            return _retryable_status(status_code) if status_code is not None else True
+            if status_code is not None and 400 <= status_code <= 599:
+                return _retryable_status(status_code)
+            return True
         return exc.error_type in RETRYABLE_INTEGRATION_ERROR_TYPES
     status_code = source_status_code(exc)
     if status_code is not None:
