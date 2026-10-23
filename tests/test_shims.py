@@ -9,7 +9,7 @@ ALIASED = {
     **{f"app.services.{m}": f"gundi_action_runner.services.{m}"
        for m in ["action_runner", "action_scheduler", "activity_logger",
                  "config_events_consumer", "config_manager", "core", "errors",
-                 "gundi", "self_registration", "state", "utils", "webhooks"]},
+                 "gundi", "redaction", "self_registration", "state", "utils", "webhooks"]},
     "app.routers.actions": "gundi_action_runner.routers.actions",
     "app.routers.webhooks": "gundi_action_runner.routers.webhooks",
     "app.routers.config_events": "gundi_action_runner.routers.config_events",
