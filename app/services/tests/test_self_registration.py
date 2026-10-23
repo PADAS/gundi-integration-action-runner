@@ -884,3 +884,29 @@ async def test_register_integration_description_arg_wins_over_setting(
     await register_integration_in_gundi(gundi_client=mock_gundi_client_v2, type_description="from the arg")
     registered = mock_gundi_client_v2.register_integration_type.call_args[0][0]
     assert registered["description"] == "from the arg"
+
+
+def test_register_cli_passes_the_description_through(mocker):
+    # The CLI threads --description into register_integration_in_gundi by
+    # keyword: a reordered option or a renamed kwarg would still import and
+    # silently register the default text, which is what the option exists to
+    # replace.
+    from unittest.mock import AsyncMock
+
+    from click.testing import CliRunner
+
+    from app.register import register_integration
+
+    registration = mocker.patch(
+        "app.register.register_integration_in_gundi", new_callable=AsyncMock
+    )
+    result = CliRunner().invoke(
+        register_integration,
+        ["--slug", "x_tracker", "--description", "X Tracker collars, via the X Tracker cloud API"],
+    )
+    assert result.exit_code == 0, result.output
+    registration.assert_awaited_once()
+    kwargs = registration.await_args.kwargs
+    assert kwargs["type_slug"] == "x_tracker"
+    assert kwargs["type_name"] is None
+    assert kwargs["type_description"] == "X Tracker collars, via the X Tracker cloud API"
