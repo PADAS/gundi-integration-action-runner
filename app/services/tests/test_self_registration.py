@@ -822,3 +822,91 @@ async def test_reference_actions_are_registered_with_the_reference_type(mocker):
     assert [a["value"] for a in data["actions"]] == ["list_dummy"]
     assert data["actions"][0]["type"] == "reference"
     assert data["actions"][0]["is_periodic_action"] is False
+
+
+@pytest.mark.asyncio
+async def test_register_integration_with_description_arg(
+    mocker,
+    mock_gundi_client_v2,
+    mock_action_handlers,
+    mock_get_webhook_handler_for_fixed_json_payload,
+):
+    mocker.patch("app.services.self_registration.INTEGRATION_TYPE_SLUG", "x_tracker")
+    mocker.patch("app.services.self_registration.action_handlers", mock_action_handlers)
+    mocker.patch(
+        "app.services.self_registration.get_webhook_handler",
+        mock_get_webhook_handler_for_fixed_json_payload,
+    )
+    description = "X Tracker collars, via the X Tracker cloud API"
+    await register_integration_in_gundi(
+        gundi_client=mock_gundi_client_v2, type_description=description
+    )
+    registered = mock_gundi_client_v2.register_integration_type.call_args[0][0]
+    assert registered["description"] == description
+
+
+@pytest.mark.asyncio
+async def test_register_integration_with_description_setting(
+    mocker,
+    mock_gundi_client_v2,
+    mock_action_handlers,
+    mock_get_webhook_handler_for_fixed_json_payload,
+):
+    mocker.patch("app.services.self_registration.INTEGRATION_TYPE_SLUG", "x_tracker")
+    mocker.patch(
+        "app.services.self_registration.INTEGRATION_TYPE_DESCRIPTION",
+        "X Tracker collars, from the setting",
+    )
+    mocker.patch("app.services.self_registration.action_handlers", mock_action_handlers)
+    mocker.patch(
+        "app.services.self_registration.get_webhook_handler",
+        mock_get_webhook_handler_for_fixed_json_payload,
+    )
+    await register_integration_in_gundi(gundi_client=mock_gundi_client_v2)
+    registered = mock_gundi_client_v2.register_integration_type.call_args[0][0]
+    assert registered["description"] == "X Tracker collars, from the setting"
+
+
+@pytest.mark.asyncio
+async def test_register_integration_description_arg_wins_over_setting(
+    mocker,
+    mock_gundi_client_v2,
+    mock_action_handlers,
+    mock_get_webhook_handler_for_fixed_json_payload,
+):
+    mocker.patch("app.services.self_registration.INTEGRATION_TYPE_SLUG", "x_tracker")
+    mocker.patch("app.services.self_registration.INTEGRATION_TYPE_DESCRIPTION", "from the setting")
+    mocker.patch("app.services.self_registration.action_handlers", mock_action_handlers)
+    mocker.patch(
+        "app.services.self_registration.get_webhook_handler",
+        mock_get_webhook_handler_for_fixed_json_payload,
+    )
+    await register_integration_in_gundi(gundi_client=mock_gundi_client_v2, type_description="from the arg")
+    registered = mock_gundi_client_v2.register_integration_type.call_args[0][0]
+    assert registered["description"] == "from the arg"
+
+
+def test_register_cli_passes_the_description_through(mocker):
+    # The CLI threads --description into register_integration_in_gundi by
+    # keyword: a reordered option or a renamed kwarg would still import and
+    # silently register the default text, which is what the option exists to
+    # replace.
+    from unittest.mock import AsyncMock
+
+    from click.testing import CliRunner
+
+    from app.register import register_integration
+
+    registration = mocker.patch(
+        "app.register.register_integration_in_gundi", new_callable=AsyncMock
+    )
+    result = CliRunner().invoke(
+        register_integration,
+        ["--slug", "x_tracker", "--description", "X Tracker collars, via the X Tracker cloud API"],
+    )
+    assert result.exit_code == 0, result.output
+    registration.assert_awaited_once()
+    kwargs = registration.await_args.kwargs
+    assert kwargs["type_slug"] == "x_tracker"
+    assert kwargs["type_name"] is None
+    assert kwargs["type_description"] == "X Tracker collars, via the X Tracker cloud API"

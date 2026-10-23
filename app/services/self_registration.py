@@ -16,6 +16,7 @@ from app.actions import (
 from app.settings import (
     INTEGRATION_TYPE_SLUG,
     INTEGRATION_TYPE_NAME,
+    INTEGRATION_TYPE_DESCRIPTION,
     INTEGRATION_SERVICE_URL,
 )
 from .core import ActionTypeEnum
@@ -25,7 +26,9 @@ from .retry_policies import is_transient_gundi_error
 logger = logging.getLogger(__name__)
 
 
-async def register_integration_in_gundi(gundi_client, type_slug=None, type_name=None, service_url=None, action_schedules=None):
+async def register_integration_in_gundi(
+    gundi_client, type_slug=None, type_name=None, service_url=None, action_schedules=None, type_description=None
+):
     # Prepare the integration name and value
     integration_type_slug = type_slug or INTEGRATION_TYPE_SLUG
     if not integration_type_slug:
@@ -38,7 +41,11 @@ async def register_integration_in_gundi(gundi_client, type_slug=None, type_name=
     data = {
         "name": integration_type_name,
         "value": integration_type_slug,
-        "description": f"Default type for integrations with {integration_type_name}",
+        "description": (
+            type_description
+            or INTEGRATION_TYPE_DESCRIPTION
+            or f"Default type for integrations with {integration_type_name}"
+        ),
     }
     if integration_service_url := service_url or INTEGRATION_SERVICE_URL:
         logger.info(
