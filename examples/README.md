@@ -35,7 +35,7 @@ collection; it does not enable prediction submission.
 - [Studio model page](https://olmoearth.allenai.org/projects/6205704f-b09e-432b-af61-d68b1ebe018f/models/f96ef025-780e-4393-9083-e732a324670e)
 
 This is a configuration draft, not a ready-to-run integration. The AOI remains
-the example polygon, the date property remains a placeholder, and
+the example polygon, and
 cadence, start date, imagery lag and event type remain unconfirmed
 example settings. Collection
 is disabled on schedule in this draft; keep submission disabled too.

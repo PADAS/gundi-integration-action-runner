@@ -76,7 +76,6 @@ IDENTITY_FIELDS = {
     "area_of_interest",
     "schedule_start",
     "cadence",
-    "change_date_property",
 }
 
 

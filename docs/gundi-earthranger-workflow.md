@@ -51,7 +51,7 @@ The model reference time is the due slot minus an imagery lag (14 days, `IMAGERY
 
 ## Change dates and repeated detections
 
-The polygon comes from `post_change`; the change date is an auxiliary property of that polygon. The pilot requires a verified ISO date property; its precision is set in code (`CHANGE_DATE_PRECISION`), not in the form. Raw timestep indices and encoded month counts are rejected instead of guessed into dates.
+The polygon comes from `post_change`; the change date is an auxiliary property of that polygon. The connector reads the change date from the polygon's `ts_start` property (an ISO date; `ts_end` is passed through in event details). The property and its precision are set in code (`CHANGE_DATE_PROPERTY`, `CHANGE_DATE_PRECISION`), not in the form. Raw timestep indices and encoded month counts are rejected instead of guessed into dates.
 
 - `recorded_at`: estimated occurrence date, represented as UTC midnight.
 - `first_discovered_at`: when the connector found the detection.

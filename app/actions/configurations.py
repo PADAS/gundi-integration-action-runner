@@ -1,5 +1,6 @@
 """One LCC monitor per saved Gundi integration."""
 
+import json
 from datetime import date
 from enum import Enum
 from typing import Any, Dict, List, Optional
@@ -94,8 +95,13 @@ class PullEventsConfig(PullActionConfiguration):
         title="LCC model",
         description="The model's UUID, as in its Studio URL. Use a model configured to vectorize post_change and emit ISO date properties.",
     )
+    # The portal renders an "object" field as nested inputs with nowhere to paste,
+    # so the schema advertises a string and parse_area turns the text into a dict.
     area_of_interest: Dict[str, Any] = FieldWithUIOptions(
-        ..., title="Area (GeoJSON geometry)", ui_options=UIOptions(widget="textarea")
+        ...,
+        title="Area (GeoJSON geometry)",
+        description='Paste a Polygon or MultiPolygon geometry, e.g. {"type": "Polygon", "coordinates": [...]}.',
+        ui_options=UIOptions(widget="textarea"),
     )
     cadence: Cadence = FieldWithUIOptions(
         Cadence.MONTHLY,
@@ -114,16 +120,25 @@ class PullEventsConfig(PullActionConfiguration):
         unique_items=True,
         ui_options=UIOptions(widget="select"),
     )
-    change_date_property: str = pydantic.Field(
-        ...,
-        min_length=1,
-        description="Verified polygon property containing an ISO date, not a timestep index or encoded month count.",
-    )
     changes_since: Optional[date] = pydantic.Field(
         None,
         description="Optional fixed event-date cutoff. Never advanced as an ingestion watermark.",
     )
     event_type: str = pydantic.Field("olmoearth_detection", min_length=1)
+
+    class Config:
+        @staticmethod
+        def schema_extra(schema, model):
+            schema["properties"]["area_of_interest"]["type"] = "string"
+
+    @pydantic.validator("area_of_interest", pre=True)
+    def parse_area(cls, value):
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except ValueError as exc:
+                raise ValueError("Area must be GeoJSON geometry text") from exc
+        return value
 
     _valid_area = pydantic.validator("area_of_interest", allow_reuse=True)(
         polygon_geometry

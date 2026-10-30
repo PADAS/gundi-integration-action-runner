@@ -58,7 +58,6 @@ def config():
         cadence="weekly",
         select_all_types=False,
         post_change_types=["mining"],
-        change_date_property="onset",
     )
 
 
@@ -123,7 +122,7 @@ def feature(fid="f1", changed="2026-09-10", change_type="mining", geometry=None)
             "geometry": geometry or AREA,
             "properties": {
                 "post_change": change_type,
-                "onset": changed,
+                "ts_start": changed,
                 "oe_start_time": "2026-10-01T00:00:00Z",
                 "oe_prediction_result_id": "run-result-id",
             },
@@ -170,9 +169,16 @@ def test_monitor_form_requires_selection_and_valid_polygon(config):
         {"post_change_types": []},
         {"project_id": "bad"},
         {"area_of_interest": {"type": "Point", "coordinates": [1, 2]}},
+        {"area_of_interest": "not json"},
     ):
         with pytest.raises(ValidationError):
             PullEventsConfig.parse_obj({**config.dict(), **changes})
+
+
+def test_area_is_pasted_as_text(config):
+    assert PullEventsConfig.schema()["properties"]["area_of_interest"]["type"] == "string"
+    pasted = {**config.dict(), "area_of_interest": json.dumps(config.area_of_interest)}
+    assert PullEventsConfig.parse_obj(pasted).area_of_interest == config.area_of_interest
 
 
 def test_calendar_schedule_keeps_anchor_after_short_month(config):
@@ -590,7 +596,6 @@ def test_portal_schema_and_example_keep_environment_and_ids_configurable():
     parsed = PullEventsConfig.parse_obj(example)
     schema = PullEventsConfig.schema()
     assert "project_id" in schema["required"] and "model_id" in schema["required"]
-    assert "change_date_property" in schema["required"]
     assert schema["properties"]["post_change_types"]["type"] == "array"
     assert schema["properties"]["post_change_types"]["uniqueItems"] is True
     assert PullEventsConfig.ui_schema()["post_change_types"]["ui:widget"] == "select"
@@ -774,8 +779,8 @@ async def test_deleted_prediction_fails_its_job_instead_of_wedging(config, api, 
 @pytest.mark.asyncio
 async def test_identity_change_names_the_changed_settings(config, api, store):
     await seed(config, api, store)
-    config.change_date_property = "changed_on"
-    with pytest.raises(IntegrationConfigurationError, match=r"\(change_date_property\)"):
+    config.cadence = Cadence.MONTHLY
+    with pytest.raises(IntegrationConfigurationError, match=r"\(cadence\)"):
         await make_monitor(config, api, store).collect()
 
 

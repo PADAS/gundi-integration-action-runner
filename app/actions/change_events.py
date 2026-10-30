@@ -24,6 +24,9 @@ SITE_PRECISION = 7
 # How precise the LCC model's change dates are. A property of the model, not a
 # partner setting; revisit when the model's date output is settled.
 CHANGE_DATE_PRECISION = "month"
+# The polygon property holding the change date: the LCC model writes the start and
+# end of the change window as ts_start and ts_end. Both reach event_details.
+CHANGE_DATE_PROPERTY = "ts_start"
 
 NEW_SITE = "new_site"
 NEW_CHANGE_TYPE = "new_change_type"
@@ -91,7 +94,7 @@ def classify(
     change_type = props.get("post_change")
     if change_type not in job.selected_types:
         return None
-    changed = parse_change_date(props.get(config.change_date_property))
+    changed = parse_change_date(props.get(CHANGE_DATE_PROPERTY))
     if job.changes_since and changed < job.changes_since:
         return None
     return change_type, changed

@@ -34,7 +34,6 @@
   "post_change_types": [
     "mining"
   ],
-  "change_date_property": "REPLACE_WITH_VERIFIED_ISO_DATE_PROPERTY",
   "event_type": "olmoearth_detection",
   "run_on_schedule": false
 }
