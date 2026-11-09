@@ -17,9 +17,13 @@ jobs:
         # typing_extensions listed explicitly: pip-tools 7.6.0 imports it on
         # Python 3.10 without declaring it as a dependency
         run: pip install pip-tools typing_extensions
-      - name: Install compile dependencies
-        run: pip-compile --output-file=requirements.txt requirements-base.in requirements-dev.in requirements.in
+      - name: Compile dependencies
+        # requirements-dev.in constrains itself to requirements.txt, so the prod lock
+        # must exist before the dev lock is compiled.
+        run: |
+          pip-compile --output-file=requirements.txt requirements-base.in requirements.in
+          pip-compile --output-file=requirements-dev.txt requirements-dev.in
       - name: Install dependencies
-        run: pip install --no-cache-dir -r requirements.txt
+        run: pip install --no-cache-dir -r requirements.txt -r requirements-dev.txt
       - name: Run unit tests
         run: pytest

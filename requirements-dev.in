@@ -1,7 +1,10 @@
 # Dependencies for development. Don't edit or override this file.
 # Use requirements.in to add integration-specific dependencies instead.
-# >=9.0.3: pytest 7.4.x carries GHSA-6w46-j5rx-g56g (tmpdir handling); the Docker image
-# installs the lock compiled from this file too, so it ships in the prod image.
+# Compiled into requirements-dev.txt, which only CI and the devimage stage install;
+# the prod image installs requirements.txt alone, so nothing here ships to production.
+# Shared transitive deps are pinned to whatever requirements.txt resolved them to.
+-c requirements.txt
+# >=9.0.3: pytest 7.4.x carries GHSA-6w46-j5rx-g56g (tmpdir handling)
 pytest~=9.0.3
 # 1.3 is the first line that accepts pytest 9 (pytest<10,>=8.2)
 pytest-asyncio~=1.3
