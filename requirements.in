@@ -1,1 +1,3 @@
-# Add your integration-specific dependencies here
+# Add your integration-specific runtime dependencies here. They compile into
+# requirements.txt, which the production image installs. Test-only dependencies
+# (respx, pytest plugins, ...) go in requirements-test.in instead.

@@ -24,11 +24,11 @@ In a Terminal, run `docker compose up --build`
 
 > [!NOTE]
 >
-> Be sure to compile `requirements.txt` and `requirements-dev.txt` before running the docker compose command, or you might miss some important dependencies:
+> Be sure to compile `requirements.txt` and `requirements-dev.txt` before running the docker compose command, or you might miss some important dependencies. Run these from the repository root, one level up from `local/`:
 >
 > ```bash
 > pip-compile --output-file=requirements.txt requirements-base.in requirements.in
-> pip-compile --output-file=requirements-dev.txt requirements-dev.in
+> pip-compile --output-file=requirements-dev.txt requirements-dev.in requirements-test.in
 > ```
 
 
