@@ -90,7 +90,8 @@ async def validate_outbound_url(url: str, *, allowlist: Iterable[str] = (), what
         raise ValueError(f"{lead} scheme '{parsed.scheme}' is not allowed; only 'https' is permitted.")
     if not hostname:
         raise ValueError(f"{lead} has no hostname.")
-    allowed = [h.rstrip(".").lower() for h in allowlist]
+    # env.list() keeps the whitespace around commas ("a.com, b.com"), so strip it.
+    allowed = [h.strip().rstrip(".").lower() for h in allowlist]
     if allowed and hostname not in allowed:
         raise ValueError(f"{lead} hostname '{hostname}' is not in the configured allowlist.")
     try:
