@@ -1,5 +1,6 @@
 import logging
 
+from fastapi.responses import JSONResponse
 from gundi_core.events import (
     SystemEventBaseModel,
     IntegrationCreated,
@@ -12,6 +13,7 @@ from gundi_core.events import (
 
 
 from .config_manager import IntegrationConfigurationManager
+from .retry_policies import is_retryable_failure
 
 
 logger = logging.getLogger(__name__)
@@ -251,6 +253,29 @@ async def process_config_event(event_data: dict, attributes: dict = None):
         await handler(event=parsed_event)
     except Exception as e:  # ToDo: handle more specific exceptions
         logger.exception(f"Error processing event: {type(e)}:{e}",)
+        if is_retryable_failure(e):
+            # The Created and Updated handlers read the portal (and every
+            # handler writes Redis), so a transient outage on either side can
+            # fail an event a retry would process. Acking it (2xx) would drop
+            # it for good and leave the cache stale or empty until the next
+            # reload; a 5xx has PubSub redeliver it with backoff, as
+            # main._should_redeliver arranges for action runs. Anything
+            # final (a 4xx, a bug) is still acked so it is not retried forever.
+            #
+            # Redelivering an Updated or Deleted event late is only safe
+            # because the subscription is ordered: the portal publishes every
+            # config event under one ordering key and the config-events
+            # subscription enables message ordering, so PubSub holds the
+            # events behind a nacked one and redelivers them in publish
+            # order; an older event cannot land on top of a newer one. The
+            # price is that a failing event holds up the events behind it
+            # until it succeeds or the subscription's dead-letter policy
+            # moves it aside. A deployment without ordering gets the
+            # redelivery without that guarantee.
+            return JSONResponse(
+                status_code=500,
+                content={"status": "error", "message": f"Transient error: {type(e).__name__}", "retryable": True},
+            )
         return {"status": "error", "message": f"Internal error: {str(e)}"}
     else:
         logger.info(f"Configuration event {event_type} ({parsed_event.event_id}) processed successfully.")

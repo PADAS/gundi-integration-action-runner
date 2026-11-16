@@ -1,7 +1,10 @@
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
+from gundi_client_v2.errors import AuthenticationError, GundiAPIError
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 from app.main import app
 
@@ -715,4 +718,43 @@ async def test_action_config_created_that_loses_its_write_stops_when_the_winner_
 
     assert mock_config_manager.replace_cached_entry.await_count == 1
     assert mock_config_manager._fetch_integration_from_gundi.await_count == 1, "no second fetch over a fresh tombstone"
+    assert not mock_config_manager.install_action_configuration_if_missing.called
+
+
+@pytest.mark.parametrize(
+    "error, expected_status",
+    [
+        (GundiAPIError(503, "portal unavailable"), 500),
+        (httpx.ConnectError("portal unreachable", request=httpx.Request("GET", "https://gundi.example")), 500),
+        (AuthenticationError("token endpoint unreachable", transport=True), 500),
+        (RedisConnectionError("redis down"), 500),
+        (GundiAPIError(404, "integration not found"), 200),
+        (AuthenticationError("invalid_client", status_code=401, error="invalid_client"), 200),
+        (RuntimeError("a bug in the handler"), 200),
+    ],
+    ids=["portal_5xx", "portal_unreachable", "oauth_transport", "redis_down", "portal_4xx", "oauth_rejected", "bug"],
+)
+@pytest.mark.parametrize("event_fixture", ["action_config_created_event_as_pubsub_message", "action_config_updated_event_as_pubsub_message"])
+def test_config_event_portal_fetch_failure_is_redelivered_only_when_transient(
+        request, mocker, mock_gundi_client_v2, mock_publish_event, mock_action_handlers, mock_config_manager,
+        pubsub_message_request_headers, event_fixture, error, expected_status
+):
+    # Created always reads the portal, and Updated does on a cold cache. A
+    # transient failure there must answer PubSub with a non-2xx so the event is
+    # redelivered instead of acked and dropped, leaving the cache stale; a
+    # failure a retry cannot fix is acked so it is not redelivered forever.
+    mock_config_manager.read_cached_action_configuration = AsyncMock(return_value=(None, None))
+    mock_config_manager._fetch_integration_from_gundi = AsyncMock(side_effect=error)
+    mocker.patch("app.services.config_events_consumer.config_manager", mock_config_manager)
+
+    response = api_client.post(
+        "/config-events/",
+        headers=pubsub_message_request_headers,
+        json=request.getfixturevalue(event_fixture),
+    )
+
+    assert response.status_code == expected_status
+    assert response.json()["status"] == "error"
+    assert response.json().get("retryable", False) is (expected_status == 500)
+    assert not mock_config_manager.replace_cached_entry.called
     assert not mock_config_manager.install_action_configuration_if_missing.called
