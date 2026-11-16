@@ -24,7 +24,12 @@ In a Terminal, run `docker compose up --build`
 
 > [!NOTE]
 >
-> The Be sure to compile a `requirements.txt` file before running the docker compose command, or you might miss some important dependencies.
+> Be sure to compile `requirements.txt` and `requirements-dev.txt` before running the docker compose command, or you might miss some important dependencies. Run these from the repository root, one level up from `local/`:
+>
+> ```bash
+> pip-compile --output-file=requirements.txt requirements-base.in requirements.in
+> pip-compile --output-file=requirements-dev.txt requirements-dev.in requirements-test.in
+> ```
 
 
 Once these steps are complete you can visit http://localhost:8080/docs to see your Action Runner's browsable API.
