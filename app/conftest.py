@@ -1,4 +1,3 @@
-import asyncio
 import datetime
 import json
 import sys
@@ -52,10 +51,28 @@ class AsyncMock(MagicMock):
         return super(AsyncMock, self).__call__(*args, **kwargs)
 
 
+class ResolvedAwaitable:
+    """A loop-independent, re-awaitable stand-in for a done asyncio.Future.
+
+    Sync fixtures build these before any event loop runs. pytest-asyncio >=1.0
+    closes and unsets the loop after each test, so asyncio.Future() here would
+    raise "There is no current event loop" from the second test onwards.
+
+    Integrations: fixtures of your own that did ``f = asyncio.Future();
+    f.set_result(x)`` should use ``async_return(x)`` (or this class) instead;
+    import both from ``app.conftest``.
+    """
+
+    def __init__(self, result):
+        self._result = result
+
+    def __await__(self):
+        return self._result
+        yield  # unreachable; makes __await__ a generator as the protocol requires
+
+
 def async_return(result):
-    f = asyncio.Future()
-    f.set_result(result)
-    return f
+    return ResolvedAwaitable(result)
 
 
 @pytest.fixture
