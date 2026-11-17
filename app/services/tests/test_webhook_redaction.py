@@ -65,3 +65,24 @@ async def test_webhook_failure_before_config_is_known_still_publishes(mocker):
     assert event.payload.integration_id is None
     assert event.payload.config_data == {}
     assert "lookup failed" in event.payload.error
+
+
+@pytest.mark.asyncio
+async def test_webhook_failure_event_redacts_secrets_in_the_error_text(mocker, integration_v2_with_webhook):
+    integration = integration_v2_with_webhook
+    mocker.patch.object(webhooks, "get_integration", AsyncMock(return_value=integration))
+    published = AsyncMock()
+    mocker.patch.object(webhooks, "publish_event", published)
+
+    async def handler(**kwargs):
+        raise RuntimeError("GET https://provider.example/data?api_key=url-secret failed")
+
+    mocker.patch.object(webhooks, "get_webhook_handler", return_value=(handler, None, None))
+    request = mocker.Mock()
+    request.json = AsyncMock(return_value={})
+
+    await webhooks.process_webhook(request)
+
+    event = published.call_args.kwargs["event"]
+    assert "provider.example" in event.payload.error
+    assert "url-secret" not in event.json()

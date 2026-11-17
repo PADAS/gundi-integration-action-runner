@@ -13,7 +13,7 @@ from app.services.utils import DyntamicFactory
 from app.webhooks.core import get_webhook_handler, DynamicSchemaConfig, HexStringConfig, GenericJsonPayload
 from app.services.config_manager import IntegrationConfigurationManager
 from app.services.url_policy import validate_outbound_url
-from app.services.redaction import redact_secrets
+from app.services.redaction import redact_secrets, redact_text
 
 config_manager = IntegrationConfigurationManager()
 logger = logging.getLogger(__name__)
@@ -215,7 +215,7 @@ async def process_webhook(request: Request):
                 else:
                     parsed_payload = payload_model.parse_obj(json_content)
             except Exception as e:
-                message = f"Error parsing payload: {type(e).__name__}: {str(e)}. Please review configurations."
+                message = redact_text(f"Error parsing payload: {type(e).__name__}: {str(e)}. Please review configurations.")
                 logger.exception(message)
                 await publish_event(
                     event=IntegrationWebhookFailed(
@@ -246,7 +246,9 @@ async def process_webhook(request: Request):
             topic_name=settings.INTEGRATION_EVENTS_TOPIC,
         )
     except Exception as e:
-        message = f"Error processing webhook: {type(e).__name__}: {str(e)}"
+        # The handler's exception text can quote a URL or body with credentials
+        # in it; mask them as the activity logger does for its own events.
+        message = redact_text(f"Error processing webhook: {type(e).__name__}: {str(e)}")
         logger.exception(message)
         await publish_event(
             event=IntegrationWebhookFailed(
