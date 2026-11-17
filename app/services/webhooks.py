@@ -13,6 +13,7 @@ from app.services.utils import DyntamicFactory
 from app.webhooks.core import get_webhook_handler, DynamicSchemaConfig, HexStringConfig, GenericJsonPayload
 from app.services.config_manager import IntegrationConfigurationManager
 from app.services.url_policy import validate_outbound_url
+from app.services.redaction import redact_secrets, redact_text
 
 config_manager = IntegrationConfigurationManager()
 logger = logging.getLogger(__name__)
@@ -162,6 +163,8 @@ async def get_integration(request):
 
 
 async def process_webhook(request: Request):
+    integration = None
+    redacted_webhook_config_data = {}
     try:
         # Try to relate the request to an integration
         integration = await get_integration(request=request)
@@ -178,6 +181,9 @@ async def process_webhook(request: Request):
         json_content = await request.json()
         # Parse config if a model was defined in webhooks/configurations.py
         webhook_config_data = integration.webhook_configuration.data if integration and integration.webhook_configuration else {}
+        # Redact raw saved data before validation: failures here and in the
+        # handler must never publish the original configuration.
+        redacted_webhook_config_data = redact_secrets(webhook_config_data, model=config_model)
         parsed_config = config_model.parse_obj(webhook_config_data) if config_model else {}
         if parsed_config and issubclass(config_model, HexStringConfig):
             json_content["hex_data_field"] = json_content.get("hex_data_field", parsed_config.hex_data_field)
@@ -209,14 +215,14 @@ async def process_webhook(request: Request):
                 else:
                     parsed_payload = payload_model.parse_obj(json_content)
             except Exception as e:
-                message = f"Error parsing payload: {type(e).__name__}: {str(e)}. Please review configurations."
+                message = redact_text(f"Error parsing payload: {type(e).__name__}: {str(e)}. Please review configurations.")
                 logger.exception(message)
                 await publish_event(
                     event=IntegrationWebhookFailed(
                         payload=WebhookExecutionFailed(
                             integration_id=str(integration.id),
                             webhook_id=str(integration.type.webhook.value),
-                            config_data=webhook_config_data,
+                            config_data=redacted_webhook_config_data,
                             error=message
                         )
                     ),
@@ -240,14 +246,16 @@ async def process_webhook(request: Request):
             topic_name=settings.INTEGRATION_EVENTS_TOPIC,
         )
     except Exception as e:
-        message = f"Error processing webhook: {type(e).__name__}: {str(e)}"
+        # The handler's exception text can quote a URL or body with credentials
+        # in it; mask them as the activity logger does for its own events.
+        message = redact_text(f"Error processing webhook: {type(e).__name__}: {str(e)}")
         logger.exception(message)
         await publish_event(
             event=IntegrationWebhookFailed(
                 payload=WebhookExecutionFailed(
                     integration_id=str(integration.id) if integration else None,
                     webhook_id=str(integration.type.webhook.value) if integration and integration.type.webhook else None,
-                    config_data=webhook_config_data,
+                    config_data=redacted_webhook_config_data,
                     error=message  # ToDo: Support storing the error traceback and other details as in action errors
                 )
             ),
