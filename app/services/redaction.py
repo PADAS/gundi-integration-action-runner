@@ -83,9 +83,9 @@ Models = Union[None, Type[pydantic.BaseModel], Sequence[Type[pydantic.BaseModel]
 def redact_secrets(value: Any, *, model: Models = None) -> Any:
     """Return a copy of ``value`` with every secret replaced by ``REDACTED``.
 
-    Walks dicts and list/tuple/set/frozenset containers. Sequence containers
-    are returned as JSON-safe lists. A dict entry is secret when its key is
-    sensitive by name, or when ``model`` (the pydantic model this level of the data was
+    Walks model instances, dicts, and list/tuple/set/frozenset containers.
+    Sequence containers are returned as JSON-safe lists. A dict entry is
+    secret when its key is sensitive by name, or when ``model`` (the pydantic model this level of the data was
     saved from; several when the data may be any of a union's variants)
     declares the field as secret. A secret leaf becomes ``REDACTED``; a
     secret container (a stored OAuth token dict, say) keeps its structure
@@ -103,6 +103,13 @@ def _walk(value: Any, *, specs: Sequence[ModelField], models: Sequence[Type[pyda
     empty, leaving the key-name check. ``inherited`` is set below a secret
     container and masks every leaf."""
     specs = _expand_unions(specs)
+    if isinstance(value, pydantic.BaseModel):
+        models = (*models, type(value))
+        # Pydantic v1's nonrecursive iterator honors field/include/exclude
+        # declarations while retaining nested instances and their runtime
+        # model metadata. dict(value) bypasses those exclusions; .dict()
+        # discards runtime metadata for models inside Any/base-model fields.
+        value = dict(value._iter(to_dict=False))
     if isinstance(value, _SECRET_TYPES):
         # A plain string, so the event does not depend on how its serializer
         # prints a SecretStr. An empty one stays empty, like an unset key.
@@ -121,7 +128,7 @@ def _walk(value: Any, *, specs: Sequence[ModelField], models: Sequence[Type[pyda
         for key, item in value.items():
             child = fields_by_key.get(key, []) + mapping_values
             secret = inherited or _is_sensitive_key(key) or any(_is_secret_field(c) for c in child)
-            if secret and not isinstance(item, (dict, *_SEQUENCE_TYPES)):
+            if secret and not isinstance(item, (dict, pydantic.BaseModel, *_SEQUENCE_TYPES)):
                 redacted[key] = REDACTED if _is_set(item) else item
             else:
                 redacted[key] = _walk(item, specs=child, models=(), inherited=secret)
