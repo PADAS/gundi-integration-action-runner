@@ -1,3 +1,4 @@
+import json
 import time
 import typing
 
@@ -632,3 +633,82 @@ def test_redact_text_is_linear_on_long_runs_without_equals():
     for text in ("a" * 50_000, "h" * 50_000, "x" + "http" * 12_500):
         assert redact_text(text) == text
     assert time.perf_counter() - start < 1
+
+
+@pytest.mark.parametrize("container", [tuple, set, frozenset])
+def test_non_list_containers_recurse_and_become_json_safe(container):
+    class Config(pydantic.BaseModel):
+        values: typing.Tuple[_NestedDetails, ...]
+
+    # Raw data can contain tuples before JSON encoding, including dictionaries.
+    data = {"values": (dict(_NESTED_RAW),), "other": container(["kept"])}
+    out = redact_secrets(data, model=Config)
+    assert out == {"values": [_NESTED_MASKED], "other": ["kept"]}
+    assert data["values"][0] == _NESTED_RAW
+
+
+def test_tuple_config_dict_retains_nested_model_declarations():
+    class Config(pydantic.BaseModel):
+        values: typing.Tuple[_NestedDetails, ...]
+
+    config = Config(values=(_NESTED_RAW,))
+    assert redact_secrets(config.dict(), model=Config) == {"values": [_NESTED_MASKED]}
+
+
+def test_fixed_tuple_applies_each_positions_model_declarations():
+    class First(pydantic.BaseModel):
+        label: str
+
+    class Second(pydantic.BaseModel):
+        code: str = pydantic.Field(..., format="password")
+
+    class Config(pydantic.BaseModel):
+        values: typing.Tuple[First, Second]
+
+    data = {"values": ({"label": "kept"}, {"code": "tuple-secret"})}
+    assert redact_secrets(data, model=Config) == {"values": [{"label": "kept"}, {"code": REDACTED}]}
+
+
+@pytest.mark.parametrize("container", [tuple, set, frozenset])
+def test_sensitive_container_masks_every_leaf(container):
+    assert redact_secrets({"tokens": container(["a", "b"])}) == {"tokens": [REDACTED, REDACTED]}
+
+
+@pytest.mark.parametrize("exclusion", ["field", "config"])
+def test_model_instance_redaction_honors_serialization_exclusions(exclusion):
+    class Nested(pydantic.BaseModel):
+        hidden: str = pydantic.Field(..., exclude=True)
+        label: str
+
+    class Config(pydantic.BaseModel):
+        omitted: str = pydantic.Field(..., exclude=True if exclusion == "field" else None)
+        nested: Nested
+
+        class Config:
+            fields = {"omitted": {"exclude": True}} if exclusion == "config" else {}
+
+    config = Config(omitted="excluded-secret", nested={"hidden": "nested-secret", "label": "kept"})
+    assert redact_secrets(config) == {"nested": {"label": "kept"}}
+
+
+def test_model_instance_retains_nested_runtime_model_declarations():
+    class Nested(pydantic.BaseModel):
+        code: str = pydantic.Field(..., format="password")
+        hidden: str = pydantic.Field(..., exclude=True)
+        label: str
+
+    class Config(pydantic.BaseModel):
+        details: typing.Any
+
+    config = Config(details=Nested(code="runtime-secret", hidden="excluded-secret", label="kept"))
+    assert redact_secrets(config) == {"details": {"code": REDACTED, "label": "kept"}}
+
+
+def test_model_instance_masks_secret_str_fields_as_plain_strings():
+    class Config(pydantic.BaseModel):
+        pin: pydantic.SecretStr
+        label: str
+
+    out = redact_secrets(Config(pin="instance-pin", label="kept"))
+    assert out == {"pin": REDACTED, "label": "kept"}
+    json.dumps(out)  # no SecretStr objects survive the walk

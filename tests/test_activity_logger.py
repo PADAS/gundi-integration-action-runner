@@ -629,3 +629,42 @@ async def test_activity_logger_decorator_redacts_model_declared_secrets_below_th
     for call in mock_publish_event.call_args_list:
         event = call.kwargs["event"]
         assert event.payload.config_data == {"details": {"code": REDACTED, "realm": "r"}, "site": "s"}
+
+
+@pytest.mark.parametrize("helper", [log_action_activity, log_webhook_activity])
+@pytest.mark.parametrize("input_kind", ["instance", "dict_with_model"])
+@pytest.mark.asyncio
+async def test_custom_logs_preserve_model_only_secret_declarations(
+        mocker, mock_publish_event, integration_v2, helper, input_kind,
+):
+    class Config(pydantic.BaseModel):
+        code: str = pydantic.Field(..., format="password")
+        label: str
+
+    config = Config(code="custom-log-secret", label="kept")
+    mocker.patch("gundi_action_runner.services.activity_logger.publish_event", mock_publish_event)
+    kwargs = {"action_id": "pull"} if helper is log_action_activity else {}
+    if input_kind == "dict_with_model":
+        kwargs["config_model"] = Config
+    await helper(
+        integration_id=str(integration_v2.id), title="Custom log",
+        config_data=config if input_kind == "instance" else config.dict(), **kwargs,
+    )
+    event = mock_publish_event.call_args.kwargs["event"]
+    assert event.payload.config_data == {"code": REDACTED, "label": "kept"}
+    assert "custom-log-secret" not in event.json()
+
+
+@pytest.mark.asyncio
+async def test_deprecated_log_activity_forwards_config_model(mocker, mock_publish_event, integration_v2):
+    class Config(pydantic.BaseModel):
+        code: str = pydantic.Field(..., format="password")
+
+    mocker.patch("gundi_action_runner.services.activity_logger.publish_event", mock_publish_event)
+    await log_activity(
+        integration_id=str(integration_v2.id), action_id="pull", title="Custom log",
+        config_data={"code": "legacy-secret"}, config_model=Config,
+    )
+    event = mock_publish_event.call_args.kwargs["event"]
+    assert event.payload.config_data == {"code": REDACTED}
+    assert "legacy-secret" not in event.json()

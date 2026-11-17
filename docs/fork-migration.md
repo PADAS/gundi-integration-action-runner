@@ -92,9 +92,13 @@ them all at once, or keep decorating in place.
   under secret-looking keys, and fields your config model declares as
   `SecretStr`, `Field(format="password")`, `UIOptions(widget="password")` or
   `Field(writeOnly=True)` (`gundi_action_runner.services.redaction`). Webhook
-  failure events still carry the saved webhook configuration unredacted, as on
-  the template; keep webhook secrets out of that configuration until that
-  lands upstream.
+  failure events are covered too: the saved webhook configuration is masked
+  the same way, and credentials quoted in the error text are masked.
+- **Custom activity logs need the model to mask model-declared secrets.**
+  Pass the config instance (`config_data=config`) or
+  `config_data=config.dict(), config_model=type(config)` to
+  `log_action_activity` / `log_webhook_activity`. A plain dict alone is
+  masked by key name and secret value type only.
 - **A classified bad response with a permanent status is not redelivered.**
   An `IntegrationBadResponseError` carrying a 4xx other than 429 (on itself or
   on the exception it was raised from) is acked as final, like a raw HTTP 4xx.
