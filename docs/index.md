@@ -27,6 +27,12 @@ pip install "gundi-action-runner[cli]"
   with `gundi-runner`.
 - **[Extension API](extension-api.md)** — the `@action.*` / `@webhook`
   decorators, `create_app()`, framework services, and testing fixtures.
+- **[Architecture](architecture.md)** — how a connector fits into the Gundi
+  platform, and the contracts it lives by:
+  [registration](registration-contract.md),
+  [runtime](runtime-contracts.md) (scheduling, execute proxy, webhooks,
+  config events, data path), and
+  [portal rendering](portal-rendering.md).
 - **[Migrating a Fork](fork-migration.md)** — moving an existing
   template fork onto the library, step by step.
 
