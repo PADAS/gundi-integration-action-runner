@@ -132,7 +132,7 @@ typing-extensions==4.16.0
     #   pyjwt
     #   starlette
     #   uvicorn
-uvicorn==0.23.2
+uvicorn==0.30.6
     # via -r requirements-base.in
 yarl==1.25.1
     # via aiohttp

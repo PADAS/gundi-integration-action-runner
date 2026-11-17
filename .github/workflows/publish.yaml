@@ -1,0 +1,81 @@
+name: Publish to PyPI
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  run_unit_tests:
+    uses: ./.github/workflows/_tests.yml
+
+  build_and_publish:
+    needs: run_unit_tests
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write   # OIDC for PyPI trusted publishing
+      contents: read
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"   # pinned for a deterministic build/twine env; independent of the package's requires-python
+      - name: Verify tag matches package version
+        run: |
+          python - <<'EOF'
+          import ast, os, pathlib, sys
+          tree = ast.parse(pathlib.Path("src/gundi_action_runner/__init__.py").read_text())
+          version = next(
+              node.value.value
+              for node in ast.walk(tree)
+              if isinstance(node, ast.Assign)
+              and any(getattr(t, "id", None) == "__version__" for t in node.targets)
+          )
+          tag = os.environ["GITHUB_REF_NAME"].removeprefix("v")
+          if tag != version:
+              sys.exit(f"Tag v{tag} does not match package version {version}. "
+                       f"Bump __version__ in src/gundi_action_runner/__init__.py before tagging (see RELEASING.md).")
+          if "dev" in version:
+              sys.exit(f"Refusing to publish a dev version ({version}).")
+          EOF
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install "build~=1.2" "twine~=6.1"
+          python -m build
+          python -m twine check dist/*
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  docs_build:
+    # The docs site deploys with each release tag (and separately on pushes
+    # to main via docs.yaml). Tag pushes can't reliably use docs.yaml's
+    # path-filtered trigger, so the release path lives here.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install docs tooling
+        run: python -m pip install "mkdocs-material~=9.5" "mkdocs-exclude~=1.0"
+      - name: Build (strict link check)
+        run: mkdocs build --strict
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  docs_deploy:
+    needs: docs_build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      pages: write
+      id-token: write
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
