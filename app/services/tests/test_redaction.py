@@ -632,3 +632,42 @@ def test_redact_text_is_linear_on_long_runs_without_equals():
     for text in ("a" * 50_000, "h" * 50_000, "x" + "http" * 12_500):
         assert redact_text(text) == text
     assert time.perf_counter() - start < 1
+
+
+@pytest.mark.parametrize("container", [tuple, set, frozenset])
+def test_non_list_containers_recurse_and_become_json_safe(container):
+    class Config(pydantic.BaseModel):
+        values: typing.Tuple[_NestedDetails, ...]
+
+    # Raw data can contain tuples before JSON encoding, including dictionaries.
+    data = {"values": (dict(_NESTED_RAW),), "other": container(["kept"])}
+    out = redact_secrets(data, model=Config)
+    assert out == {"values": [_NESTED_MASKED], "other": ["kept"]}
+    assert data["values"][0] == _NESTED_RAW
+
+
+def test_tuple_config_dict_retains_nested_model_declarations():
+    class Config(pydantic.BaseModel):
+        values: typing.Tuple[_NestedDetails, ...]
+
+    config = Config(values=(_NESTED_RAW,))
+    assert redact_secrets(config.dict(), model=Config) == {"values": [_NESTED_MASKED]}
+
+
+def test_fixed_tuple_applies_each_positions_model_declarations():
+    class First(pydantic.BaseModel):
+        label: str
+
+    class Second(pydantic.BaseModel):
+        code: str = pydantic.Field(..., format="password")
+
+    class Config(pydantic.BaseModel):
+        values: typing.Tuple[First, Second]
+
+    data = {"values": ({"label": "kept"}, {"code": "tuple-secret"})}
+    assert redact_secrets(data, model=Config) == {"values": [{"label": "kept"}, {"code": REDACTED}]}
+
+
+@pytest.mark.parametrize("container", [tuple, set, frozenset])
+def test_sensitive_container_masks_every_leaf(container):
+    assert redact_secrets({"tokens": container(["a", "b"])}) == {"tokens": [REDACTED, REDACTED]}
