@@ -104,6 +104,27 @@ them all at once, or keep decorating in place.
   `INTEGRATION_TYPE_DESCRIPTION`, or pass `gundi-runner register --description`,
   instead of editing the default "Default type for integrations with <name>"
   in the Gundi admin after each registration.
+- **Transient config-event failures are redelivered.** A configuration event
+  that fails because the portal or Redis is briefly unavailable now answers
+  Pub/Sub with a 500 instead of being acked and dropped; a final failure (a
+  4xx, a bug) is still acked. Late redelivery is only safe on an ordered
+  subscription, which the standard deployment has: the portal publishes config
+  events under one ordering key and the config-events subscription enables
+  message ordering.
+- **Outbound URL allowlist entries are trimmed.** `a.com, b.com` now matches
+  both hosts; the whitespace `env.list()` keeps after a comma used to make
+  every entry but the first unmatchable.
+- **`async_return()` no longer returns an `asyncio.Future`.** It returns a
+  loop-independent awaitable (`ResolvedAwaitable`), so sync fixtures keep
+  working on pytest-asyncio 1.x. Awaiting it is unchanged; a test that called
+  `Future` methods on the result (`.result()`, `.done()`) needs adjusting.
+- **FastAPI moves to the 0.125 line (starlette 0.50.x), marshmallow to 3.26.**
+  0.125 is the last FastAPI line that accepts pydantic 1.x. A fork that merges
+  upstream also gets the two-lock layout: `requirements.txt` (production image)
+  is compiled from `requirements-base.in` and `requirements.in` alone, and test
+  dependencies compile into `requirements-dev.txt` from `requirements-dev.in`
+  and the fork-owned `requirements-test.in`. Move test-only packages out of
+  `requirements.in`, and install `requirements-dev.txt` in your own CI.
 
 ## If you customized framework files
 

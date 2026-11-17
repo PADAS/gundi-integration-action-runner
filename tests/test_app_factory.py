@@ -152,7 +152,7 @@ async def test_execute_action_populates_registry_lazily(
 
     try:
         result = await execute_action(
-            integration_id=str(mock_config_manager.get_integration_details.return_value.result().id),
+            integration_id=str((await mock_config_manager.get_integration_details.return_value).id),
             action_id="pull_things",
         )
         # The lazy-load path must have found and executed the handler
