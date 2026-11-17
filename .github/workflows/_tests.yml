@@ -4,7 +4,10 @@ on:
 
 jobs:
   run_unit_tests:
-    runs-on: ubuntu-latest
+    # Pinned: pyjq 2.6.0 builds its bundled oniguruma from source, which fails on
+    # ubuntu-26.04 (GCC 15 defaults to C23). ubuntu-latest started moving there in
+    # October 2026. Unpin once pyjq builds there or is replaced.
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout branch
         uses: actions/checkout@v4
