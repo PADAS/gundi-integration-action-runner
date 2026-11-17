@@ -6,6 +6,7 @@ import logging
 
 import aiohttp
 import stamina
+from pydantic import BaseModel
 from functools import wraps
 from gcloud.aio import pubsub
 from gundi_core.events import (
@@ -29,7 +30,7 @@ from gundi_core.events import (
 )
 from app import settings
 from app.services.errors import format_error_message
-from app.services.redaction import redact_secrets, redact_text
+from app.services.redaction import Models, redact_secrets, redact_text
 
 
 logger = logging.getLogger(__name__)
@@ -167,19 +168,27 @@ async def publish_events(events: List[SystemEventBaseModel], topic_name: str):
         return {"messageIds": message_ids}
 
 
-async def log_activity(integration_id: str, action_id: str, title: str, level=LogLevel.INFO, config_data: dict = None, data: dict = None):
+async def log_activity(
+        integration_id: str, action_id: str, title: str, level=LogLevel.INFO,
+        config_data: dict | BaseModel | None = None, data: dict = None, *, config_model: Models = None,
+):
     # Show a deprecation warning in favor of using either log_action_activity or log_webhook_activity
     logger.warning("log_activity is deprecated. Please use log_action_activity or log_webhook_activity instead.")
-    return await log_action_activity(integration_id, action_id, title, level, config_data, data)
+    return await log_action_activity(integration_id, action_id, title, level, config_data, data, config_model=config_model)
 
 
-async def log_action_activity(integration_id: str, action_id: str, title: str, level=LogLevel.INFO, config_data: dict = None, data: dict = None):
+async def log_action_activity(
+        integration_id: str, action_id: str, title: str, level=LogLevel.INFO,
+        config_data: dict | BaseModel | None = None, data: dict = None, *, config_model: Models = None,
+):
     """
         This is a helper method to send custom activity logs to the portal.
         :param integration_id: UUID of the integration
         :param action_id: str id of the action being executed
         :param title: A human-readable string that will appear in the activity log
         :param level: The level of the log, e.g. DEBUG, INFO, WARNING, ERROR
+        :param config_data: Configuration model instance or serialized configuration dict.
+        :param config_model: Model for a serialized dict, to retain secret field declarations.
         :param data: Any extra data to be logged as a dict
         :return: None
         """
@@ -189,7 +198,7 @@ async def log_action_activity(integration_id: str, action_id: str, title: str, l
             payload=CustomActivityLog(
                 integration_id=integration_id,
                 action_id=action_id,
-                config_data=redact_secrets(config_data or {}),
+                config_data=redact_secrets(config_data or {}, model=config_model),
                 title=title,
                 level=level,
                 data=data
@@ -200,7 +209,8 @@ async def log_action_activity(integration_id: str, action_id: str, title: str, l
 
 
 async def log_webhook_activity(
-        integration_id: str, title: str, webhook_id: str="webhook", level=LogLevel.INFO, config_data: dict = None, data: dict = None
+        integration_id: str, title: str, webhook_id: str="webhook", level=LogLevel.INFO,
+        config_data: dict | BaseModel | None = None, data: dict = None, *, config_model: Models = None,
 ):
     """
         This is a helper method to send custom activity logs to the portal.
@@ -208,6 +218,8 @@ async def log_webhook_activity(
         :param title: A human-readable string that will appear in the activity log
         :param webhook_id: str id of the webhook being executed
         :param level: The level of the log, e.g. DEBUG, INFO, WARNING, ERROR
+        :param config_data: Configuration model instance or serialized configuration dict.
+        :param config_model: Model for a serialized dict, to retain secret field declarations.
         :param data: Any extra data to be logged as a dict
         :return: None
         """
@@ -217,7 +229,7 @@ async def log_webhook_activity(
             payload=CustomWebhookLog(
                 integration_id=integration_id,
                 webhook_id=webhook_id,
-                config_data=redact_secrets(config_data or {}),
+                config_data=redact_secrets(config_data or {}, model=config_model),
                 title=title,
                 level=level,
                 data=data
@@ -235,7 +247,7 @@ def _redacted_config_dict(config) -> dict:
     clear."""
     if not config:
         return {}
-    return redact_secrets(config.dict(), model=type(config))
+    return redact_secrets(config)
 
 
 def activity_logger(on_start=True, on_completion=True, on_error=True):
