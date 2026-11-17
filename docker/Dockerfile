@@ -14,8 +14,8 @@ RUN pip install -e . --no-deps
 
 FROM baseimage AS devimage
 
-COPY requirements-dev.in .
-RUN pip install -r /code/requirements-dev.in
+COPY requirements-dev.txt .
+RUN pip install -r /code/requirements-dev.txt
 
 # Install debugpy for debugging
 RUN pip install debugpy
