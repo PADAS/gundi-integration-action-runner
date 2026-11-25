@@ -43,6 +43,18 @@ async def test_trigger_actions_with_no_configs_publishes_nothing(mocker):
 
 
 @pytest.mark.asyncio
+async def test_trigger_actions_with_no_configs_does_not_need_the_commands_topic(mocker):
+    mock_publish_events = AsyncMock()
+    mocker.patch("app.services.action_scheduler.publish_events", mock_publish_events)
+    mocker.patch.object(settings, "TRIGGER_ACTIONS_ALWAYS_SYNC", False)
+    mocker.patch.object(settings, "INTEGRATION_COMMANDS_TOPIC", "")
+
+    assert await trigger_actions(integration_id="int-1", action_id="read_per_collar", configs=[]) is None
+
+    assert not mock_publish_events.called
+
+
+@pytest.mark.asyncio
 async def test_trigger_actions_runs_each_action_inline_in_sync_mode(mocker):
     mock_execute_action = AsyncMock(return_value={"ok": True})
     mocker.patch("app.services.action_runner.execute_action", mock_execute_action)
