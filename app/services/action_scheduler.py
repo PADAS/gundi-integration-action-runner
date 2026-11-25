@@ -73,11 +73,12 @@ async def trigger_actions(integration_id: str, action_id: str, configs):
             )
             for command in commands
         ]
+    if not commands:
+        # Nothing to publish, so the topic is not needed either.
+        return None
     if not settings.INTEGRATION_COMMANDS_TOPIC:
         error_msg = "Please set INTEGRATION_COMMANDS_TOPIC in the environment to trigger actions from the integration."
         raise ValueError(error_msg)
-    if not commands:
-        return None
     return await publish_events(commands, settings.INTEGRATION_COMMANDS_TOPIC)
 
 class CrontabSchedule(BaseModel):
